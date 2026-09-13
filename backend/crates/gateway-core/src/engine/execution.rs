@@ -35,7 +35,7 @@ use crate::event::{GatewayEvent, ProviderEvent, ProviderResponseHeader};
 use crate::identity::ProviderKind;
 use crate::lifecycle::CancellationToken;
 use crate::operation::{Operation, ProviderSessionState};
-use crate::policy::{ClientApiKeyId, ClientPolicy};
+use crate::policy::{ClientApiKeyId, ClientPolicy, OwnerScopeId, RateLimits};
 use crate::routing::{
     ProviderCatalogUnavailable, PublicModelDescriptor, PublicModelId, RoutingContext,
     RuntimeSnapshot, UpstreamModelId,
@@ -502,6 +502,11 @@ impl DefaultExecutionService {
             client_api_key_id: client.policy.key_id().clone(),
             lease_ttl: MODEL_REQUEST_DEADLINE,
             limits: client.policy.limits(),
+            owner_scope_id: client.policy.owner().map(|owner| owner.id().clone()),
+            owner_limits: client
+                .policy
+                .owner()
+                .map_or_else(RateLimits::unlimited, |owner| owner.limits()),
         };
         let admission_started_at = Instant::now();
         match self
@@ -530,6 +535,7 @@ impl DefaultExecutionService {
             port: Arc::clone(&self.admissions),
             client_api_key_id: client.policy.key_id().clone(),
             model_request_id: request_id.clone(),
+            owner_scope_id: client.policy.owner().map(|owner| owner.id().clone()),
         };
         if let Some(budget) = &self.budget
             && let Err(error) = budget.admit(client.policy.key_id().clone()).await
@@ -551,6 +557,7 @@ impl DefaultExecutionService {
             id: request_id.clone(),
             client_api_key_id: Some(client.policy.key_id().clone()),
             client_api_key_ref: client.policy.key_id().clone(),
+            owner_scope_id: client.policy.owner().map(|owner| owner.id().clone()),
             config_revision: plan.config_revision(),
             routing: client.policy.account_scope().routing_snapshot(),
             protocol: metadata.protocol,
@@ -591,6 +598,7 @@ impl DefaultExecutionService {
                         ClientBudgetCharge {
                             key_id: client.policy.key_id().clone(),
                             request_id: request_id.clone(),
+                            owner_scope_id: client.policy.owner().map(|owner| owner.id().clone()),
                             amount_usd: crate::metering::Decimal::ZERO,
                             completed_at: SystemTime::now(),
                         },
@@ -707,6 +715,7 @@ impl DefaultExecutionService {
             id: request_id,
             client_api_key_id: None,
             client_api_key_ref: actor,
+            owner_scope_id: None,
             config_revision: plan.config_revision(),
             routing: crate::routing::AccountRoutingSnapshot::all(),
             protocol: "admin_connection_test".to_owned(),
@@ -1033,6 +1042,7 @@ struct AdmissionLease {
     port: Arc<dyn ClientAdmissionPort>,
     client_api_key_id: ClientApiKeyId,
     model_request_id: ModelRequestId,
+    owner_scope_id: Option<OwnerScopeId>,
 }
 
 async fn settle_budget(port: &dyn ClientBudgetPort, charge: ClientBudgetCharge) {
@@ -1045,7 +1055,11 @@ impl AdmissionLease {
     async fn release(self) {
         if let Err(error) = self
             .port
-            .release(&self.client_api_key_id, &self.model_request_id)
+            .release(
+                &self.client_api_key_id,
+                &self.model_request_id,
+                self.owner_scope_id.as_ref(),
+            )
             .await
         {
             tracing::warn!(%error, "Client admission 释放失败，依赖租约 TTL 收敛");

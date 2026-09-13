@@ -10,6 +10,7 @@ pub use client_version::{
 
 use std::fmt;
 use std::sync::Arc;
+use std::time::SystemTime;
 
 use crate::account::scope::FrozenAccountScope;
 use crate::validation::{IdentifierError, PolicyError, validate_text};
@@ -39,6 +40,88 @@ impl ClientApiKeyId {
 impl fmt::Display for ClientApiKeyId {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(&self.0)
+    }
+}
+
+/// 数据面冻结的用户范围 ID；Core 不解释 Portal 领域含义。
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct OwnerScopeId(String);
+
+impl OwnerScopeId {
+    /// 校验并创建用户范围 ID。
+    ///
+    /// # Errors
+    ///
+    /// ID 为空、过长或包含控制字符时返回错误。
+    pub fn new(value: impl Into<String>) -> Result<Self, IdentifierError> {
+        let value = value.into();
+        validate_text(&value, 128, false, None)?;
+        Ok(Self(value))
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for OwnerScopeId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+/// 随 Client Key 冻结的用户级并发/RPM 与订阅截止时间。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClientOwnerScope {
+    id: OwnerScopeId,
+    limits: RateLimits,
+    unscoped_means_deny: bool,
+    subscription_starts_at: Option<SystemTime>,
+    subscription_ends_at: Option<SystemTime>,
+}
+
+impl ClientOwnerScope {
+    #[must_use]
+    pub const fn new(
+        id: OwnerScopeId,
+        limits: RateLimits,
+        unscoped_means_deny: bool,
+        subscription_starts_at: Option<SystemTime>,
+        subscription_ends_at: Option<SystemTime>,
+    ) -> Self {
+        Self {
+            id,
+            limits,
+            unscoped_means_deny,
+            subscription_starts_at,
+            subscription_ends_at,
+        }
+    }
+
+    #[must_use]
+    pub const fn id(&self) -> &OwnerScopeId {
+        &self.id
+    }
+
+    #[must_use]
+    pub const fn limits(&self) -> RateLimits {
+        self.limits
+    }
+
+    #[must_use]
+    pub const fn unscoped_means_deny(&self) -> bool {
+        self.unscoped_means_deny
+    }
+
+    #[must_use]
+    pub const fn subscription_starts_at(&self) -> Option<SystemTime> {
+        self.subscription_starts_at
+    }
+
+    #[must_use]
+    pub const fn subscription_ends_at(&self) -> Option<SystemTime> {
+        self.subscription_ends_at
     }
 }
 
@@ -113,6 +196,7 @@ pub struct ClientPolicy {
     account_scope: Arc<FrozenAccountScope>,
     enabled: bool,
     limits: RateLimits,
+    owner: Option<ClientOwnerScope>,
 }
 
 impl ClientPolicy {
@@ -130,7 +214,15 @@ impl ClientPolicy {
             account_scope,
             enabled,
             limits,
+            owner: None,
         }
+    }
+
+    /// 附加用户级并发/RPM 与订阅截止时间。
+    #[must_use]
+    pub fn with_owner_scope(mut self, owner: ClientOwnerScope) -> Self {
+        self.owner = Some(owner);
+        self
     }
 
     #[must_use]
@@ -158,18 +250,36 @@ impl ClientPolicy {
         self.limits
     }
 
+    #[must_use]
+    pub const fn owner(&self) -> Option<&ClientOwnerScope> {
+        self.owner.as_ref()
+    }
+
     /// 禁用的 Key 不接受新请求。
     ///
     /// # Errors
     ///
     /// Key 已禁用时返回稳定拒绝原因。
     pub fn authorize(&self) -> Result<(), PolicyError> {
-        if self.enabled {
-            Ok(())
-        } else {
-            Err(PolicyError::Denied {
+        if !self.enabled {
+            return Err(PolicyError::Denied {
                 reason: "client API key is disabled",
-            })
+            });
         }
+        if let Some(owner) = &self.owner {
+            let now = SystemTime::now();
+            if owner
+                .subscription_starts_at
+                .is_some_and(|starts_at| now < starts_at)
+                || owner
+                    .subscription_ends_at
+                    .is_some_and(|ends_at| now >= ends_at)
+            {
+                return Err(PolicyError::Denied {
+                    reason: "subscription is not active",
+                });
+            }
+        }
+        Ok(())
     }
 }

@@ -24,6 +24,7 @@ export interface ApiKey {
   routingScope: ApiKeyRoutingScope
   groups: AccountGroupRef[]
   providerKinds: string[]
+  ownerUserId: string | null
 }
 
 export interface ApiKeyListResponse {
@@ -52,6 +53,7 @@ interface ApiKeyListParams {
   cursor?: string
   limit: number
   search?: string
+  ownerUserId?: string
   sortBy?: string
   sortDirection?: string
 }

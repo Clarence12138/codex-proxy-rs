@@ -5,6 +5,7 @@ members = [
     "crates/gateway-api",
     "crates/gateway-core",
     "crates/gateway-host",
+    "crates/gateway-portal",
     "crates/gateway-protocol",
     "crates/gateway-store",
     "crates/providers/openai",

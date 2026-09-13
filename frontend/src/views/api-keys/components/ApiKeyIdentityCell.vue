@@ -16,5 +16,8 @@ defineProps<{
     <span v-if="apiKey.label" class="text-cp-sm font-emphasis text-cp-text-tertiary">
       {{ apiKey.label }}
     </span>
+    <span class="text-cp-sm font-emphasis text-cp-text-tertiary">
+      {{ apiKey.ownerUserId ? `用户 ${apiKey.ownerUserId}` : '管理员' }}
+    </span>
   </div>
 </template>

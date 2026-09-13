@@ -25,7 +25,13 @@ sqlx 在服务启动、监听请求之前按编号执行迁移，并把文件 ch
 ```bash
 cd backend/migrations
 sha256sum --check --strict .frozen-sha256
+cd ../crates/gateway-store/migrations/portal
+sha256sum --check --strict .frozen-sha256
 ```
+
+拼车 Portal 的 schema 使用独立目录 `backend/crates/gateway-store/migrations/portal/`
+与表 `portal_schema_migrations`，不占用官方 `_sqlx_migrations` 编号。冻结规则相同：
+已入册 SQL 只增不改。
 
 CI 还会检查是否遗漏新 SQL 文件，并在 PR 中检查清单只增不改。
 遇到 checksum 不一致，先核对运行版本和文件来源；不要修改数据库中的 checksum 来绕过校验。

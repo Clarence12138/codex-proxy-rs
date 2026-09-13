@@ -152,14 +152,27 @@ impl SnapshotStorePort for PgRuntimeSnapshotRepository {
                 .client_api_keys
                 .into_iter()
                 .map(|key| {
-                    SnapshotClientPolicyFacts::new(
+                    let facts = SnapshotClientPolicyFacts::new(
                         key.id,
                         key.plaintext_key,
                         key.group_ids,
                         key.limits,
-                    )
+                    );
+                    match key.owner_user_id {
+                        Some(owner) => {
+                            let owner_id = gateway_core::policy::OwnerScopeId::new(owner)
+                                .map_err(|_| SnapshotStoreError::unavailable())?;
+                            Ok(facts.with_owner_scope(
+                                owner_id,
+                                key.owner_limits,
+                                key.subscription_starts_at,
+                                key.subscription_ends_at,
+                            ))
+                        }
+                        None => Ok(facts),
+                    }
                 })
-                .collect();
+                .collect::<Result<Vec<_>, _>>()?;
             let account_groups = data
                 .account_groups
                 .into_iter()
@@ -261,22 +274,56 @@ async fn load_settings(
 async fn load_client_keys(
     transaction: &mut Transaction<'_, Postgres>,
 ) -> StoreResult<Vec<ClientApiKeySnapshot>> {
-    let rows = sqlx::query_as::<_, (String, String, Vec<String>, i64, i64)>(
+    let rows = sqlx::query_as::<
+        _,
+        (
+            String,
+            String,
+            Vec<String>,
+            i64,
+            i64,
+            Option<String>,
+            Option<i64>,
+            Option<i64>,
+            Option<chrono::DateTime<chrono::Utc>>,
+            Option<chrono::DateTime<chrono::Utc>>,
+        ),
+    >(
         "select k.id, k.key,
                 coalesce(array_agg(kg.account_group_id order by kg.account_group_id)
                   filter (where kg.account_group_id is not null), '{}') as group_ids,
-                k.max_concurrency, k.requests_per_minute
+                k.max_concurrency, k.requests_per_minute,
+                k.owner_user_id,
+                p.max_concurrency,
+                p.requests_per_minute,
+                case
+                  when k.owner_user_id is null then null
+                  when p.id is null then timestamptz '1970-01-01+00'
+                  else s.starts_at
+                end as starts_at,
+                case
+                  when k.owner_user_id is null then null
+                  when p.id is null then timestamptz '1970-01-01+00'
+                  else s.ends_at
+                end as ends_at
          from client_api_keys k
          left join client_api_key_groups kg on kg.client_api_key_id = k.id
-         where k.enabled
-         group by k.id
+         left join portal_users u on u.id = k.owner_user_id and u.status = 'active'
+         left join user_subscriptions s on s.user_id = k.owner_user_id and s.status = 'active'
+         left join subscription_plans p on p.id = s.plan_id and p.enabled
+         where k.enabled and (k.owner_user_id is null or u.id is not null)
+         group by k.id, p.id, p.max_concurrency, p.requests_per_minute, s.starts_at, s.ends_at
          order by k.id",
     )
     .fetch_all(&mut **transaction)
     .await
     .map_err(|_| postgres_unavailable("load snapshot client policies"))?;
     rows.into_iter()
-        .map(|row| ClientApiKeySnapshot::from_persisted(row.0, row.1, row.2, row.3, row.4))
+        .map(|row| {
+            ClientApiKeySnapshot::from_persisted(
+                row.0, row.1, row.2, row.3, row.4, row.5, row.6, row.7, row.8, row.9,
+            )
+        })
         .collect()
 }
 

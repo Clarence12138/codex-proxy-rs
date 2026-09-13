@@ -735,6 +735,7 @@ dependencies = [
  "gateway-api",
  "gateway-core",
  "gateway-host",
+ "gateway-portal",
  "gateway-store",
  "provider-openai",
  "provider-xai",
@@ -1462,6 +1463,7 @@ dependencies = [
  "futures",
  "gateway-admin",
  "gateway-core",
+ "gateway-portal",
  "gateway-protocol",
  "secrecy",
  "serde",
@@ -1527,6 +1529,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-portal"
+version = "0.0.0"
+dependencies = [
+ "argon2",
+ "async-trait",
+ "base64 0.23.1",
+ "chrono",
+ "futures",
+ "gateway-core",
+ "hex",
+ "rand_core 0.6.4",
+ "secrecy",
+ "serde",
+ "sha2 0.11.0",
+ "subtle",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "gateway-protocol"
 version = "0.0.0"
 dependencies = [
@@ -1551,6 +1575,7 @@ dependencies = [
  "futures",
  "gateway-admin",
  "gateway-core",
+ "gateway-portal",
  "hex",
  "redis",
  "secrecy",

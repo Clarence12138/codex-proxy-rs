@@ -15,6 +15,10 @@ fn snapshot_client_policy_contains_only_common_limits() {
             max_concurrency: 3,
             requests_per_minute: 60,
         },
+        owner_user_id: None,
+        owner_limits: RateLimits::unlimited(),
+        subscription_starts_at: None,
+        subscription_ends_at: None,
     };
     assert_eq!(policy.limits.max_concurrency, 3);
     assert!(policy.group_ids.is_empty());

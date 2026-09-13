@@ -33,6 +33,7 @@ impl ClientAdmissionPort for Admissions {
         &'a self,
         _: &'a ClientApiKeyId,
         _: &'a ModelRequestId,
+        _: Option<&'a gateway_core::policy::OwnerScopeId>,
     ) -> BoxFuture<'a, Result<bool, ClientAdmissionError>> {
         Box::pin(async {
             self.releases.fetch_add(1, Ordering::SeqCst);
@@ -1655,6 +1656,7 @@ impl ClientAdmissionPort for UnusedAdmissions {
         &'a self,
         _: &'a ClientApiKeyId,
         _: &'a ModelRequestId,
+        _: Option<&'a gateway_core::policy::OwnerScopeId>,
     ) -> BoxFuture<'a, Result<bool, ClientAdmissionError>> {
         Box::pin(async { Ok(true) })
     }

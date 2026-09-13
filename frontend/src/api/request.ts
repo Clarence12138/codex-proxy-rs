@@ -29,9 +29,9 @@ const http: AxiosInstance = axios.create({
 })
 
 let unauthorizedHandled = false
-let unauthorizedHandler: (() => void | Promise<void>) | undefined
+let unauthorizedHandler: ((url?: string) => void | Promise<void>) | undefined
 
-export function setUnauthorizedHandler(handler: () => void | Promise<void>) {
+export function setUnauthorizedHandler(handler: (url?: string) => void | Promise<void>) {
   unauthorizedHandler = handler
 }
 
@@ -40,14 +40,19 @@ export function resetUnauthorizedHandling() {
 }
 
 function isAuthenticationRequest(url?: string) {
-  return Boolean(url?.includes('/api/admin/auth/login') || url?.includes('/api/admin/auth/status'))
+  return Boolean(
+    url?.includes('/api/admin/auth/login')
+    || url?.includes('/api/admin/auth/status')
+    || url?.includes('/api/portal/auth/login')
+    || url?.includes('/api/portal/auth/status'),
+  )
 }
 
-function handleUnauthorizedOnce() {
+function handleUnauthorizedOnce(url?: string) {
   if (unauthorizedHandled || !unauthorizedHandler)
     return
   unauthorizedHandled = true
-  void Promise.resolve(unauthorizedHandler()).catch(() => {
+  void Promise.resolve(unauthorizedHandler(url)).catch(() => {
     unauthorizedHandled = false
   })
 }
@@ -71,7 +76,7 @@ function rejectRequest(error: ApiError, config?: AxiosRequestConfig & Pick<Reque
   const sessionExpired = error.status === 401 && !isAuthenticationRequest(config?.url)
   const alreadyHandled = sessionExpired && unauthorizedHandled
   if (sessionExpired)
-    handleUnauthorizedOnce()
+    handleUnauthorizedOnce(config?.url)
   if (!config?.silent && !alreadyHandled)
     toast.error(error.message)
   return Promise.reject(error)

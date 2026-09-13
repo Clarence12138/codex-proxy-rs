@@ -21,6 +21,8 @@ mod execution;
 mod execution_buffer;
 mod observability;
 mod ops_events;
+mod portal;
+mod portal_migrate;
 mod provider_accounts;
 mod proxies;
 mod retention;
@@ -38,6 +40,8 @@ pub use execution::*;
 pub use execution_buffer::*;
 pub use observability::*;
 pub use ops_events::*;
+pub use portal::PgPortalStore;
+pub use portal_migrate::apply_portal_migrations;
 pub use provider_accounts::*;
 pub use proxies::PgProxyRepository;
 pub use retention::*;
@@ -77,6 +81,10 @@ pub async fn connect_and_migrate(
             backend: StoreBackend::PostgreSql,
             message: format!("apply PostgreSQL migrations: {error}"),
         });
+    }
+    if let Err(error) = portal_migrate::apply_portal_migrations(&migration_pool).await {
+        migration_pool.close().await;
+        return Err(error);
     }
     migration_pool.close().await;
 

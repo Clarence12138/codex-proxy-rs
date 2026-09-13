@@ -30,6 +30,7 @@ const {
   apiKeys,
   loadApiKeys,
   searchQuery,
+  ownerUserId,
   sort,
   apiKeyPagination,
   handlePageChange,
@@ -110,6 +111,7 @@ watch(
       <template #header>
         <ApiKeyFilters
           v-model:search="searchQuery"
+          v-model:owner-user-id="ownerUserId"
           :batch-deleting="batchDeleting"
           :selected-count="selectedIds.size"
           @create="openCreate"

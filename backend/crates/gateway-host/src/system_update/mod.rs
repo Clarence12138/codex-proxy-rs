@@ -67,6 +67,7 @@ pub struct SystemUpdateConfig {
     pub update_lock_file: PathBuf,
     pub update_temp_dir: PathBuf,
     pub self_restart_enabled: bool,
+    pub updates_enabled: bool,
 }
 
 impl Default for SystemUpdateConfig {
@@ -115,6 +116,7 @@ impl Default for SystemUpdateConfig {
             update_temp_dir,
             self_restart_enabled: environment_value("CPR_ENABLE_SELF_RESTART").as_deref()
                 == Some("true"),
+            updates_enabled: environment_value("CPR_ENABLE_UPDATES").as_deref() == Some("true"),
         }
     }
 }
@@ -162,6 +164,9 @@ impl SystemUpdateConfig {
     }
 
     fn update_support_error(&self) -> Option<String> {
+        if !self.updates_enabled {
+            return Some("此构建已禁用在线更新".to_owned());
+        }
         if self.build_type != "release" {
             return Some("一键更新需要正式构建包".to_owned());
         }

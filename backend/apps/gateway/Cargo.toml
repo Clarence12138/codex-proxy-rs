@@ -16,6 +16,7 @@ gateway-admin = { path = "../../crates/gateway-admin" }
 gateway-api = { path = "../../crates/gateway-api" }
 gateway-core = { path = "../../crates/gateway-core" }
 gateway-host = { path = "../../crates/gateway-host" }
+gateway-portal = { path = "../../crates/gateway-portal" }
 gateway-store = { path = "../../crates/gateway-store" }
 provider-openai = { path = "../../crates/providers/openai" }
 provider-xai = { path = "../../crates/providers/xai" }

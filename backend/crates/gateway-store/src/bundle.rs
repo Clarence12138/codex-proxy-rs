@@ -2,12 +2,14 @@
 
 use gateway_core::account::ProviderAccountStore;
 use gateway_core::provider_ports::ProviderCooldownPort;
+use gateway_portal::ports::store::PortalStorePorts;
 
 use super::*;
 
 /// 已完成连接、迁移与 hydration 的 Store 能力集合。
 pub struct StoreBundle {
     admin_ports: AdminStorePorts,
+    portal_ports: PortalStorePorts,
     core_ports: CoreStorePorts,
     provider_ports: ProviderStorePorts,
     worker_leader_lease: Arc<dyn WorkerLeaderLeasePort>,
@@ -19,6 +21,11 @@ impl StoreBundle {
     #[must_use]
     pub fn admin_ports(&self) -> AdminStorePorts {
         self.admin_ports.clone()
+    }
+
+    #[must_use]
+    pub fn portal_ports(&self) -> PortalStorePorts {
+        self.portal_ports.clone()
     }
 
     #[must_use]
@@ -128,6 +135,15 @@ pub async fn initialize(mut config: StoreConfig) -> StoreResult<StoreBundle> {
         }),
         backup_ports(pool.clone(), &config)?,
     );
+    let portal_store = Arc::new(postgres::PgPortalStore::new(pool.clone()));
+    let portal_ports = PortalStorePorts::new(
+        portal_store.clone(),
+        portal_store.clone(),
+        portal_store.clone(),
+        portal_store.clone(),
+        portal_store.clone(),
+        portal_store,
+    );
 
     let execution_repository = Arc::new(postgres::PgExecutionStore::new(pool.clone()));
     let (execution, execution_writer) =
@@ -212,6 +228,7 @@ pub async fn initialize(mut config: StoreConfig) -> StoreResult<StoreBundle> {
     )?;
     Ok(StoreBundle {
         admin_ports,
+        portal_ports,
         core_ports,
         provider_ports,
         worker_leader_lease,

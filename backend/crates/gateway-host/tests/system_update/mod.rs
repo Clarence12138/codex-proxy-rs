@@ -731,6 +731,7 @@ impl Fixture {
             update_lock_file: self.lock(),
             update_temp_dir: self.root.path().join("tmp"),
             self_restart_enabled: false,
+            updates_enabled: true,
         }
     }
 

@@ -28,6 +28,7 @@ fn client_admission_restore_rejects_duplicate_request_ids() {
     let started_at = Utc::now();
     let recovery = ClientAdmissionRestore {
         client_api_key_ref: "key-1".to_owned(),
+        owner_scope_id: None,
         recent_requests: vec![
             recent_request("request-1", started_at),
             recent_request("request-1", started_at),
@@ -64,6 +65,7 @@ async fn restore_rebuilds_lost_cache_without_overwriting_new_admission() {
     let redis_now = redis_now(&mut connection).await;
     let recovery = ClientAdmissionRestore {
         client_api_key_ref: key_ref.to_owned(),
+        owner_scope_id: None,
         recent_requests: vec![
             recent_request(
                 "request-before-crash",
@@ -131,7 +133,7 @@ async fn restore_rebuilds_lost_cache_without_overwriting_new_admission() {
     );
     assert!(
         repository
-            .release_client_request(key_ref, "request-before-crash")
+            .release_client_request(key_ref, "request-before-crash", None)
             .await
             .expect("release restored request by durable ID")
     );
@@ -144,7 +146,7 @@ async fn restore_rebuilds_lost_cache_without_overwriting_new_admission() {
     );
     assert!(
         repository
-            .release_client_request(key_ref, "request-after-crash")
+            .release_client_request(key_ref, "request-after-crash", None)
             .await
             .expect("release admission created during recovery")
     );
@@ -173,6 +175,7 @@ async fn restore_uses_redis_time_for_window_and_running_expiry_boundaries() {
     let redis_now = redis_now(&mut connection).await;
     let recovery = ClientAdmissionRestore {
         client_api_key_ref: key_ref.to_owned(),
+        owner_scope_id: None,
         recent_requests: vec![
             recent_request(
                 "request-at-cutoff",
@@ -211,7 +214,7 @@ async fn restore_uses_redis_time_for_window_and_running_expiry_boundaries() {
     assert!((230_000..=245_000).contains(&active_ttl));
     assert!(
         repository
-            .release_client_request(key_ref, "request-live")
+            .release_client_request(key_ref, "request-live", None)
             .await
             .expect("release live recovered request")
     );
@@ -230,6 +233,7 @@ async fn restore_rejects_future_window_fact_without_partial_write() {
     let redis_now = redis_now(&mut connection).await;
     let recovery = ClientAdmissionRestore {
         client_api_key_ref: "key-future-fact".to_owned(),
+        owner_scope_id: None,
         recent_requests: vec![
             recent_request("request-valid", redis_now - chrono::Duration::seconds(1)),
             recent_request("request-future", redis_now + chrono::Duration::seconds(10)),
@@ -259,6 +263,8 @@ fn admission_request(
             max_concurrency: 2,
             requests_per_minute: 0,
         },
+        owner_scope_id: None,
+        owner_limits: ClientAdmissionLimits::default(),
     }
 }
 
@@ -356,4 +362,57 @@ async fn pttl(connection: &mut ConnectionManager, key: &str) -> i64 {
         .query_async(connection)
         .await
         .expect("read admission TTL")
+}
+
+#[tokio::test]
+async fn owned_keys_share_user_concurrency_without_changing_ownerless_keys() {
+    let Some((repository, mut connection, namespace)) = repository().await else {
+        return;
+    };
+    let owner = "usr_shared_admission";
+    let mut first = admission_request("owned-one", "key-owned-a", Duration::from_secs(30));
+    first.owner_scope_id = Some(owner.to_owned());
+    first.limits.max_concurrency = 4;
+    first.owner_limits.max_concurrency = 1;
+    let mut second = admission_request("owned-two", "key-owned-b", Duration::from_secs(30));
+    second.owner_scope_id = Some(owner.to_owned());
+    second.limits.max_concurrency = 4;
+    second.owner_limits.max_concurrency = 1;
+    assert_eq!(
+        repository
+            .admit_client_request(&first)
+            .await
+            .expect("first owned admit"),
+        ClientAdmissionDecision::Granted
+    );
+    assert_eq!(
+        repository
+            .admit_client_request(&second)
+            .await
+            .expect("second owned admit"),
+        ClientAdmissionDecision::Rejected(ClientAdmissionRejection::ConcurrencyLimited)
+    );
+    assert!(
+        repository
+            .release_client_request("key-owned-a", "owned-one", Some(owner))
+            .await
+            .expect("release owned")
+    );
+    assert_eq!(
+        repository
+            .admit_client_request(&second)
+            .await
+            .expect("admit after release"),
+        ClientAdmissionDecision::Granted
+    );
+
+    let ownerless = admission_request("ownerless-one", "key-ownerless", Duration::from_secs(30));
+    assert_eq!(
+        repository
+            .admit_client_request(&ownerless)
+            .await
+            .expect("ownerless still independent"),
+        ClientAdmissionDecision::Granted
+    );
+    delete_namespace_keys(&mut connection, &namespace).await;
 }

@@ -36,6 +36,16 @@ export const routes: RouteRecordRaw[] = [
         component: () => import('@/views/api-keys/index.vue'),
       },
       {
+        path: 'portal-users',
+        name: 'portal-users',
+        component: () => import('@/views/portal-admin/users.vue'),
+      },
+      {
+        path: 'portal-plans',
+        name: 'portal-plans',
+        component: () => import('@/views/portal-admin/plans.vue'),
+      },
+      {
         path: 'usage',
         name: 'usage',
         component: () => import('@/views/usage/index.vue'),
@@ -54,6 +64,32 @@ export const routes: RouteRecordRaw[] = [
         path: 'settings/backup',
         name: 'settings-backup',
         component: () => import('@/views/settings/index.vue'),
+      },
+    ],
+  },
+  {
+    path: '/portal/login',
+    name: 'portal-login',
+    component: () => import('@/views/portal/login/index.vue'),
+  },
+  {
+    path: '/portal',
+    component: () => import('@/views/portal/layout.vue'),
+    children: [
+      {
+        path: '',
+        name: 'portal-home',
+        component: () => import('@/views/portal/index.vue'),
+      },
+      {
+        path: 'keys',
+        name: 'portal-keys',
+        component: () => import('@/views/portal/keys.vue'),
+      },
+      {
+        path: 'usage',
+        name: 'portal-usage',
+        component: () => import('@/views/portal/usage.vue'),
       },
     ],
   },

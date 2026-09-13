@@ -125,6 +125,7 @@ async fn client_key_cursor_should_reject_value_that_does_not_match_sort() {
             }),
             page_size: ClientKeyPageSize::new(50).expect("page size"),
             search: None,
+            owner_user_id: None,
             sort,
         })
         .await
@@ -145,6 +146,7 @@ async fn client_key_list_should_forward_the_full_nonzero_u16_page_size() {
             cursor: None,
             page_size: ClientKeyPageSize::new(u16::MAX).expect("maximum page size"),
             search: None,
+            owner_user_id: None,
             sort: ClientKeySort {
                 field: ClientKeySortField::CreatedAt,
                 direction: SortDirection::Desc,

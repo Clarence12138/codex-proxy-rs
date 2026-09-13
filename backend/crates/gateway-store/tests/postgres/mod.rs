@@ -21,6 +21,7 @@ mod execution_buffer;
 mod health;
 mod observability;
 mod ops_events;
+mod portal;
 mod provider_accounts;
 mod proxies;
 mod query_budget;
@@ -88,6 +89,9 @@ impl TestDatabase {
             .run(&pool)
             .await
             .expect("apply test migrations");
+        gateway_store::postgres::apply_portal_migrations(&pool)
+            .await
+            .expect("apply portal migrations");
         Some(Self {
             admin,
             pool,
@@ -237,8 +241,17 @@ async fn connect_and_migrate_should_apply_all_migrations_once_and_reopen_cleanly
             "model_requests",
             "ops_events",
             "outbound_proxies",
+            "plan_account_groups",
+            "portal_audit_events",
+            "portal_schema_migrations",
+            "portal_sessions",
+            "portal_user_budget_windows",
+            "portal_user_charge_events",
+            "portal_users",
             "provider_accounts",
             "runtime_settings",
+            "subscription_plans",
+            "user_subscriptions",
         ]
     );
     assert_eq!(session_settings, ("codex-proxy-rs".to_owned(), 30, 5, 30));

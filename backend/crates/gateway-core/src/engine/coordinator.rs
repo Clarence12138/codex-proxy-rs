@@ -32,6 +32,7 @@ use crate::event::{
 use crate::lifecycle::CancellationToken;
 use crate::metering::Decimal;
 use crate::operation::{Operation, ProviderSessionState};
+use crate::policy::OwnerScopeId;
 use crate::routing::RoutingPlan;
 use futures::future::{BoxFuture, Fuse};
 use futures::{FutureExt, StreamExt, pin_mut, select_biased};
@@ -131,6 +132,7 @@ where
     ) -> Result<ResponseExecutionSession<S>, EngineError> {
         let request_id = request.id.clone();
         let client_api_key_ref = request.client_api_key_ref.clone();
+        let owner_scope_id = request.owner_scope_id.clone();
         let timing_started_at = Instant::now();
         let deadline = request.deadline_at;
         let account_state_owner = continuation
@@ -166,6 +168,7 @@ where
             engine: Arc::clone(&self.engine),
             request_id,
             client_api_key_ref,
+            owner_scope_id,
             observation: ResponseObservation::new(timing_started_at),
             budget_prior_attempts_usd: Decimal::ZERO,
             budget_attempt_already_counted: false,
@@ -267,6 +270,7 @@ pub struct ResponseExecutionSession<S: ?Sized> {
     engine: Arc<GatewayEngine<S>>,
     request_id: ModelRequestId,
     client_api_key_ref: crate::policy::ClientApiKeyId,
+    owner_scope_id: Option<OwnerScopeId>,
     observation: ResponseObservation,
     budget_prior_attempts_usd: Decimal,
     budget_attempt_already_counted: bool,
@@ -510,6 +514,7 @@ where
         super::budget::ClientBudgetCharge {
             key_id: self.client_api_key_ref.clone(),
             request_id: self.request_id.clone(),
+            owner_scope_id: self.owner_scope_id.clone(),
             amount_usd,
             completed_at: self.finalized_at.unwrap_or_else(SystemTime::now),
         }

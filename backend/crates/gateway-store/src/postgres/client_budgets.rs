@@ -33,20 +33,39 @@ impl PgClientBudgetStore {
 
     async fn admit_inner(&self, key_id: ClientApiKeyId) -> Result<(), GatewayError> {
         // 短暂存储故障后按原金额重试；进程退出丢失的费用不转成人工核账或阻断 Key。
+        let owner = sqlx::query_scalar::<_, Option<String>>(
+            "select owner_user_id from client_api_keys where id = $1",
+        )
+        .bind(key_id.as_str())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|_| unavailable())?
+        .flatten();
         let retries = self
             .retry
             .lock()
             .map_err(|_| unavailable())?
             .values()
-            .filter(|charge| charge.key_id == key_id)
+            .filter(|charge| {
+                charge.key_id == key_id
+                    || (owner.is_some()
+                        && charge.owner_scope_id.as_ref().map(|id| id.as_str()) == owner.as_deref())
+            })
             .cloned()
             .collect::<Vec<_>>();
         for charge in retries {
             self.settle(charge).await.map_err(|_| unavailable())?;
         }
         let mut tx = self.pool.begin().await.map_err(|_| unavailable())?;
+        if let Some(owner_id) = owner.as_deref() {
+            sqlx::query_scalar::<_, String>("select id from portal_users where id = $1 for update")
+                .bind(owner_id)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(|_| unavailable())?;
+        }
         let row = sqlx::query(
-            "select daily_limit_usd::text, weekly_limit_usd::text, enabled
+            "select daily_limit_usd::text, weekly_limit_usd::text, enabled, owner_user_id
             from client_api_keys where id = $1 for update",
         )
         .bind(key_id.as_str())
@@ -119,12 +138,21 @@ impl PgClientBudgetStore {
                 .with_retry_after(retry));
             }
         }
+        if let Some(owner_id) = owner.as_deref() {
+            admit_user_budget(&mut tx, owner_id, now).await?;
+        }
         tx.commit().await.map_err(|_| unavailable())
     }
 
     async fn settle_inner(&self, charge: &ClientBudgetCharge) -> Result<(), ClientBudgetError> {
         let mut tx = self.pool.begin().await.map_err(|_| ClientBudgetError)?;
-        // 与准入统一先锁 Key，再写窗口和费用，串行化同一 Key 的并发结算。
+        if let Some(owner) = charge.owner_scope_id.as_ref() {
+            sqlx::query_scalar::<_, String>("select id from portal_users where id = $1 for update")
+                .bind(owner.as_str())
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(|_| ClientBudgetError)?;
+        }
         let key = sqlx::query_scalar::<_, String>(
             "select id from client_api_keys where id = $1 for update",
         )
@@ -132,10 +160,18 @@ impl PgClientBudgetStore {
         .fetch_optional(&mut *tx)
         .await
         .map_err(|_| ClientBudgetError)?;
-        let Some(key) = key else { return Ok(()) }; // 删除 Key 时也会删除其费用记录。
-        settle_in_transaction(&mut tx, &key, charge)
-            .await
-            .map_err(|_| ClientBudgetError)?;
+        if let Some(key) = key.as_deref() {
+            settle_in_transaction(&mut tx, key, charge)
+                .await
+                .map_err(|_| ClientBudgetError)?;
+        }
+        if let Some(owner) = charge.owner_scope_id.as_ref() {
+            settle_user_in_transaction(&mut tx, owner.as_str(), charge)
+                .await
+                .map_err(|_| ClientBudgetError)?;
+        } else if key.is_none() {
+            return Ok(());
+        }
         tx.commit().await.map_err(|_| ClientBudgetError)
     }
 }
@@ -209,6 +245,165 @@ async fn advance_windows(
     Ok(())
 }
 
+async fn admit_user_budget(
+    tx: &mut Transaction<'_, Postgres>,
+    user_id: &str,
+    now: DateTime<Utc>,
+) -> Result<(), GatewayError> {
+    let plan = sqlx::query(
+        "select p.daily_limit_usd::text, p.weekly_limit_usd::text, p.enabled as plan_enabled,
+                s.starts_at, s.ends_at, u.status
+         from portal_users u
+         left join user_subscriptions s on s.user_id = u.id and s.status = 'active'
+         left join subscription_plans p on p.id = s.plan_id
+         where u.id = $1",
+    )
+    .bind(user_id)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(|_| unavailable())?
+    .ok_or_else(|| {
+        GatewayError::new(GatewayErrorKind::PolicyDenied, "portal user is unavailable")
+    })?;
+    if plan.get::<String, _>("status") != "active" {
+        return Err(GatewayError::new(
+            GatewayErrorKind::PolicyDenied,
+            "portal user is disabled",
+        ));
+    }
+    let plan_enabled = match plan.try_get::<Option<bool>, _>("plan_enabled") {
+        Ok(Some(value)) => value,
+        Ok(None) => {
+            return Err(GatewayError::new(
+                GatewayErrorKind::PolicyDenied,
+                "subscription is not active",
+            ));
+        }
+        Err(_) => return Err(unavailable()),
+    };
+    if !plan_enabled {
+        return Err(GatewayError::new(
+            GatewayErrorKind::PolicyDenied,
+            "subscription is not active",
+        ));
+    }
+    let starts_at = required_optional_time(&plan, "starts_at")?;
+    let ends_at = required_optional_time(&plan, "ends_at")?;
+    if starts_at.is_none_or(|start| start > now) || ends_at.is_some_and(|end| now >= end) {
+        return Err(GatewayError::new(
+            GatewayErrorKind::PolicyDenied,
+            "subscription is not active",
+        ));
+    }
+    let limits = ClientBudgetLimits {
+        daily_usd: required_decimal(&plan, "daily_limit_usd")?,
+        weekly_usd: required_decimal(&plan, "weekly_limit_usd")?,
+    };
+    advance_user_windows(tx, user_id, now)
+        .await
+        .map_err(|_| unavailable())?;
+    if !limits.is_limited() {
+        return Ok(());
+    }
+    let window = sqlx::query(
+        "select daily_used_usd::text, weekly_used_usd::text, daily_end, weekly_end
+         from portal_user_budget_windows where user_id = $1",
+    )
+    .bind(user_id)
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(|_| unavailable())?;
+    let daily: Decimal = window
+        .get::<String, _>("daily_used_usd")
+        .parse()
+        .map_err(|_| unavailable())?;
+    let weekly: Decimal = window
+        .get::<String, _>("weekly_used_usd")
+        .parse()
+        .map_err(|_| unavailable())?;
+    let daily_exceeded = limits.daily_usd != Decimal::ZERO && daily >= limits.daily_usd;
+    let weekly_exceeded = limits.weekly_usd != Decimal::ZERO && weekly >= limits.weekly_usd;
+    if daily_exceeded || weekly_exceeded {
+        let daily_end: DateTime<Utc> = window.get("daily_end");
+        let weekly_end: DateTime<Utc> = window.get("weekly_end");
+        let reset = if weekly_exceeded {
+            weekly_end
+        } else {
+            daily_end
+        };
+        let retry = (reset - now).to_std().unwrap_or(Duration::from_secs(1));
+        return Err(
+            GatewayError::new(GatewayErrorKind::RateLimited, "user budget is exhausted")
+                .with_client_code(if weekly_exceeded {
+                    "user_weekly_budget_exceeded"
+                } else {
+                    "user_daily_budget_exceeded"
+                })
+                .with_retry_after(retry),
+        );
+    }
+    Ok(())
+}
+
+async fn advance_user_windows(
+    tx: &mut Transaction<'_, Postgres>,
+    user_id: &str,
+    now: DateTime<Utc>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "insert into portal_user_budget_windows
+        (user_id, daily_start, daily_end, weekly_start, weekly_end)
+        select $1, day, day + interval '24 hours', day, day + interval '168 hours'
+        from (select date_trunc('day', $2::timestamptz at time zone 'Asia/Shanghai') at time zone 'Asia/Shanghai' as day) d
+        on conflict (user_id) do update set
+            daily_start = case when portal_user_budget_windows.daily_end <= $2 then excluded.daily_start else portal_user_budget_windows.daily_start end,
+            daily_end = case when portal_user_budget_windows.daily_end <= $2 then excluded.daily_end else portal_user_budget_windows.daily_end end,
+            daily_used_usd = case when portal_user_budget_windows.daily_end <= $2 then 0 else portal_user_budget_windows.daily_used_usd end,
+            weekly_start = case when portal_user_budget_windows.weekly_end <= $2 then excluded.weekly_start else portal_user_budget_windows.weekly_start end,
+            weekly_end = case when portal_user_budget_windows.weekly_end <= $2 then excluded.weekly_end else portal_user_budget_windows.weekly_end end,
+            weekly_used_usd = case when portal_user_budget_windows.weekly_end <= $2 then 0 else portal_user_budget_windows.weekly_used_usd end",
+    )
+    .bind(user_id)
+    .bind(now)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+async fn settle_user_in_transaction(
+    tx: &mut Transaction<'_, Postgres>,
+    user_id: &str,
+    charge: &ClientBudgetCharge,
+) -> Result<(), sqlx::Error> {
+    advance_user_windows(tx, user_id, Utc::now()).await?;
+    let changed = sqlx::query(
+        "insert into portal_user_charge_events (request_id, user_id, amount_usd, completed_at)
+            values ($1, $2, $3::text::numeric, $4)
+            on conflict (request_id) do nothing",
+    )
+    .bind(charge.request_id.as_str())
+    .bind(user_id)
+    .bind(charge.amount_usd.canonical())
+    .bind(DateTime::<Utc>::from(charge.completed_at))
+    .execute(&mut **tx)
+    .await?
+    .rows_affected();
+    if changed == 1 {
+        sqlx::query(
+            "update portal_user_budget_windows set
+                daily_used_usd = daily_used_usd + case when $3 >= daily_start and $3 < daily_end then $2::text::numeric else 0 end,
+                weekly_used_usd = weekly_used_usd + case when $3 >= weekly_start and $3 < weekly_end then $2::text::numeric else 0 end
+                where user_id = $1",
+        )
+        .bind(user_id)
+        .bind(charge.amount_usd.canonical())
+        .bind(DateTime::<Utc>::from(charge.completed_at))
+        .execute(&mut **tx)
+        .await?;
+    }
+    Ok(())
+}
+
 pub(super) async fn load_client_key_budgets(
     pool: &PgPool,
     records: &mut [super::ClientApiKeyRecord],
@@ -264,6 +459,24 @@ pub(super) async fn load_client_key_budgets(
             .ok_or_else(|| postgres_unavailable("load client budget policy"))?;
     }
     Ok(())
+}
+
+fn required_optional_time(
+    row: &sqlx::postgres::PgRow,
+    field: &str,
+) -> Result<Option<DateTime<Utc>>, GatewayError> {
+    row.try_get(field).map_err(|_| unavailable())
+}
+
+fn required_decimal(row: &sqlx::postgres::PgRow, field: &str) -> Result<Decimal, GatewayError> {
+    match row.try_get::<Option<String>, _>(field) {
+        Ok(Some(value)) => value.parse().map_err(|_| unavailable()),
+        Ok(None) => Err(GatewayError::new(
+            GatewayErrorKind::PolicyDenied,
+            "subscription is not active",
+        )),
+        Err(_) => Err(unavailable()),
+    }
 }
 
 fn unavailable() -> GatewayError {

@@ -51,6 +51,7 @@ pub struct ListClientKeysQuery {
     cursor: Option<String>,
     limit: Option<u16>,
     search: Option<String>,
+    owner_user_id: Option<String>,
     sort_by: Option<String>,
     sort_direction: Option<String>,
 }
@@ -87,10 +88,21 @@ impl ListClientKeysQuery {
             .transpose()?;
         let page_size = ClientKeyPageSize::new(self.limit.unwrap_or(DEFAULT_PAGE_SIZE))
             .map_err(|_| WireValidationError::new("limit"))?;
+        let owner_user_id = self
+            .owner_user_id
+            .map(|owner| owner.trim().to_owned())
+            .filter(|owner| !owner.is_empty());
+        if owner_user_id
+            .as_deref()
+            .is_some_and(|owner| owner.len() > 128 || owner.chars().any(char::is_control))
+        {
+            return Err(WireValidationError::new("ownerUserId"));
+        }
         Ok(ClientKeyListQuery {
             cursor,
             page_size,
             search: search.filter(|search| !search.is_empty()),
+            owner_user_id,
             sort: domain_sort(sort),
         })
     }
@@ -281,6 +293,7 @@ pub struct ClientKeyView {
     groups: Vec<ClientKeyGroupView>,
     provider_kinds: Vec<String>,
     prefix: String,
+    owner_user_id: Option<String>,
     enabled: bool,
     max_concurrency: u64,
     requests_per_minute: u64,
@@ -332,6 +345,7 @@ impl From<ClientKeyRecord> for ClientKeyView {
                 .map(|provider| provider.to_string())
                 .collect(),
             prefix: record.prefix,
+            owner_user_id: record.owner_user_id,
             enabled: record.enabled,
             max_concurrency: record.limits.max_concurrency,
             requests_per_minute: record.limits.requests_per_minute,

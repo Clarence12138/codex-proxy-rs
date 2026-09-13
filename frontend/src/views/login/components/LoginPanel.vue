@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Eye, EyeOff, KeyRound, Mail, Moon, Sun } from '@lucide/vue'
+import { CircleAlert, Eye, EyeOff, KeyRound, Mail, Moon, Sun } from '@lucide/vue'
 import { computed, shallowRef } from 'vue'
 
 import AppBrandMark from '@/components/AppBrandMark.vue'
@@ -12,11 +12,15 @@ import BaseMotionIcon from '@/components/base/BaseMotionIcon.vue'
 type ThemeName = 'light' | 'dark'
 type PasswordInputType = 'password' | 'text'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
+  error?: string | null
   loading: boolean
   submitDisabled: boolean
   effectiveTheme: ThemeName
-}>()
+  caption?: string
+}>(), {
+  caption: 'ADMIN REALM',
+})
 
 const emit = defineEmits<{
   submit: []
@@ -61,7 +65,7 @@ function togglePasswordVisible(): void {
             Codex Proxy RS
           </strong>
           <span class="font-mono text-[10px] leading-[1.2] font-normal text-(--cp-login-brand-caption-color)">
-            ADMIN REALM
+            {{ caption }}
           </span>
         </span>
       </div>
@@ -93,6 +97,11 @@ function togglePasswordVisible(): void {
     </section>
 
     <div class="grid gap-3">
+      <div v-if="props.error" class="login-error" role="alert">
+        <CircleAlert :size="16" />
+        <p>{{ props.error }}</p>
+      </div>
+
       <div class="grid min-w-0 gap-2">
         <span class="text-cp leading-[1.1] font-bold text-(--cp-login-label-color)">管理员账号</span>
         <BaseInput
@@ -281,6 +290,26 @@ function togglePasswordVisible(): void {
 
 .login-theme-toggle.is-dark .login-theme-knob {
   transform: translateX(33px);
+}
+
+.login-error {
+  display: flex;
+  min-height: 38px;
+  align-items: center;
+  gap: 10px;
+  border-radius: 6px;
+  background: var(--cp-login-error-bg);
+  padding: 0 12px;
+  color: var(--cp-login-error-icon-color);
+}
+
+.login-error p {
+  min-width: 0;
+  margin: 0;
+  color: var(--cp-login-error-text-color);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
 }
 
 .login-password-toggle {

@@ -127,6 +127,7 @@ impl RuntimeAccountDirectory {
 pub enum AccountRoutingScopeKind {
     All,
     Groups,
+    Empty,
 }
 
 impl AccountRoutingScopeKind {
@@ -135,6 +136,7 @@ impl AccountRoutingScopeKind {
         match self {
             Self::All => "all",
             Self::Groups => "groups",
+            Self::Empty => "empty",
         }
     }
 }
@@ -187,6 +189,15 @@ impl AccountRoutingSnapshot {
         }
     }
 
+    /// 用户 Key 无分组时的空池，不回退为全部账号。
+    #[must_use]
+    pub fn empty() -> Self {
+        Self {
+            kind: AccountRoutingScopeKind::Empty,
+            groups: Arc::from([]),
+        }
+    }
+
     #[must_use]
     pub const fn kind(&self) -> AccountRoutingScopeKind {
         self.kind
@@ -207,12 +218,18 @@ pub enum ClientRoutingScope {
         enabled_group_ids: Arc<BTreeSet<AccountGroupId>>,
         provider_kinds: Arc<BTreeSet<ProviderKind>>,
     },
+    Empty,
 }
 
 impl ClientRoutingScope {
     #[must_use]
     pub fn all_accounts() -> Self {
         Self::AllAccounts
+    }
+
+    #[must_use]
+    pub const fn empty() -> Self {
+        Self::Empty
     }
 
     pub fn restricted(
@@ -257,6 +274,7 @@ impl FrozenAccountScope {
         };
         match &self.client_scope {
             ClientRoutingScope::AllAccounts => true,
+            ClientRoutingScope::Empty => false,
             ClientRoutingScope::Restricted {
                 enabled_group_ids, ..
             } => account
@@ -270,6 +288,7 @@ impl FrozenAccountScope {
     pub fn provider_kinds(&self) -> &BTreeSet<ProviderKind> {
         match &self.client_scope {
             ClientRoutingScope::AllAccounts => self.directory.providers_with_accounts(),
+            ClientRoutingScope::Empty => empty_provider_kinds(),
             ClientRoutingScope::Restricted { provider_kinds, .. } => provider_kinds,
         }
     }
@@ -278,6 +297,7 @@ impl FrozenAccountScope {
     pub fn routing_snapshot(&self) -> AccountRoutingSnapshot {
         match &self.client_scope {
             ClientRoutingScope::AllAccounts => AccountRoutingSnapshot::all(),
+            ClientRoutingScope::Empty => AccountRoutingSnapshot::empty(),
             ClientRoutingScope::Restricted { bound_groups, .. } => {
                 AccountRoutingSnapshot::groups(bound_groups.to_vec())
             }
@@ -288,4 +308,10 @@ impl FrozenAccountScope {
     pub const fn directory(&self) -> &Arc<RuntimeAccountDirectory> {
         &self.directory
     }
+}
+
+fn empty_provider_kinds() -> &'static BTreeSet<ProviderKind> {
+    static EMPTY: std::sync::LazyLock<BTreeSet<ProviderKind>> =
+        std::sync::LazyLock::new(BTreeSet::new);
+    &EMPTY
 }

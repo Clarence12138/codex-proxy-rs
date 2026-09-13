@@ -49,6 +49,63 @@ fn zero_rate_limits_should_mean_unlimited() {
 }
 
 #[test]
+fn expired_owner_scope_should_deny_authorization() {
+    use gateway_core::policy::{ClientOwnerScope, OwnerScopeId};
+    use std::time::{Duration, SystemTime};
+    let policy = ClientPolicy::new(
+        ClientApiKeyId::new("key_owned").expect("valid key ID"),
+        plaintext("sk_owned_secret"),
+        account_scope(),
+        true,
+        RateLimits::unlimited(),
+    )
+    .with_owner_scope(ClientOwnerScope::new(
+        OwnerScopeId::new("usr_owned").expect("owner id"),
+        RateLimits::unlimited(),
+        true,
+        None,
+        Some(SystemTime::UNIX_EPOCH + Duration::from_secs(1)),
+    ));
+    assert!(policy.authorize().is_err());
+}
+
+#[test]
+fn future_owner_scope_start_should_deny_until_the_window_opens() {
+    use gateway_core::policy::{ClientOwnerScope, OwnerScopeId};
+    use std::time::{Duration, SystemTime};
+    let policy = ClientPolicy::new(
+        ClientApiKeyId::new("key_future").expect("valid key ID"),
+        plaintext("sk_future_secret"),
+        account_scope(),
+        true,
+        RateLimits::unlimited(),
+    )
+    .with_owner_scope(ClientOwnerScope::new(
+        OwnerScopeId::new("usr_future").expect("owner id"),
+        RateLimits::unlimited(),
+        true,
+        Some(SystemTime::now() + Duration::from_secs(3600)),
+        None,
+    ));
+    assert!(policy.authorize().is_err());
+    let live = ClientPolicy::new(
+        ClientApiKeyId::new("key_live").expect("valid key ID"),
+        plaintext("sk_live_secret"),
+        account_scope(),
+        true,
+        RateLimits::unlimited(),
+    )
+    .with_owner_scope(ClientOwnerScope::new(
+        OwnerScopeId::new("usr_live").expect("owner id"),
+        RateLimits::unlimited(),
+        true,
+        Some(SystemTime::now() - Duration::from_secs(60)),
+        Some(SystemTime::now() + Duration::from_secs(3600)),
+    ));
+    assert!(live.authorize().is_ok());
+}
+
+#[test]
 fn plaintext_client_key_debug_should_be_redacted() {
     let key = plaintext("sk_must_not_appear");
 

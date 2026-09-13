@@ -146,6 +146,7 @@ fn generated_client_key_format_remains_valid() {
         key: format!("sk_{}", "a".repeat(43)),
         max_concurrency: 0,
         requests_per_minute: 0,
+        owner_user_id: None,
     };
     assert!(key.validate().is_ok());
 }
@@ -318,6 +319,7 @@ async fn client_key_list_uses_safe_keyset_search_and_filtered_total() {
             cursor: None,
             page_size: 2,
             search: None,
+            owner_user_id: None,
             sort: ClientApiKeySort::default(),
         })
         .await
@@ -330,6 +332,7 @@ async fn client_key_list_uses_safe_keyset_search_and_filtered_total() {
             cursor: first.next_cursor,
             page_size: 2,
             search: None,
+            owner_user_id: None,
             sort: ClientApiKeySort::default(),
         })
         .await
@@ -342,6 +345,7 @@ async fn client_key_list_uses_safe_keyset_search_and_filtered_total() {
             cursor: None,
             page_size: 10,
             search: Some("needle".to_owned()),
+            owner_user_id: None,
             sort: ClientApiKeySort::default(),
         })
         .await
@@ -360,6 +364,7 @@ fn client_key_cursor_is_bound_to_one_sort_contract() {
             cursor: None,
             page_size: u16::MAX,
             search: None,
+            owner_user_id: None,
             sort: created_sort,
         }
         .validate()
@@ -375,6 +380,7 @@ fn client_key_cursor_is_bound_to_one_sort_contract() {
         cursor: Some(cursor),
         page_size: 10,
         search: None,
+        owner_user_id: None,
         sort: ClientApiKeySort {
             field: ClientApiKeySortField::Name,
             direction: ClientApiKeySortDirection::Asc,
@@ -401,6 +407,7 @@ async fn admin_client_key_adapter_should_preserve_the_full_nonzero_u16_page_size
             cursor: None,
             page_size: ClientKeyPageSize::new(u16::MAX).expect("maximum page size"),
             search: None,
+            owner_user_id: None,
             sort: AdminClientKeySort {
                 field: AdminClientKeySortField::CreatedAt,
                 direction: AdminSortDirection::Desc,
@@ -505,6 +512,7 @@ async fn client_key_database_sort_is_stable_and_keeps_null_last_used_at_last() {
                     cursor,
                     page_size: 1,
                     search: None,
+                    owner_user_id: None,
                     sort,
                 })
                 .await
@@ -641,6 +649,67 @@ fn client_key_debug_redacts_plaintext() {
         key: secret.clone(),
         max_concurrency: 0,
         requests_per_minute: 0,
+        owner_user_id: None,
     };
     assert!(!format!("{key:?}").contains(&secret));
+}
+
+#[tokio::test]
+async fn client_key_list_filters_by_owner_user_id() {
+    let Some(database) = TestDatabase::create("client_key_owner_filter").await else {
+        return;
+    };
+    sqlx::query(
+        "insert into portal_users (id, username, password_hash, status, created_at, updated_at)
+         values ('usr_owner_filter', 'owner-filter', 'hash', 'active', now(), now())",
+    )
+    .execute(&database.pool)
+    .await
+    .expect("seed portal user");
+    for (id, owner, fill) in [
+        ("key_owned_filter", Some("usr_owner_filter"), 'o'),
+        ("key_admin_filter", None, 'a'),
+    ] {
+        sqlx::query(
+            "insert into client_api_keys (
+               id, name, key, enabled, max_concurrency, requests_per_minute,
+               created_at, updated_at, owner_user_id
+             ) values ($1, $1, $2, true, 0, 0, now(), now(), $3)",
+        )
+        .bind(id)
+        .bind(format!("sk_{}", fill.to_string().repeat(43)))
+        .bind(owner)
+        .execute(&database.pool)
+        .await
+        .expect("seed owned client key");
+    }
+    let repository = PgClientApiKeyRepository::new(database.pool.clone());
+    let owned = repository
+        .list_client_api_keys(ClientApiKeyListQuery {
+            cursor: None,
+            page_size: 10,
+            search: None,
+            owner_user_id: Some("usr_owner_filter".to_owned()),
+            sort: ClientApiKeySort::default(),
+        })
+        .await
+        .expect("filter owned keys");
+    assert_eq!(owned.total, 1);
+    assert_eq!(owned.items[0].id, "key_owned_filter");
+    assert_eq!(
+        owned.items[0].owner_user_id.as_deref(),
+        Some("usr_owner_filter")
+    );
+    let all = repository
+        .list_client_api_keys(ClientApiKeyListQuery {
+            cursor: None,
+            page_size: 10,
+            search: None,
+            owner_user_id: None,
+            sort: ClientApiKeySort::default(),
+        })
+        .await
+        .expect("list all keys");
+    assert_eq!(all.total, 2);
+    database.close().await;
 }

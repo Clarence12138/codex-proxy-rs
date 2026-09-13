@@ -236,6 +236,28 @@ Responses wire 之间的协议转换层，转换只在 xAI Provider 内完成。
 | `GET` | `/api/admin/auth/status` | 无 | 返回当前 Cookie 是否已认证 |
 | `POST` | `/api/admin/auth/logout` | 无 | 删除当前会话并清除 Cookie |
 
+### Portal 用户面板
+
+用户面使用独立 Cookie `cpr_portal_session`，不改变 `/v1` 协议。密钥仍写入 `client_api_keys`，请求仍写入 `model_requests`。响应信封与管理端相同。带 `Origin` 的写请求必须与 `Host` 同源。
+
+| 方法 | 路由 | 说明 |
+| --- | --- | --- |
+| `POST` | `/api/portal/auth/login` | 用户登录 |
+| `GET` | `/api/portal/auth/status` | 当前 Cookie 是否已认证 |
+| `POST` | `/api/portal/auth/logout` | 退出 |
+| `GET` | `/api/portal/me` | 当前套餐与用户合计日/周已用 |
+| `GET`/`POST` | `/api/portal/keys` | 列出或创建当前用户 Key |
+| `POST` | `/api/portal/keys/update` | 更新名称与限额 |
+| `POST` | `/api/portal/keys/enable` `/disable` `/delete` | 启用、停用或删除 |
+| `GET` | `/api/portal/keys/reveal` | 揭示明文 |
+| `GET` | `/api/portal/usage/records` | 当前用户用量，游标为 `startedAt|id` |
+| `GET` | `/api/portal/usage/summary` | 成功请求合计 |
+| `GET`/`POST` | `/api/admin/portal/users` 及 `/create` `/enable` `/disable` `/reset-password` | 管理员用户管理 |
+| `GET`/`POST` | `/api/admin/portal/plans` 及 `/create` `/update` | 套餐 |
+| `POST` | `/api/admin/portal/subscriptions/assign` `/disable` | 开通或停用订阅 |
+
+用户用量接口不返回上游账号邮箱、内部 metadata、原始诊断或凭据。用户 Key 必须绑定套餐分组，空分组不会回退到全部账号。
+
 ## 5. 账号
 
 账号 API 使用统一路由，不存在 Provider Instance 或 Provider 专属账号路由。需要 Provider 的请求只接受
@@ -588,7 +610,7 @@ PostgreSQL 或 Redis。
 
 | 方法 | 路由 | 主要 query/body | 说明 |
 | --- | --- | --- | --- |
-| `GET` | `/api/admin/client-keys` | `cursor`、`limit`、`search`、`sortBy`、`sortDirection` | 游标分页查询 |
+| `GET` | `/api/admin/client-keys` | `cursor`、`limit`、`search`、`ownerUserId`、`sortBy`、`sortDirection` | 游标分页查询；`ownerUserId` 只返回该拼车用户的 Key |
 | `POST` | `/api/admin/client-keys/create` | 创建字段 | 创建带账号范围的 Client Key |
 | `GET` | `/api/admin/client-keys/reveal` | `id` | 显式读取完整明文 Key |
 | `POST` | `/api/admin/client-keys/update` | 更新字段 | 原子更新名称、分组范围和限额 |

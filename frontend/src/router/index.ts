@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 
 import { useAuthStore } from '@/stores/modules/auth'
+import { usePortalAuthStore } from '@/stores/modules/portal-auth'
 import { routes } from './routes'
 
 export const router = createRouter({
@@ -10,28 +11,35 @@ export const router = createRouter({
 
 // 路由守卫
 router.beforeEach(async (to) => {
-  const authStore = useAuthStore()
-
-  // 登录页面不需要认证
-  if (to.path === '/login') {
-    // 如果已登录，重定向到首页
-    if (authStore.isAuthenticated) {
-      return '/'
+  const isPortal = to.path === '/portal' || to.path.startsWith('/portal/')
+  if (isPortal) {
+    const portalAuth = usePortalAuthStore()
+    if (to.path === '/portal/login') {
+      if (portalAuth.isAuthenticated)
+        return '/portal'
+      return
     }
+    if (!portalAuth.isAuthenticated && !portalAuth.sessionChecked) {
+      const isAuth = await portalAuth.checkAuth()
+      if (!isAuth)
+        return '/portal/login'
+    }
+    if (!portalAuth.isAuthenticated)
+      return '/portal/login'
     return
   }
 
-  // 其他页面需要认证
+  const authStore = useAuthStore()
+  if (to.path === '/login') {
+    if (authStore.isAuthenticated)
+      return '/'
+    return
+  }
   if (!authStore.isAuthenticated && !authStore.sessionChecked) {
-    // 尝试检查认证状态
     const isAuth = await authStore.checkAuth()
-    if (!isAuth) {
-      // 未认证，跳转到登录页
+    if (!isAuth)
       return '/login'
-    }
   }
-
-  if (!authStore.isAuthenticated) {
+  if (!authStore.isAuthenticated)
     return '/login'
-  }
 })

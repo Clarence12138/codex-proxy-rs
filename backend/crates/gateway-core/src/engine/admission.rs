@@ -4,7 +4,7 @@ use std::time::{Duration, SystemTime};
 
 use futures::future::BoxFuture;
 
-use crate::policy::{ClientApiKeyId, RateLimits};
+use crate::policy::{ClientApiKeyId, OwnerScopeId, RateLimits};
 
 use super::{ExecutionStore, ModelRequestId};
 
@@ -14,6 +14,8 @@ pub struct ClientAdmissionRequest {
     pub client_api_key_id: ClientApiKeyId,
     pub lease_ttl: Duration,
     pub limits: RateLimits,
+    pub owner_scope_id: Option<OwnerScopeId>,
+    pub owner_limits: RateLimits,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,6 +45,7 @@ pub struct RunningAdmissionFact {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClientAdmissionRecovery {
     pub client_api_key_id: ClientApiKeyId,
+    pub owner_scope_id: Option<OwnerScopeId>,
     pub recent_requests: Vec<RecentAdmissionFact>,
     pub running_requests: Vec<RunningAdmissionFact>,
 }
@@ -67,6 +70,7 @@ pub trait ClientAdmissionPort: Send + Sync {
         &'a self,
         client_api_key_id: &'a ClientApiKeyId,
         model_request_id: &'a ModelRequestId,
+        owner_scope_id: Option<&'a OwnerScopeId>,
     ) -> BoxFuture<'a, Result<bool, ClientAdmissionError>>;
 
     fn restore(

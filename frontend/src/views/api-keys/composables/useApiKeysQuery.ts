@@ -8,6 +8,7 @@ import { formatDateTime } from '@/utils/date'
 
 export function useApiKeysQuery() {
   const searchQuery = shallowRef('')
+  const ownerUserId = shallowRef('')
   const sort = shallowRef<BaseTableSort>()
   const page = shallowRef(1)
   const pageSize = shallowRef(20)
@@ -45,6 +46,7 @@ export function useApiKeysQuery() {
       cursor,
       limit,
       search,
+      ownerUserId: ownerUserId.value.trim() || undefined,
       sortBy: sort.value?.key,
       sortDirection: sort.value?.direction,
     }, { signal })
@@ -123,7 +125,7 @@ export function useApiKeysQuery() {
   }
 
   watchDebounced(
-    searchQuery,
+    [searchQuery, ownerUserId],
     () => {
       void reloadFromStart()
     },
@@ -139,6 +141,7 @@ export function useApiKeysQuery() {
     apiKeys,
     loadApiKeys: reloadFromStart,
     searchQuery,
+    ownerUserId,
     sort,
     apiKeyPagination,
     handlePageChange,

@@ -4,7 +4,11 @@ use std::time::SystemTime;
 
 use futures::future::BoxFuture;
 
-use crate::{error::GatewayError, metering::Decimal, policy::ClientApiKeyId};
+use crate::{
+    error::GatewayError,
+    metering::Decimal,
+    policy::{ClientApiKeyId, OwnerScopeId},
+};
 
 use super::ModelRequestId;
 
@@ -34,6 +38,8 @@ pub struct ClientBudgetStatus {
 pub struct ClientBudgetCharge {
     pub key_id: ClientApiKeyId,
     pub request_id: ModelRequestId,
+    /// 请求开始时冻结的用户范围，Key 删除后仍用于用户账本。
+    pub owner_scope_id: Option<OwnerScopeId>,
     /// 已取得的 USD 费用，包含重试；缺少费用的尝试按零累计。
     pub amount_usd: Decimal,
     pub completed_at: SystemTime,

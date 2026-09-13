@@ -28,6 +28,7 @@ fn charge(key: &str, request: &str, amount: &str) -> ClientBudgetCharge {
     ClientBudgetCharge {
         key_id: key_id(key),
         request_id: ModelRequestId::new(format!("req_{request}")).unwrap(),
+        owner_scope_id: None,
         amount_usd: amount.parse().unwrap(),
         completed_at: SystemTime::now(),
     }

@@ -650,6 +650,7 @@ fn model_request(operation: &Operation, deadline: SystemTime) -> NewModelRequest
         id: ModelRequestId::new("req_core_1").expect("request id"),
         client_api_key_id: Some(client_key.clone()),
         client_api_key_ref: client_key,
+        owner_scope_id: None,
         config_revision: ConfigRevision::new(1).expect("config revision"),
         routing: AccountRoutingSnapshot::all(),
         protocol: "openai".to_owned(),

@@ -46,6 +46,9 @@ store:
   #   max_connections: 20
   #   acquire_timeout_seconds: 5
 
+portal:
+  session_ttl_minutes: 1440
+
 admin:
   session_ttl_minutes: 1440
   default_username: 'admin@cpr.local'

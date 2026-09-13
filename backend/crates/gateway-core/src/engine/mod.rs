@@ -32,7 +32,7 @@ use crate::lifecycle::CancellationToken;
 use crate::metering::{CostEstimate, Usage};
 use crate::operation::OperationKind;
 use crate::operation::ProviderSessionState;
-use crate::policy::ClientApiKeyId;
+use crate::policy::{ClientApiKeyId, OwnerScopeId};
 use crate::routing::{ConfigRevision, PublicModelId, UpstreamModelId};
 use crate::upstream::UpstreamSendState;
 use crate::validation::{IdentifierError, validate_text};
@@ -521,6 +521,7 @@ pub struct NewModelRequest {
     pub id: ModelRequestId,
     pub client_api_key_id: Option<ClientApiKeyId>,
     pub client_api_key_ref: ClientApiKeyId,
+    pub owner_scope_id: Option<OwnerScopeId>,
     pub config_revision: ConfigRevision,
     pub routing: crate::routing::AccountRoutingSnapshot,
     pub protocol: String,

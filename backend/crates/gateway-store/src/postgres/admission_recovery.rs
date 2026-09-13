@@ -12,7 +12,7 @@ use gateway_core::{
             ClientAdmissionRecoveryPort, RecentAdmissionFact, RunningAdmissionFact,
         },
     },
-    policy::ClientApiKeyId,
+    policy::{ClientApiKeyId, OwnerScopeId},
 };
 use sqlx::PgPool;
 
@@ -33,6 +33,7 @@ pub struct ClientAdmissionRunningRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClientAdmissionRecovery {
     pub client_api_key_ref: String,
+    pub owner_user_id: Option<String>,
     pub recent_requests: Vec<ClientAdmissionRecentRequest>,
     pub running_requests: Vec<ClientAdmissionRunningRequest>,
 }
@@ -63,8 +64,18 @@ impl ClientAdmissionRecoveryRepository for PgClientAdmissionRecoveryRepository {
         &self,
         window_started_at: DateTime<Utc>,
     ) -> StoreResult<Vec<ClientAdmissionRecovery>> {
-        let rows = sqlx::query_as::<_, (String, String, DateTime<Utc>, DateTime<Utc>, String)>(
-            "select client_api_key_ref, id, started_at, deadline_at, outcome
+        let rows = sqlx::query_as::<
+            _,
+            (
+                String,
+                Option<String>,
+                String,
+                DateTime<Utc>,
+                DateTime<Utc>,
+                String,
+            ),
+        >(
+            "select client_api_key_ref, owner_user_id, id, started_at, deadline_at, outcome
              from model_requests
              where started_at >= $1 or outcome = 'running'
              order by client_api_key_ref, started_at, id",
@@ -74,11 +85,20 @@ impl ClientAdmissionRecoveryRepository for PgClientAdmissionRecoveryRepository {
         .await
         .map_err(|_| postgres_unavailable("load client admission recovery"))?;
         let mut recoveries = BTreeMap::<String, ClientAdmissionRecovery>::new();
-        for (client_api_key_ref, model_request_id, started_at, deadline_at, outcome) in rows {
+        for (
+            client_api_key_ref,
+            owner_user_id,
+            model_request_id,
+            started_at,
+            deadline_at,
+            outcome,
+        ) in rows
+        {
             let recovery = recoveries
                 .entry(client_api_key_ref.clone())
                 .or_insert_with(|| ClientAdmissionRecovery {
                     client_api_key_ref,
+                    owner_user_id,
                     recent_requests: Vec::new(),
                     running_requests: Vec::new(),
                 });
@@ -137,8 +157,14 @@ impl ClientAdmissionRecoveryPort for PgClientAdmissionRecoveryRepository {
                             })
                         })
                         .collect::<Result<Vec<_>, ClientAdmissionError>>()?;
+                    let owner_scope_id = recovery
+                        .owner_user_id
+                        .map(OwnerScopeId::new)
+                        .transpose()
+                        .map_err(|_| ClientAdmissionError)?;
                     Ok(CoreAdmissionRecovery {
                         client_api_key_id,
+                        owner_scope_id,
                         recent_requests,
                         running_requests,
                     })

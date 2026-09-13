@@ -15,6 +15,7 @@ pub(super) const WORKSPACE_MEMBERS: &[&str] = &[
     "crates/gateway-api",
     "crates/gateway-core",
     "crates/gateway-host",
+    "crates/gateway-portal",
     "crates/gateway-protocol",
     "crates/gateway-store",
     "crates/providers/openai",
@@ -168,6 +169,7 @@ const PACKAGE_TO_MEMBER: &[(&str, &str)] = &[
     ("gateway-api", "crates/gateway-api"),
     ("gateway-core", "crates/gateway-core"),
     ("gateway-host", "crates/gateway-host"),
+    ("gateway-portal", "crates/gateway-portal"),
     ("gateway-protocol", "crates/gateway-protocol"),
     ("gateway-store", "crates/gateway-store"),
     ("provider-openai", "crates/providers/openai"),
@@ -176,7 +178,7 @@ const PACKAGE_TO_MEMBER: &[(&str, &str)] = &[
 
 /// Adapter/provider 根门面的稳定合同模块；任何增减都必须同步完成边界审计。
 const ADAPTER_PUBLIC_MODULES: &[(&str, &[&str])] = &[
-    ("crates/gateway-api", &["admin", "openai"]),
+    ("crates/gateway-api", &["admin", "openai", "portal"]),
     (
         "crates/gateway-host",
         &[
@@ -211,17 +213,21 @@ const ALLOWED_INTERNAL_EDGES: &[(&str, &str)] = &[
     ("codex-proxy-rs", "gateway-api"),
     ("codex-proxy-rs", "gateway-core"),
     ("codex-proxy-rs", "gateway-host"),
+    ("codex-proxy-rs", "gateway-portal"),
     ("codex-proxy-rs", "gateway-store"),
     ("codex-proxy-rs", "provider-openai"),
     ("codex-proxy-rs", "provider-xai"),
     ("gateway-admin", "gateway-core"),
     ("gateway-api", "gateway-admin"),
     ("gateway-api", "gateway-core"),
+    ("gateway-api", "gateway-portal"),
     ("gateway-api", "gateway-protocol"),
     ("gateway-host", "gateway-admin"),
     ("gateway-host", "gateway-core"),
     ("gateway-store", "gateway-admin"),
     ("gateway-store", "gateway-core"),
+    ("gateway-store", "gateway-portal"),
+    ("gateway-portal", "gateway-core"),
     ("provider-openai", "gateway-admin"),
     ("provider-openai", "gateway-core"),
     ("provider-openai", "gateway-protocol"),

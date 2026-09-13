@@ -56,6 +56,14 @@ fn source_tree_should_match_frozen_machine_manifest() {
         "src/admin/wire.rs",
         "src/health.rs",
         "src/lib.rs",
+        "src/portal/admin.rs",
+        "src/portal/auth.rs",
+        "src/portal/extract.rs",
+        "src/portal/keys.rs",
+        "src/portal/me.rs",
+        "src/portal/mod.rs",
+        "src/portal/usage.rs",
+        "src/portal/wire.rs",
         "src/openai/auth.rs",
         "src/openai/error.rs",
         "src/openai/images/http.rs",
@@ -121,6 +129,9 @@ fn test_tree_should_match_frozen_rust_mirror() {
         "tests/openai/responses/websocket/protocol.rs",
         "tests/openai/router.rs",
         "tests/openai/search/mod.rs",
+        "tests/portal/auth.rs",
+        "tests/portal/mod.rs",
+        "tests/support.rs",
     ];
     expected.sort_unstable();
 

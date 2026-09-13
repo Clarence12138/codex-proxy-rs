@@ -15,6 +15,7 @@ use gateway_admin::AdminServices;
 use gateway_core::engine::execution::ExecutionService;
 use gateway_core::health::{HealthProbe, WorkerHealthSource};
 use gateway_core::lifecycle::ConnectionLifecycle;
+use gateway_portal::PortalServices;
 use serde::Deserialize;
 use tower_http::cors::CorsLayer;
 use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
@@ -31,6 +32,7 @@ use crate::openai::service::OpenAiService;
 pub mod admin;
 mod health;
 pub mod openai;
+pub mod portal;
 
 /// API-owned HTTP 与静态资源配置。
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -117,6 +119,7 @@ pub fn initialize(
     mut config: ApiConfig,
     execution: Arc<dyn ExecutionService>,
     admin: AdminServices,
+    portal: PortalServices,
     probes: Vec<Arc<dyn HealthProbe>>,
     worker_health: Arc<dyn WorkerHealthSource>,
     lifecycle: Arc<dyn ConnectionLifecycle>,
@@ -128,6 +131,7 @@ pub fn initialize(
         .map_err(|_| ApiError::Config(ApiConfigError::InvalidRequestIdHeader))?;
     let state = ApiState {
         admin,
+        portal,
         openai: OpenAiService::new(execution, lifecycle),
         health: HealthStatus::new(probes, worker_health),
     };
@@ -136,6 +140,7 @@ pub fn initialize(
         .route("/healthz", get(health::healthz))
         .merge(openai::router::router())
         .merge(admin::router::<ApiState>())
+        .merge(portal::router::<ApiState>())
         .fallback_service(ServeDir::new(config.asset_directory).fallback(ServeFile::new(index)));
     if !config.cors_allowed_origins.is_empty() {
         let origins = config
@@ -209,6 +214,7 @@ pub enum ApiError {
 #[derive(Clone)]
 pub(crate) struct ApiState {
     admin: AdminServices,
+    portal: PortalServices,
     openai: OpenAiService,
     health: HealthStatus,
 }
@@ -228,6 +234,12 @@ impl ApiState {
 impl admin::AdminSessionState for ApiState {
     fn admin_services(&self) -> &AdminServices {
         &self.admin
+    }
+}
+
+impl portal::PortalSessionState for ApiState {
+    fn portal_services(&self) -> &PortalServices {
+        &self.portal
     }
 }
 

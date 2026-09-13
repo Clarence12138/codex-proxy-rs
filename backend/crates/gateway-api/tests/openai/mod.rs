@@ -83,6 +83,7 @@ async fn api_router_with_origins_and_worker_health(
         },
         execution,
         admin.services,
+        crate::support::services(),
         Vec::new(),
         worker_health,
         Arc::new(TestLifecycle::default()),
@@ -277,6 +278,7 @@ impl ClientAdmissionPort for UnusedAdmissions {
         &'a self,
         _: &'a ClientApiKeyId,
         _: &'a ModelRequestId,
+        _: Option<&'a gateway_core::policy::OwnerScopeId>,
     ) -> BoxFuture<'a, Result<bool, ClientAdmissionError>> {
         Box::pin(async { unreachable!("authentication fixture does not execute") })
     }

@@ -44,6 +44,7 @@ fn model_request_rejects_mismatched_client_key_live_id() {
         id: "request-1".to_owned(),
         client_api_key_id: Some("key-live".to_owned()),
         client_api_key_ref: "key-history".to_owned(),
+        owner_user_id: None,
         config_revision: 1,
         protocol: "openai".to_owned(),
         operation: "responses".to_owned(),
@@ -96,6 +97,7 @@ async fn merged_model_less_first_attempt_should_match_sequential_semantics() {
         id: "req_merged".to_owned(),
         client_api_key_id: None,
         client_api_key_ref: "key_merged".to_owned(),
+        owner_user_id: None,
         config_revision: 1,
         protocol: "openai".to_owned(),
         operation: "generate_image".to_owned(),
@@ -211,6 +213,7 @@ async fn model_request_persists_group_routing_snapshot_without_live_group_foreig
             id: "req_group_history".to_owned(),
             client_api_key_id: None,
             client_api_key_ref: "key_group_history".to_owned(),
+            owner_user_id: None,
             config_revision: 7,
             routing_scope: "groups".to_owned(),
             routing_group_refs: vec![

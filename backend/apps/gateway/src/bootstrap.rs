@@ -14,6 +14,8 @@ pub struct GatewayConfig {
     host: HostConfig,
     store: gateway_store::StoreConfig,
     admin: gateway_admin::AdminConfig,
+    #[serde(default)]
+    portal: gateway_portal::PortalConfig,
     api: gateway_api::ApiConfig,
     openai: provider_openai::OpenAiConfig,
     xai: provider_xai::XaiConfig,
@@ -34,6 +36,9 @@ impl LoadableConfig for GatewayConfig {
         self.admin
             .resolve_and_validate(source_dir)
             .map_err(|_| ConfigError::InvalidField("admin"))?;
+        self.portal
+            .resolve_and_validate(source_dir)
+            .map_err(|_| ConfigError::InvalidField("portal"))?;
         self.api
             .resolve_and_validate(source_dir)
             .map_err(|_| ConfigError::InvalidField("api"))?;
@@ -55,6 +60,7 @@ pub async fn run() -> Result<(), BootstrapError> {
         host,
         store,
         admin,
+        portal,
         api,
         openai,
         xai,
@@ -87,6 +93,8 @@ pub async fn run() -> Result<(), BootstrapError> {
     )
     .await?;
     host.report_startup_ready("Admin");
+    let portal = gateway_portal::initialize(portal, store.portal_ports(), core.snapshot_control())?;
+    host.report_startup_ready("Portal");
 
     let mut probes = store.health_probes();
     probes.extend(core.health_probes());
@@ -95,6 +103,7 @@ pub async fn run() -> Result<(), BootstrapError> {
         api,
         core.execution_service(),
         admin.services(),
+        portal.services(),
         probes,
         host.worker_health(),
         host.connection_lifecycle(),
@@ -131,6 +140,8 @@ pub enum BootstrapError {
     Core(#[from] gateway_core::CoreError),
     #[error(transparent)]
     Admin(#[from] gateway_admin::model::AdminError),
+    #[error(transparent)]
+    Portal(#[from] gateway_portal::model::PortalError),
     #[error(transparent)]
     Api(#[from] gateway_api::ApiError),
 }

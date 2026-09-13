@@ -10,8 +10,8 @@ use futures::future::BoxFuture;
 use crate::account::{AccountSelectionPolicy, ProviderAccountId, RotationStrategy};
 use crate::operation::Operation;
 use crate::policy::{
-    ClientApiKeyId, ClientPolicy, CodexClientMinVersions, CodexClientVersion,
-    PlaintextClientApiKey, RateLimits,
+    ClientApiKeyId, ClientOwnerScope, ClientPolicy, CodexClientMinVersions, CodexClientVersion,
+    OwnerScopeId, PlaintextClientApiKey, RateLimits,
 };
 use crate::validation::RoutingError;
 
@@ -63,6 +63,11 @@ pub struct SnapshotClientPolicyFacts {
     plaintext_key: PlaintextClientApiKey,
     group_ids: Vec<AccountGroupId>,
     limits: RateLimits,
+    owner_scope_id: Option<OwnerScopeId>,
+    owner_limits: RateLimits,
+    unscoped_means_deny: bool,
+    subscription_starts_at: Option<std::time::SystemTime>,
+    subscription_ends_at: Option<std::time::SystemTime>,
 }
 
 impl SnapshotClientPolicyFacts {
@@ -78,7 +83,29 @@ impl SnapshotClientPolicyFacts {
             plaintext_key,
             group_ids,
             limits,
+            owner_scope_id: None,
+            owner_limits: RateLimits::unlimited(),
+            unscoped_means_deny: false,
+            subscription_starts_at: None,
+            subscription_ends_at: None,
         }
+    }
+
+    /// 附加用户范围；无分组时编译为空池。
+    #[must_use]
+    pub fn with_owner_scope(
+        mut self,
+        owner_scope_id: OwnerScopeId,
+        owner_limits: RateLimits,
+        subscription_starts_at: Option<std::time::SystemTime>,
+        subscription_ends_at: Option<std::time::SystemTime>,
+    ) -> Self {
+        self.owner_scope_id = Some(owner_scope_id);
+        self.owner_limits = owner_limits;
+        self.unscoped_means_deny = true;
+        self.subscription_starts_at = subscription_starts_at;
+        self.subscription_ends_at = subscription_ends_at;
+        self
     }
 }
 
@@ -364,10 +391,12 @@ async fn compile_runtime_snapshot(
     let mut client_policies = Vec::with_capacity(facts.client_policies.len());
     for policy in facts.client_policies {
         let account_scope = if policy.group_ids.is_empty() {
-            FrozenAccountScope::new(
-                Arc::clone(&account_directory),
-                ClientRoutingScope::all_accounts(),
-            )
+            let scope = if policy.unscoped_means_deny {
+                ClientRoutingScope::empty()
+            } else {
+                ClientRoutingScope::all_accounts()
+            };
+            FrozenAccountScope::new(Arc::clone(&account_directory), scope)
         } else {
             let mut seen = BTreeSet::new();
             let mut bound_groups = Vec::with_capacity(policy.group_ids.len());
@@ -395,13 +424,23 @@ async fn compile_runtime_snapshot(
                     .map_err(|_| RuntimeSnapshotCompileError::InvalidData)?,
             )
         };
-        client_policies.push(ClientPolicy::new(
+        let mut compiled = ClientPolicy::new(
             policy.key_id,
             policy.plaintext_key,
             Arc::new(account_scope),
             true,
             policy.limits,
-        ));
+        );
+        if let Some(owner_scope_id) = policy.owner_scope_id {
+            compiled = compiled.with_owner_scope(ClientOwnerScope::new(
+                owner_scope_id,
+                policy.owner_limits,
+                policy.unscoped_means_deny,
+                policy.subscription_starts_at,
+                policy.subscription_ends_at,
+            ));
+        }
+        client_policies.push(compiled);
     }
 
     RuntimeSnapshot::new(

@@ -80,6 +80,7 @@ pub struct ClientKeyListQuery {
     pub cursor: Option<ClientKeyCursor>,
     pub page_size: ClientKeyPageSize,
     pub search: Option<String>,
+    pub owner_user_id: Option<String>,
     pub sort: ClientKeySort,
 }
 
@@ -92,6 +93,7 @@ pub struct ClientKeyRecord {
     pub groups: Vec<AccountGroupRef>,
     pub provider_kinds: Vec<ProviderKind>,
     pub prefix: String,
+    pub owner_user_id: Option<String>,
     pub enabled: bool,
     pub limits: RateLimits,
     pub budget: ClientBudgetStatus,

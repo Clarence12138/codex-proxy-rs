@@ -133,6 +133,10 @@ fn client_key_queries_should_reject_unknown_zero_and_oversized_fields() {
         "sortDirection": "asc"
     }))
     .expect("deserialize invalid sort");
+    let oversized_owner = serde_json::from_value::<ListClientKeysQuery>(json!({
+        "ownerUserId": "a".repeat(129)
+    }))
+    .expect("deserialize oversized owner");
 
     assert!(unknown.is_err());
     assert_eq!(
@@ -159,6 +163,13 @@ fn client_key_queries_should_reject_unknown_zero_and_oversized_fields() {
             .expect_err("reject invalid sort")
             .field(),
         "sortBy"
+    );
+    assert_eq!(
+        oversized_owner
+            .into_command()
+            .expect_err("reject oversized owner")
+            .field(),
+        "ownerUserId"
     );
     let sorted = serde_json::from_value::<ListClientKeysQuery>(json!({
         "sortBy": "lastUsedAt",
@@ -320,6 +331,7 @@ fn client_key_responses_should_keep_shape_and_redact_creation_debug() {
             gateway_core::routing::ProviderKind::new("openai").expect("Provider kind"),
         ],
         prefix: "sk_visible12".to_owned(),
+        owner_user_id: None,
         enabled: true,
         limits: gateway_core::policy::RateLimits {
             max_concurrency: 2,

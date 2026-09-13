@@ -10,6 +10,7 @@ Codex Proxy RS 是单进程、单副本运行的多 Provider AI 网关，同时�
 
 - 面向客户端的 OpenAI Responses、Images、standalone Search 和模型目录协议；
 - 面向管理员的 `/api/admin/*` 控制面和 Vue 管理端；
+- 可选的拼车用户控制面 `/api/portal/*` 与 `/portal`（合同见 [Portal](portal.md)）；
 - OpenAI 与 xAI 两个编译期 Provider；
 - PostgreSQL 持久化、Redis 协调状态以及 S3/R2 数据库备份。
 
@@ -58,6 +59,7 @@ flowchart LR
 | `gateway-protocol` | 跨层共享的 OpenAI wire contract、SSE 编解码与无业务 owner 的解析事实，不依赖其他 workspace crate |
 | `gateway-core` | operation、canonical event、请求快照、路由、admission、attempt 协调、交付边界和计量 |
 | `gateway-admin` | 管理领域、用例、Provider/Store 端口、审计语义和备份策略 |
+| `gateway-portal` | 拼车用户、套餐、订阅与用户 Key/用量用例；不依赖 gateway-admin |
 | `gateway-api` | HTTP/WS/SSE 解码与交付、Admin wire、静态管理端；不直接访问 Store 或具体 Provider |
 | `gateway-store` | PostgreSQL、Redis、S3/R2、`pg_dump` 适配器；不拥有业务策略 |
 | `gateway-host` | 配置加载、日志、HTTP 生命周期、Worker 监督和系统更新 |

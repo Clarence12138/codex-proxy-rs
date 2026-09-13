@@ -659,6 +659,7 @@ impl ClientKeyStore for MemoryClientKeyStore {
                 groups: Vec::new(),
                 provider_kinds: vec![ProviderKind::new("openai").expect("provider kind")],
                 prefix: "sk_aaaaaaaaa".to_owned(),
+                owner_user_id: None,
                 enabled: true,
                 limits: RateLimits::unlimited(),
                 last_used_at: None,

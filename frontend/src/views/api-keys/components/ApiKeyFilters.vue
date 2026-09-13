@@ -15,6 +15,7 @@ const emit = defineEmits<{
 }>()
 
 const search = defineModel<string>('search', { required: true })
+const ownerUserId = defineModel<string>('ownerUserId', { required: true })
 </script>
 
 <template>
@@ -29,6 +30,9 @@ const search = defineModel<string>('search', { required: true })
           <Search class="size-4.5 text-cp-text-tertiary" />
         </template>
       </BaseInput>
+    </div>
+    <div class="min-w-0 flex-1 md:w-72 md:flex-none">
+      <BaseInput v-model="ownerUserId" placeholder="按用户 ID 过滤" class="w-full" />
     </div>
 
     <div class="flex shrink-0 items-center justify-end gap-2 md:ml-auto">

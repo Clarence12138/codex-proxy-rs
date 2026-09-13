@@ -16,7 +16,7 @@ use gateway_core::engine::execution::{
     ProviderCircuitDecision, ProviderCircuitError, ProviderCircuitPort,
 };
 use gateway_core::lifecycle::CancellationToken;
-use gateway_core::policy::ClientApiKeyId;
+use gateway_core::policy::{ClientApiKeyId, OwnerScopeId};
 use gateway_core::routing::ProviderKind;
 use gateway_core::task::{DaemonTask, WorkerTaskError};
 use tokio::sync::{Mutex, mpsc};
@@ -88,10 +88,12 @@ impl ClientAdmissionPort for BufferedClientAdmissionPort {
         &'a self,
         client_api_key_id: &'a ClientApiKeyId,
         model_request_id: &'a ModelRequestId,
+        owner_scope_id: Option<&'a OwnerScopeId>,
     ) -> BoxFuture<'a, Result<bool, ClientAdmissionError>> {
         let enqueued = self.enqueue(AdmissionRelease {
             client_api_key_id: client_api_key_id.clone(),
             model_request_id: model_request_id.clone(),
+            owner_scope_id: owner_scope_id.cloned(),
         });
         Box::pin(ready(Ok(enqueued)))
     }
@@ -107,6 +109,7 @@ impl ClientAdmissionPort for BufferedClientAdmissionPort {
 struct AdmissionRelease {
     client_api_key_id: ClientApiKeyId,
     model_request_id: ModelRequestId,
+    owner_scope_id: Option<OwnerScopeId>,
 }
 
 pub struct ClientAdmissionReleaseWriter {
@@ -130,7 +133,11 @@ impl DaemonTask for ClientAdmissionReleaseWriter {
                 };
                 if let Err(error) = self
                     .inner
-                    .release(&release.client_api_key_id, &release.model_request_id)
+                    .release(
+                        &release.client_api_key_id,
+                        &release.model_request_id,
+                        release.owner_scope_id.as_ref(),
+                    )
                     .await
                 {
                     tracing::warn!(%error, "Client admission 后台释放失败，依赖租约 TTL 收敛");
