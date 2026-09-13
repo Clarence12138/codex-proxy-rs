@@ -5,6 +5,7 @@ import { onMounted, shallowRef } from 'vue'
 import { createAdminPortalPlan, listAdminPortalPlans, updateAdminPortalPlan } from '@/api/modules/portal'
 import AccountGroupCheckboxGrid from '@/components/AccountGroupCheckboxGrid.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseFormItem from '@/components/base/BaseForm/FormItem.vue'
 import BaseInput from '@/components/base/BaseInput.vue'
 import BasePageHeader from '@/components/base/BasePageHeader.vue'
 import BaseSwitch from '@/components/base/BaseSwitch.vue'
@@ -48,13 +49,28 @@ function fill(plan: AdminPortalPlan) {
 }
 
 async function save() {
+  if (pending.value)
+    return
   error.value = null
+  const planName = name.value.trim()
+  if (!planName) {
+    error.value = '请输入套餐名称'
+    return
+  }
+  if (new TextEncoder().encode(planName).length > 64) {
+    error.value = '套餐名称不能超过 64 个 UTF-8 字节'
+    return
+  }
+  if (/\p{Cc}/u.test(planName)) {
+    error.value = '套餐名称不能包含控制字符'
+    return
+  }
   if (!groupIds.value.length) {
     error.value = '必须选择账号分组'
     return
   }
   const payload = {
-    name: name.value.trim(),
+    name: planName,
     dailyLimitUsd: daily.value,
     weeklyLimitUsd: weekly.value,
     maxConcurrency: Number(maxConcurrency.value) || 0,
@@ -86,11 +102,13 @@ async function save() {
 <template>
   <div class="grid gap-4">
     <BasePageHeader title="套餐" description="日/周 USD、并发和 RPM 都是用户合计上限；0 表示该维度不额外限制" />
-    <p v-if="error" class="text-cp-error">
+    <p v-if="error" role="alert" class="text-cp-error">
       {{ error }}
     </p>
     <div class="grid max-w-3xl gap-2 sm:grid-cols-2">
-      <BaseInput v-model="name" placeholder="套餐名称" />
+      <BaseFormItem label="套餐名称" required>
+        <BaseInput v-model="name" aria-label="套餐名称" aria-required="true" placeholder="请输入套餐名称" />
+      </BaseFormItem>
       <BaseInput v-model="maxKeys" placeholder="最多 Key 数（0 不限制）" />
       <BaseInput v-model="daily" placeholder="日限额 USD" />
       <BaseInput v-model="weekly" placeholder="周限额 USD" />

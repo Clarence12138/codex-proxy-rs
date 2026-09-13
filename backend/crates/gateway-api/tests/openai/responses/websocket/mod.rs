@@ -928,6 +928,7 @@ impl ClientAdmissionPort for SettlementPorts {
         &'a self,
         _: &'a ClientApiKeyId,
         request_id: &'a ModelRequestId,
+        _: Option<&'a gateway_core::policy::OwnerScopeId>,
     ) -> BoxFuture<'a, Result<bool, ClientAdmissionError>> {
         Box::pin(async move {
             assert_eq!(
@@ -1123,6 +1124,7 @@ async fn websocket_disconnect_during_core_settlement_finishes_charge_before_rele
         },
         execution,
         admin.services,
+        crate::support::services(),
         Vec::new(),
         Arc::new(EmptyWorkerHealth),
         lifecycle.clone(),

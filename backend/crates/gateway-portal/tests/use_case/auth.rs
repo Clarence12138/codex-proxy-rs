@@ -32,7 +32,7 @@ use secrecy::SecretString;
 type PasswordRow = (String, String, String);
 
 #[derive(Clone, Default)]
-struct MemoryAuth {
+pub(super) struct MemoryAuth {
     users: Arc<Mutex<HashMap<String, PasswordRow>>>,
     sessions: Arc<Mutex<HashMap<String, PortalSession>>>,
 }
@@ -249,7 +249,7 @@ impl PortalUsageStore for MemoryAuth {
     }
 }
 
-struct NoopSnapshot;
+pub(super) struct NoopSnapshot;
 
 impl SnapshotControl for NoopSnapshot {
     fn publish_committed(&self, _: ConfigRevision) -> BoxFuture<'_, ()> {

@@ -84,7 +84,7 @@ export const routes: RouteRecordRaw[] = [
       {
         path: 'keys',
         name: 'portal-keys',
-        component: () => import('@/views/portal/keys.vue'),
+        component: () => import('@/views/portal/keys/index.vue'),
       },
       {
         path: 'usage',

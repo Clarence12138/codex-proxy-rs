@@ -416,3 +416,45 @@ async fn owned_keys_share_user_concurrency_without_changing_ownerless_keys() {
     );
     delete_namespace_keys(&mut connection, &namespace).await;
 }
+
+#[tokio::test]
+async fn owned_keys_share_user_rpm_after_release() {
+    let Some((repository, mut connection, namespace)) = repository().await else {
+        return;
+    };
+    let owner = "usr_shared_rpm";
+    for index in 0..3 {
+        let key = format!("rpm-key-{index}");
+        let request = format!("rpm-request-{index}");
+        let mut admission = admission_request(&request, &key, Duration::from_secs(30));
+        admission.owner_scope_id = Some(owner.to_owned());
+        admission.owner_limits.requests_per_minute = 2;
+        let decision = repository
+            .admit_client_request(&admission)
+            .await
+            .expect("admit rpm");
+        if index < 2 {
+            assert_eq!(decision, ClientAdmissionDecision::Granted);
+            assert!(
+                repository
+                    .release_client_request(&key, &request, Some(owner))
+                    .await
+                    .expect("release")
+            );
+        } else {
+            assert_eq!(
+                decision,
+                ClientAdmissionDecision::Rejected(ClientAdmissionRejection::RateLimited)
+            );
+        }
+    }
+    let ownerless = admission_request("rpm-ownerless", "rpm-independent", Duration::from_secs(30));
+    assert_eq!(
+        repository
+            .admit_client_request(&ownerless)
+            .await
+            .expect("ownerless"),
+        ClientAdmissionDecision::Granted
+    );
+    delete_namespace_keys(&mut connection, &namespace).await;
+}

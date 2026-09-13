@@ -4,10 +4,14 @@ import { Plus, Search, Trash2 } from '@lucide/vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseInput from '@/components/base/BaseInput.vue'
 
-defineProps<{
+withDefaults(defineProps<{
   batchDeleting: boolean
   selectedCount: number
-}>()
+  // 门户密钥没有跨用户管理，默认仍给管理端保留用户 ID 过滤。
+  showOwnerFilter?: boolean
+}>(), {
+  showOwnerFilter: true,
+})
 
 const emit = defineEmits<{
   create: []
@@ -15,7 +19,7 @@ const emit = defineEmits<{
 }>()
 
 const search = defineModel<string>('search', { required: true })
-const ownerUserId = defineModel<string>('ownerUserId', { required: true })
+const ownerUserId = defineModel<string>('ownerUserId', { default: '' })
 </script>
 
 <template>
@@ -31,7 +35,10 @@ const ownerUserId = defineModel<string>('ownerUserId', { required: true })
         </template>
       </BaseInput>
     </div>
-    <div class="min-w-0 flex-1 md:w-72 md:flex-none">
+    <div
+      v-if="showOwnerFilter"
+      class="min-w-0 flex-1 md:w-72 md:flex-none"
+    >
       <BaseInput v-model="ownerUserId" placeholder="按用户 ID 过滤" class="w-full" />
     </div>
 

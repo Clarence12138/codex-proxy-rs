@@ -48,6 +48,7 @@ impl PortalPlanService for DefaultPortalPlanService {
         context: &MutationContext,
         command: CreatePlan,
     ) -> Result<SubscriptionPlan, PortalError> {
+        validate_plan_name(&command.name)?;
         validate_plan_groups(&command.group_ids)?;
         let (revision, plan) = self
             .store
@@ -63,6 +64,7 @@ impl PortalPlanService for DefaultPortalPlanService {
         context: &MutationContext,
         command: UpdatePlan,
     ) -> Result<SubscriptionPlan, PortalError> {
+        validate_plan_name(&command.name)?;
         validate_plan_groups(&command.group_ids)?;
         let (revision, plan) = self
             .store
@@ -79,6 +81,21 @@ impl PortalPlanService for DefaultPortalPlanService {
             .await
             .map_err(super::store_error)
     }
+}
+
+fn validate_plan_name(name: &str) -> Result<(), PortalError> {
+    // 与存储的 trim 和 UTF-8 字节上限一致，在写库前返回可操作的输入错误。
+    let name = name.trim();
+    if name.is_empty() {
+        return Err(PortalError::invalid("请输入套餐名称"));
+    }
+    if name.len() > 64 {
+        return Err(PortalError::invalid("套餐名称不能超过 64 个 UTF-8 字节"));
+    }
+    if name.chars().any(char::is_control) {
+        return Err(PortalError::invalid("套餐名称不能包含控制字符"));
+    }
+    Ok(())
 }
 
 fn validate_plan_groups(group_ids: &[String]) -> Result<(), PortalError> {

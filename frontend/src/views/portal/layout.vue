@@ -19,25 +19,25 @@ async function logout() {
 </script>
 
 <template>
-  <div class="flex min-h-dvh bg-cp-bg-layout">
-    <aside class="flex w-56 shrink-0 flex-col gap-2 p-4">
-      <strong class="px-2 py-3 text-cp-lg">用户面板</strong>
+  <div class="flex min-h-dvh flex-col bg-cp-bg-layout md:flex-row">
+    <aside aria-label="用户导航" class="flex shrink-0 flex-wrap items-center gap-2 p-4 md:w-56 md:flex-col md:items-stretch">
+      <strong class="w-full px-2 py-3 text-cp-lg">用户面板</strong>
       <router-link
         v-for="item in nav"
         :key="item.path"
         :to="item.path"
         class="flex items-center gap-2 rounded-md px-3 py-2 text-cp-sm text-cp-text-secondary hover:bg-cp-fill-tertiary"
-        active-class="!bg-cp-control-item-bg-active !text-cp-text"
+        exact-active-class="!bg-cp-control-item-bg-active !text-cp-text"
       >
         <component :is="item.icon" class="size-4" />
         {{ item.label }}
       </router-link>
-      <button type="button" class="mt-auto flex items-center gap-2 px-3 py-2 text-cp-sm" @click="logout">
+      <button type="button" class="flex items-center gap-2 px-3 py-2 text-cp-sm md:mt-auto" @click="logout">
         <LogOut class="size-4" />
         退出
       </button>
     </aside>
-    <main class="min-w-0 flex-1 p-6">
+    <main class="min-w-0 flex-1 p-4 md:p-6">
       <RouterView />
     </main>
   </div>

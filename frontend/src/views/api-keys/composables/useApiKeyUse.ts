@@ -1,22 +1,25 @@
 import type { Ref, ShallowRef } from 'vue'
-import type { getApiKeys } from '@/api'
 import { computed, shallowRef, watch } from 'vue'
 
 import { API_BASE_URL } from '@/api/constants'
 import { buildCodexCcSwitchImportDeeplink } from '../utils/ccswitchImport'
 
-// “使用密钥”弹窗展示明文时，在列表行上补挂 reveal 得到的完整 key。
-type ApiKeyRow = Awaited<ReturnType<typeof getApiKeys>>['items'][number] & { key?: string }
+export interface ApiKeyUseTarget {
+  id: string
+  name: string
+  prefix: string
+  key?: string
+}
 
 // 密钥使用与 CCSwitch 导入编排：服务根地址推导、deeplink 跳转、
-// “使用密钥”弹窗的明文补全与打开。
-export function useApiKeyUse(options: {
+// “使用密钥”弹窗的明文补全与打开。只依赖 id/name/prefix 与揭示函数。
+export function useApiKeyUse<T extends ApiKeyUseTarget>(options: {
   createdKey: Readonly<Ref<string>>
   createdKeyName: Readonly<Ref<string>>
-  revealPlaintextKey: (apiKey: ApiKeyRow) => Promise<string | undefined>
+  revealPlaintextKey: (apiKey: T) => Promise<string | undefined>
 }) {
   const showUseKeyModal = shallowRef(false)
-  const selectedUseKey: ShallowRef<ApiKeyRow | null> = shallowRef(null)
+  const selectedUseKey: ShallowRef<(T & { key: string }) | null> = shallowRef(null)
 
   const serviceRootUrl = computed(() => resolveServiceRootUrl())
   const openAiBaseUrl = computed(() => `${serviceRootUrl.value}/v1`)
@@ -51,7 +54,7 @@ export function useApiKeyUse(options: {
     })
   }
 
-  async function openUseKeyModal(apiKey: ApiKeyRow) {
+  async function openUseKeyModal(apiKey: T) {
     const key = await options.revealPlaintextKey(apiKey)
     if (!key)
       return
@@ -59,7 +62,7 @@ export function useApiKeyUse(options: {
     showUseKeyModal.value = true
   }
 
-  async function importToCcs(apiKey: ApiKeyRow) {
+  async function importToCcs(apiKey: T) {
     const key = await options.revealPlaintextKey(apiKey)
     if (!key)
       return

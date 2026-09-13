@@ -1,3 +1,4 @@
+import type { RequestOptions } from '../request'
 import request from '../request'
 
 export function portalLogin(data: { username: string, password: string }) {
@@ -62,10 +63,11 @@ export interface PortalKey {
   plaintext?: string | null
 }
 
-export function listPortalKeys() {
+export function listPortalKeys(options: RequestOptions = {}) {
   return request<PortalKey[]>({
     url: '/api/portal/keys',
     method: 'GET',
+    ...options,
   })
 }
 
@@ -100,11 +102,12 @@ export function setPortalKeyEnabled(id: string, enabled: boolean) {
   })
 }
 
-export function deletePortalKey(id: string) {
+export function deletePortalKey(id: string, options: RequestOptions = {}) {
   return request({
     url: '/api/portal/keys/delete',
     method: 'POST',
     data: { id },
+    ...options,
   })
 }
 
@@ -161,10 +164,15 @@ export interface AdminPortalUser {
   createdAt: string
 }
 
-export function listAdminPortalUsers() {
+export function listAdminPortalUsers(
+  params: { page?: number, pageSize?: number, search?: string } = {},
+  options: RequestOptions = {},
+) {
   return request<{ items: AdminPortalUser[], total: number }>({
     url: '/api/admin/portal/users',
     method: 'GET',
+    params,
+    ...options,
   })
 }
 

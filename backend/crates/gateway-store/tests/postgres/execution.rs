@@ -1180,6 +1180,7 @@ pub(super) fn accepted_request(id: &str) -> CoreNewModelRequest {
         id: ModelRequestId::new(id).expect("request id"),
         client_api_key_id: None,
         client_api_key_ref: ClientApiKeyId::new("key_zero_attempt").expect("client key ref"),
+        owner_scope_id: None,
         config_revision: ConfigRevision::new(1).expect("revision"),
         routing: AccountRoutingSnapshot::all(),
         protocol: "openai".to_owned(),

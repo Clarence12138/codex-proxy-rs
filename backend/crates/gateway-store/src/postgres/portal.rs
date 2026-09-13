@@ -1313,9 +1313,10 @@ impl PortalUsageStore for PgPortalStore {
             username: user.get("username"),
             plan_name: plan.as_ref().map(|plan| plan.name.clone()),
             subscription_ends_at: subscription.as_ref().and_then(|item| item.ends_at),
-            subscription_effective: subscription
-                .as_ref()
-                .is_some_and(|item| item.is_effective(now)),
+            subscription_effective: plan.as_ref().is_some_and(|plan| plan.enabled)
+                && subscription
+                    .as_ref()
+                    .is_some_and(|item| item.is_effective(now)),
             daily_limit_usd: plan
                 .as_ref()
                 .map(|plan| plan.budget.daily_usd.canonical())
@@ -1418,16 +1419,18 @@ impl PortalUsageStore for PgPortalStore {
         start: Option<DateTime<Utc>>,
         end: Option<DateTime<Utc>>,
     ) -> PortalStoreResult<PortalUsageSummary> {
-        let row = sqlx::query(
+        // 成功用量沿用官方交付口径；费用账本仍独立记录各次尝试的实际费用。
+        let completed = super::usage_facts::completed_usage_fact_predicate("mr");
+        let row = sqlx::query(sqlx::AssertSqlSafe(format!(
             "select count(*)::bigint,
-                    coalesce(sum(total_tokens), 0)::text,
-                    coalesce(sum(cost_amount) filter (where cost_currency = 'USD'), 0)::text
-             from model_requests
-             where owner_user_id = $1
-               and outcome = 'succeeded'
-               and ($2::timestamptz is null or started_at >= $2)
-               and ($3::timestamptz is null or started_at < $3)",
-        )
+                    coalesce(sum(mr.total_tokens), 0)::text,
+                    coalesce(sum(mr.cost_amount) filter (where mr.cost_currency = 'USD'), 0)::text
+             from model_requests mr
+             where mr.owner_user_id = $1
+               and ({completed})
+               and ($2::timestamptz is null or mr.started_at >= $2)
+               and ($3::timestamptz is null or mr.started_at < $3)"
+        )))
         .bind(user_id)
         .bind(start)
         .bind(end)

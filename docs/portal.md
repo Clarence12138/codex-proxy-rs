@@ -6,6 +6,8 @@
 - 管理面仍为 `/` 与 `/api/admin/*`；用户/套餐管理在 `/portal-users`、`/portal-plans`
 - 密钥仍是 `client_api_keys`，请求仍是 `model_requests`（冻结 `owner_user_id`）
 - 日/周 USD 与并发/RPM 按用户合计，同时受 Key 自身限额约束
+- 概览只有在订阅状态/时间有效且套餐启用时显示生效；个人成功用量复用网关完整交付口径，排除预热、失败和无用量证据的请求
+- 成功用量汇总与日/周预算账本用途不同：账本仍累计重试等实际取得的费用，不以成功用量汇总代替额度结算
 - 用户 Key 禁止无分组（空池，不回退全部账号）
 - 用户只禁用不物理删除；改密和停用会在同一事务里撤销会话
 - 独立迁移目录 `backend/crates/gateway-store/migrations/portal/`，冻结清单为同目录 `.frozen-sha256`

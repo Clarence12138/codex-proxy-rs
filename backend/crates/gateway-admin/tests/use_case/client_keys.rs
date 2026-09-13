@@ -60,6 +60,7 @@ impl ClientKeyStore for TestClientKeyStore {
             id: key.id,
             name: key.name,
             label: key.label,
+            owner_user_id: None,
             groups: Vec::new(),
             provider_kinds: Vec::new(),
             prefix: String::new(),

@@ -277,6 +277,7 @@ async fn client_key_search_matches_names_and_labels_but_never_credential_values(
                 cursor: None,
                 page_size: 10,
                 search: Some(search.to_owned()),
+                owner_user_id: None,
                 sort: ClientApiKeySort::default(),
             })
             .await

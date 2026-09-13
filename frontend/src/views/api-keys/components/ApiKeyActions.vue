@@ -1,24 +1,21 @@
-<script setup lang="ts">
-import type { getApiKeys } from '@/api'
+<script setup lang="ts" generic="T extends { id: string, name: string, prefix: string, enabled: boolean }">
 import { Pencil, Power, Terminal, Trash2, Upload } from '@lucide/vue'
 
 import BaseIconButton from '@/components/base/BaseIconButton.vue'
 
-type ApiKeyRow = Awaited<ReturnType<typeof getApiKeys>>['items'][number]
-
 defineProps<{
-  apiKey: ApiKeyRow
+  apiKey: T
   deleting: boolean
   updatingStatus: boolean
   revealing: boolean
 }>()
 
 const emit = defineEmits<{
-  use: [apiKey: ApiKeyRow]
-  importCcs: [apiKey: ApiKeyRow]
-  toggle: [apiKey: ApiKeyRow]
-  delete: [apiKey: ApiKeyRow]
-  edit: [apiKey: ApiKeyRow]
+  use: [apiKey: T]
+  importCcs: [apiKey: T]
+  toggle: [apiKey: T]
+  delete: [apiKey: T]
+  edit: [apiKey: T]
 }>()
 </script>
 

@@ -1,10 +1,20 @@
 <script setup lang="ts">
-import type { ApiKey } from '@/api'
 import { computed } from 'vue'
 import BasePopover from '@/components/base/BasePopover.vue'
 import { formatDateTime } from '@/utils/date'
 
-const props = defineProps<{ apiKey: ApiKey }>()
+const props = defineProps<{
+  apiKey: {
+    name: string
+    dailyUsedUsd: string
+    weeklyUsedUsd: string
+    dailyLimitUsd: string
+    weeklyLimitUsd: string
+    // 省略字段时隐藏重置行；管理端显式传 null 仍表示「下次使用时确定」。
+    dailyResetsAt?: string | null
+    weeklyResetsAt?: string | null
+  }
+}>()
 const windows = computed(() => [
   { label: '日', heading: '日用量', used: props.apiKey.dailyUsedUsd, limit: props.apiKey.dailyLimitUsd, reset: props.apiKey.dailyResetsAt },
   { label: '周', heading: '周用量', used: props.apiKey.weeklyUsedUsd, limit: props.apiKey.weeklyLimitUsd, reset: props.apiKey.weeklyResetsAt },
@@ -43,7 +53,10 @@ function amount(value: string) {
             <span class="text-cp-text-tertiary"> / {{ Number(window.limit) === 0 ? '∞' : `$${window.limit}` }}</span>
           </span>
         </div>
-        <div class="flex items-baseline justify-between gap-3 text-cp-xs text-cp-text-tertiary">
+        <div
+          v-if="window.reset !== undefined"
+          class="flex items-baseline justify-between gap-3 text-cp-xs text-cp-text-tertiary"
+        >
           <span class="shrink-0">{{ window.reset ? '重置（北京时间）' : '重置' }}</span>
           <time v-if="window.reset" :datetime="window.reset" class="text-right font-mono tabular-nums">{{ formatDateTime(window.reset, '—', 'Asia/Shanghai') }}</time>
           <span v-else>下次使用时确定</span>

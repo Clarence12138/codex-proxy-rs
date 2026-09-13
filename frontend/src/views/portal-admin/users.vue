@@ -7,7 +7,6 @@ import {
   createAdminPortalUser,
   disableAdminPortalSubscription,
   listAdminPortalPlans,
-  listAdminPortalUsers,
   resetAdminPortalPassword,
   setAdminPortalUserEnabled,
 } from '@/api/modules/portal'
@@ -15,8 +14,10 @@ import BaseButton from '@/components/base/BaseButton.vue'
 import BaseConfirmModal from '@/components/base/BaseConfirmModal.vue'
 import BaseInput from '@/components/base/BaseInput.vue'
 import BasePageHeader from '@/components/base/BasePageHeader.vue'
+import BaseTablePagination from '@/components/base/BaseTable/BaseTablePagination.vue'
+import { usePortalUsersQuery } from './usePortalUsersQuery'
 
-const users = shallowRef<AdminPortalUser[]>([])
+const { users, search, pagination, loading, error: queryError, reload: reloadUsers, changePage, changePageSize } = usePortalUsersQuery()
 const plans = shallowRef<Array<{ id: string, name: string }>>([])
 const username = shallowRef('')
 const password = shallowRef('')
@@ -27,15 +28,20 @@ const error = shallowRef<string | null>(null)
 const endsAt = shallowRef('')
 const pending = shallowRef(false)
 
+async function loadPlans() {
+  plans.value = (await listAdminPortalPlans()).items
+}
+
 async function reload() {
-  const [userPage, planPage] = await Promise.all([listAdminPortalUsers(), listAdminPortalPlans()])
-  users.value = userPage.items
-  plans.value = planPage.items
+  error.value = null
+  await Promise.all([reloadUsers(), loadPlans().catch(() => {
+    error.value = '无法加载套餐，请重试'
+  })])
 }
 
 onMounted(() => {
-  void reload().catch(() => {
-    error.value = '无法加载用户'
+  void loadPlans().catch(() => {
+    error.value = '无法加载套餐，请重试'
   })
 })
 
@@ -46,7 +52,7 @@ async function create() {
     await createAdminPortalUser({ username: username.value.trim(), password: password.value })
     username.value = ''
     password.value = ''
-    await reload()
+    await reloadUsers(1)
   }
   catch {
     error.value = '创建用户失败'
@@ -116,6 +122,7 @@ async function reset() {
     await resetAdminPortalPassword({ userId: resetUserId.value, password: resetPassword.value })
     resetUserId.value = null
     resetPassword.value = ''
+    await reloadUsers()
   }
   catch {
     error.value = '重置密码失败'
@@ -144,8 +151,18 @@ function subscriptionLabel(user: AdminPortalUser) {
 <template>
   <div class="grid gap-4">
     <BasePageHeader title="用户" description="创建拼车用户、开通或续期套餐，并重置密码" />
-    <p v-if="error" class="text-cp-error">
-      {{ error }}
+    <div v-if="error || queryError" role="alert" class="flex items-center gap-2 text-cp-error">
+      <span>{{ error || queryError }}</span>
+      <BaseButton :loading="loading" @click="reload">
+        重试
+      </BaseButton>
+    </div>
+    <BaseInput v-model="search" aria-label="搜索用户" placeholder="搜索用户名" class="max-w-sm" />
+    <p v-if="loading" role="status" class="text-cp-text-tertiary">
+      加载中…
+    </p>
+    <p v-else-if="!queryError && !users.length" role="status" class="text-cp-text-tertiary">
+      {{ search.trim() ? '没有匹配的用户' : '暂无用户' }}
     </p>
     <div class="grid max-w-3xl gap-2 sm:grid-cols-4">
       <BaseInput v-model="username" placeholder="用户名" />
@@ -179,6 +196,12 @@ function subscriptionLabel(user: AdminPortalUser) {
         </span>
       </li>
     </ul>
+    <BaseTablePagination
+      :pagination="pagination"
+      :loading="loading"
+      @page-change="changePage"
+      @page-size-change="changePageSize"
+    />
     <BaseConfirmModal
       :model-value="Boolean(pendingDisableId)"
       title="停用用户"
@@ -193,7 +216,7 @@ function subscriptionLabel(user: AdminPortalUser) {
       description="重置后现有会话立即失效。"
       confirm-text="重置"
       @confirm="reset"
-      @update:model-value="resetUserId = $event ? resetUserId : null"
+      @update:model-value="resetUserId = $event ? resetUserId : null; resetPassword = ''"
     >
       <BaseInput v-model="resetPassword" type="password" placeholder="新密码（至少 12 位）" />
     </BaseConfirmModal>

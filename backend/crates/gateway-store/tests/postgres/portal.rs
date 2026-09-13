@@ -506,11 +506,12 @@ async fn usage_summary_is_owner_scoped() {
             "insert into model_requests (
                 id, client_api_key_ref, config_revision, protocol, operation, endpoint,
                 client_transport, outcome, total_tokens, cost_source, cost_amount, cost_currency,
-                started_at, deadline_at, completed_at, routing_scope, owner_user_id
+                started_at, deadline_at, completed_at, routing_scope, owner_user_id,
+                downstream_committed_at, client_status_code, provider_kind, request_kind
              ) values (
                 $1, 'key_ref', 1, 'openai', 'responses', '/v1/responses',
-                'http', 'succeeded', $3, 'calculated', 1.25, 'USD',
-                now(), now() + interval '1 minute', now(), 'empty', $2
+                'http_json', 'succeeded', $3, 'calculated', 1.25, 'USD',
+                now(), now() + interval '1 minute', now(), 'empty', $2, now(), 200, 'openai', 'inference'
              )",
         )
         .bind(id)
@@ -524,5 +525,214 @@ async fn usage_summary_is_owner_scoped() {
     assert_eq!(summary.request_count, 1);
     assert_eq!(summary.total_tokens, 10);
     assert_eq!(summary.total_usd, "1.2500000000");
+
+    // 每种终态都保留原始审计，只有真实交付且非预热的成功用量进入汇总。
+    for (id, transport, status, committed, outcome, kind, tokens) in [
+        (
+            "req_ws",
+            "websocket",
+            None,
+            true,
+            "succeeded",
+            "inference",
+            Some(20_i64),
+        ),
+        (
+            "req_prewarm",
+            "http",
+            Some(200),
+            true,
+            "succeeded",
+            "prewarm",
+            Some(100),
+        ),
+        (
+            "req_undelivered",
+            "http",
+            Some(200),
+            false,
+            "succeeded",
+            "inference",
+            Some(100),
+        ),
+        (
+            "req_failed",
+            "http",
+            Some(500),
+            true,
+            "failed",
+            "inference",
+            Some(100),
+        ),
+        (
+            "req_bad_status",
+            "http",
+            Some(500),
+            true,
+            "succeeded",
+            "inference",
+            Some(100),
+        ),
+        (
+            "req_no_evidence",
+            "http",
+            Some(200),
+            true,
+            "succeeded",
+            "inference",
+            None,
+        ),
+    ] {
+        sqlx::query(
+            "insert into model_requests (
+                id, client_api_key_ref, config_revision, protocol, operation, endpoint,
+                client_transport, outcome, total_tokens, started_at, deadline_at, completed_at,
+                routing_scope, owner_user_id, provider_kind, request_kind,
+                downstream_committed_at, client_status_code
+             ) values (
+                $1, 'key_ref', 1, 'openai', 'responses', '/v1/responses',
+                $2, $3, $4, now(), now() + interval '1 minute', now(),
+                'empty', $5, 'openai', $6, case when $7 then now() end, $8
+             )",
+        )
+        .bind(id)
+        .bind(transport)
+        .bind(outcome)
+        .bind(tokens)
+        .bind(&one.id)
+        .bind(kind)
+        .bind(committed)
+        .bind(status)
+        .execute(&database.pool)
+        .await
+        .expect("seed usage boundary");
+    }
+    let summary = store.summary(&one.id, None, None).await.expect("summary");
+    assert_eq!(summary.request_count, 2);
+    assert_eq!(summary.total_tokens, 30);
+    assert_eq!(summary.total_usd, "1.2500000000");
+    let future = Utc::now() + chrono::Duration::days(1);
+    assert_eq!(
+        store
+            .summary(&one.id, Some(future), None)
+            .await
+            .expect("start filter")
+            .request_count,
+        0
+    );
+    let past = Utc::now() - chrono::Duration::days(1);
+    assert_eq!(
+        store
+            .summary(&one.id, None, Some(past))
+            .await
+            .expect("end filter")
+            .request_count,
+        0
+    );
+    database.close().await;
+}
+
+#[tokio::test]
+async fn portal_me_requires_enabled_plan_and_effective_subscription() {
+    let Some(database) = TestDatabase::create("portal_me").await else {
+        return;
+    };
+    let store = PgPortalStore::new(database.pool.clone());
+    let group = group_id("dddddddddddddddddddddddddddddddd");
+    seed_group(&database, &group, "Portal Me").await;
+    let user = store
+        .create_user(
+            CreatePortalUser {
+                username: "portal-me".to_owned(),
+                password: "unused-password".to_owned(),
+            },
+            "hash",
+            &context(),
+        )
+        .await
+        .expect("user");
+    let now = chrono::DateTime::from_timestamp_micros(Utc::now().timestamp_micros()).unwrap();
+    assert!(
+        !store
+            .load_me(&user.id, now)
+            .await
+            .expect("no subscription")
+            .subscription_effective
+    );
+    let plan = store
+        .create_plan(
+            CreatePlan {
+                name: "portal-me".to_owned(),
+                budget: Default::default(),
+                limits: Default::default(),
+                max_keys: 1,
+                group_ids: vec![group],
+            },
+            &context(),
+        )
+        .await
+        .expect("plan")
+        .1;
+    store
+        .assign(
+            AssignSubscription {
+                user_id: user.id.clone(),
+                plan_id: plan.id.clone(),
+                starts_at: now,
+                ends_at: Some(now + chrono::Duration::hours(1)),
+            },
+            &context(),
+        )
+        .await
+        .expect("subscription");
+    assert!(
+        store
+            .load_me(&user.id, now)
+            .await
+            .expect("effective at start")
+            .subscription_effective
+    );
+    assert!(
+        !store
+            .load_me(&user.id, now - chrono::Duration::seconds(1))
+            .await
+            .expect("not started")
+            .subscription_effective
+    );
+    assert!(
+        !store
+            .load_me(&user.id, now + chrono::Duration::hours(1))
+            .await
+            .expect("expired at end")
+            .subscription_effective
+    );
+    sqlx::query("update subscription_plans set enabled = false where id = $1")
+        .bind(&plan.id)
+        .execute(&database.pool)
+        .await
+        .expect("disable plan");
+    assert!(
+        !store
+            .load_me(&user.id, now)
+            .await
+            .expect("disabled plan")
+            .subscription_effective
+    );
+    sqlx::query("update subscription_plans set enabled = true where id = $1")
+        .bind(&plan.id)
+        .execute(&database.pool)
+        .await
+        .expect("enable plan");
+    store
+        .disable(&user.id, &context())
+        .await
+        .expect("disable subscription");
+    assert!(
+        !store
+            .load_me(&user.id, now)
+            .await
+            .expect("disabled subscription")
+            .subscription_effective
+    );
     database.close().await;
 }

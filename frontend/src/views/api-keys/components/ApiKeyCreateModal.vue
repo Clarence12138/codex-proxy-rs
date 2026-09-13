@@ -12,13 +12,21 @@ import BaseIconButton from '@/components/base/BaseIconButton.vue'
 import BaseInput from '@/components/base/BaseInput.vue'
 import BaseModal from '@/components/base/BaseModal/index.vue'
 
-const props = defineProps<{
-  groups: AccountGroup[]
-  groupLoading: boolean
+const props = withDefaults(defineProps<{
+  groups?: AccountGroup[]
+  groupLoading?: boolean
   editing: boolean
   createdKey: string
   saving: boolean
-}>()
+  // 门户创建合同不含自定义 Key，也不允许选择分组。
+  showCustomKey?: boolean
+  showGroupPicker?: boolean
+}>(), {
+  groups: () => [],
+  groupLoading: false,
+  showCustomKey: true,
+  showGroupPicker: true,
+})
 const emit = defineEmits<{
   save: []
   copy: [text: string]
@@ -62,7 +70,7 @@ const title = computed(() => props.editing ? '编辑 API Key' : '创建 API Key'
       </BaseFormItem>
 
       <BaseFormItem
-        v-if="!editing"
+        v-if="showCustomKey && !editing"
         label="自定义 Key（可选）"
       >
         <BaseInput
@@ -78,11 +86,15 @@ const title = computed(() => props.editing ? '编辑 API Key' : '创建 API Key'
 
       <BaseFormItem label="分组">
         <AccountGroupCheckboxGrid
+          v-if="showGroupPicker"
           v-model="form.groupIds"
           :groups="groups"
           :loading="groupLoading"
           :disabled="saving"
         />
+        <p v-else class="m-0 text-cp-sm text-cp-text-secondary">
+          由套餐决定
+        </p>
       </BaseFormItem>
 
       <div class="grid gap-6 sm:grid-cols-2">
