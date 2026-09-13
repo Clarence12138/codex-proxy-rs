@@ -78,6 +78,42 @@ Compose 默认只绑定 `127.0.0.1`。从其他设备访问时，在应用前配
 HTTP 传输不加密，公网部署仍建议使用 HTTPS。
 会话 Cookie 合同见 [管理接口鉴权](../docs/api.md#管理接口)。
 
+Portal 用户面板的会话 Cookie 固定带 `Secure`，公网访问须使用 HTTPS（可以 HTTP 回源）。
+Portal 登录及自助改密按用户名和客户端 IP 限流。经反代接入时，在 `api.trusted_proxy_ips` 中填写
+**应用实际看到的 TCP 对端 IP**，仅支持精确 IPv4/IPv6 地址，不支持域名或 CIDR：
+
+```yaml
+api:
+  trusted_proxy_ips: ['127.0.0.1', '::1']
+```
+
+此处回环地址仅适用于应用确实看到回环对端的部署；Docker 端口映射可能使应用看到网桥网关地址，
+需要按实际网络调整，不能直接照抄。默认空列表忽略转发头，因此升级后仍需显式配置，
+否则所有乘客可能共用反代 IP 的登录限流桶。IPv4-mapped IPv6 与对应 IPv4 视为同一地址。
+
+单层 Nginx 示例（放在已有 HTTPS `server` 中；证书配置及监听不在此片段内）：
+
+```nginx
+location / {
+    proxy_pass http://127.0.0.1:8080;
+    proxy_http_version 1.1;
+    proxy_set_header Host $http_host;
+    proxy_set_header Origin $http_origin;
+    proxy_set_header Authorization $http_authorization;
+    proxy_set_header X-Forwarded-For $remote_addr;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_buffering off;
+    proxy_read_timeout 3600s;
+}
+```
+
+边缘代理应覆盖客户端提供的 XFF，不能无条件相信它。多层反代需要逐跳维护可信链：
+仅当当前一跳在可信列表内，Portal 登录及自助改密才从 XFF 右侧继续向左取地址，遇到不可信一跳即停止。
+仅支持 IP 字面量组成的 XFF，重复头按顺序组合，最多 8 KiB / 32 跳；缺失、损坏或超限时回退 TCP 对端。
+不使用 `X-Real-IP` 或 `CF-Connecting-IP` 绕过该边界。此配置只影响 Portal 登录及自助改密的限流，
+不改变数据面诊断 IP 的展示规则。保持应用端口不对公网开放，不自动信任整个私网。
+
 反向代理需要保留 `Authorization`，支持 `/v1/responses` 的 WebSocket Upgrade，
 并关闭 SSE 响应缓冲。读取超时应覆盖长时间生成任务。
 客户端使用部署地址下的 `/v1`，协议与部署一致，不要使用前端开发服务的 `5173/dev/v1`。

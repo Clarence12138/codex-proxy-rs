@@ -3,6 +3,7 @@
 //! 本 crate 只负责请求解码、Core/Admin 调用和 HTTP/WS/SSE delivery。
 
 use std::collections::BTreeSet;
+use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::str::FromStr as _;
 use std::sync::Arc;
@@ -38,6 +39,9 @@ pub mod portal;
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ApiConfig {
+    /// 仅这些 TCP 对端可以提供 Portal 登录限流使用的转发链；默认不信任代理。
+    #[serde(default)]
+    pub trusted_proxy_ips: Vec<IpAddr>,
     pub asset_directory: PathBuf,
     pub cors_allowed_origins: Vec<String>,
     pub request_timeout_seconds: Option<u64>,
@@ -134,6 +138,7 @@ pub fn initialize(
         portal,
         openai: OpenAiService::new(execution, lifecycle),
         health: HealthStatus::new(probes, worker_health),
+        trusted_proxy_ips: config.trusted_proxy_ips.into(),
     };
     let index = config.asset_directory.join("index.html");
     let mut router = Router::new()
@@ -217,6 +222,7 @@ pub(crate) struct ApiState {
     portal: PortalServices,
     openai: OpenAiService,
     health: HealthStatus,
+    trusted_proxy_ips: Arc<[IpAddr]>,
 }
 
 impl ApiState {
@@ -238,6 +244,10 @@ impl admin::AdminSessionState for ApiState {
 }
 
 impl portal::PortalSessionState for ApiState {
+    fn trusted_proxy_ips(&self) -> &[IpAddr] {
+        &self.trusted_proxy_ips
+    }
+
     fn portal_services(&self) -> &PortalServices {
         &self.portal
     }

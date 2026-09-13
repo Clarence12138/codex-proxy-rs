@@ -73,9 +73,38 @@ async fn api_router_with_origins_and_worker_health(
     cors_allowed_origins: Vec<String>,
     worker_health: Arc<dyn WorkerHealthSource>,
 ) -> axum::Router {
+    api_router_with_trusted_proxies_and_health(
+        execution,
+        cors_allowed_origins,
+        worker_health,
+        Vec::new(),
+    )
+    .await
+}
+
+pub(super) async fn api_router_with_trusted_proxies(
+    execution: Arc<dyn ExecutionService>,
+    trusted_proxy_ips: Vec<std::net::IpAddr>,
+) -> axum::Router {
+    api_router_with_trusted_proxies_and_health(
+        execution,
+        Vec::new(),
+        Arc::new(EmptyWorkerHealth),
+        trusted_proxy_ips,
+    )
+    .await
+}
+
+async fn api_router_with_trusted_proxies_and_health(
+    execution: Arc<dyn ExecutionService>,
+    cors_allowed_origins: Vec<String>,
+    worker_health: Arc<dyn WorkerHealthSource>,
+    trusted_proxy_ips: Vec<std::net::IpAddr>,
+) -> axum::Router {
     let admin = crate::admin::AdminTestFixture::new().await;
     gateway_api::initialize(
         gateway_api::ApiConfig {
+            trusted_proxy_ips,
             asset_directory: std::env::temp_dir(),
             cors_allowed_origins,
             request_timeout_seconds: None,

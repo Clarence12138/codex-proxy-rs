@@ -1,12 +1,10 @@
 <script setup lang="ts">
 import type { AdminPortalUser } from '@/api/modules/portal'
 
-import { onMounted, shallowRef } from 'vue'
+import { shallowRef } from 'vue'
 import {
-  assignAdminPortalSubscription,
   createAdminPortalUser,
   disableAdminPortalSubscription,
-  listAdminPortalPlans,
   resetAdminPortalPassword,
   setAdminPortalUserEnabled,
 } from '@/api/modules/portal'
@@ -17,10 +15,11 @@ import BasePageHeader from '@/components/base/BasePageHeader.vue'
 import BaseTablePagination from '@/components/base/BaseTable/BaseTablePagination.vue'
 import { useCopyText } from '@/composables/useCopyText'
 import { errorMessage } from '@/utils/async'
+import PortalSubscriptionModal from './components/PortalSubscriptionModal.vue'
 import { usePortalUsersQuery } from './usePortalUsersQuery'
 
 const { users, search, pagination, loading, error: queryError, reload: reloadUsers, changePage, changePageSize } = usePortalUsersQuery()
-const plans = shallowRef<Array<{ id: string, name: string }>>([])
+const subscriptionTarget = shallowRef<{ user: AdminPortalUser, mode: 'assign' | 'renew' } | null>(null)
 const username = shallowRef('')
 const password = shallowRef(generatePassword())
 const showPassword = shallowRef(false)
@@ -43,25 +42,17 @@ const resetUserId = shallowRef<string | null>(null)
 const resetPassword = shallowRef('')
 const pendingDisableId = shallowRef<string | null>(null)
 const error = shallowRef<string | null>(null)
-const endsAt = shallowRef('')
 const pending = shallowRef(false)
-
-async function loadPlans() {
-  plans.value = (await listAdminPortalPlans()).items
-}
 
 async function reload() {
   error.value = null
-  await Promise.all([reloadUsers(), loadPlans().catch(() => {
-    error.value = '无法加载订阅，请重试'
-  })])
+  await reloadUsers()
 }
 
-onMounted(() => {
-  void loadPlans().catch(() => {
-    error.value = '无法加载订阅，请重试'
-  })
-})
+async function subscriptionSaved() {
+  subscriptionTarget.value = null
+  await reloadUsers()
+}
 
 async function create() {
   if (pending.value)
@@ -77,29 +68,6 @@ async function create() {
   }
   catch (cause: unknown) {
     error.value = errorMessage(cause, '创建用户失败')
-  }
-  finally {
-    pending.value = false
-  }
-}
-
-async function assign(userId: string, planId: string) {
-  if (!planId)
-    return
-  error.value = null
-  pending.value = true
-  try {
-    await assignAdminPortalSubscription({
-      userId,
-      planId,
-      startsAt: new Date().toISOString(),
-      endsAt: endsAt.value.trim() || null,
-    })
-    endsAt.value = ''
-    await reload()
-  }
-  catch {
-    error.value = '开通订阅失败'
   }
   finally {
     pending.value = false
@@ -185,7 +153,7 @@ function subscriptionLabel(user: AdminPortalUser) {
     <p v-else-if="!queryError && !users.length" role="status" class="text-cp-text-tertiary">
       {{ search.trim() ? '没有匹配的用户' : '暂无用户' }}
     </p>
-    <div class="grid max-w-3xl gap-2 sm:grid-cols-4">
+    <div class="grid max-w-3xl gap-2 sm:grid-cols-3">
       <BaseInput v-model="username" placeholder="用户名" />
       <div class="grid gap-2">
         <BaseInput v-model="password" :type="showPassword ? 'text' : 'password'" aria-label="初始密码" autocomplete="new-password" placeholder="密码（至少 6 个字符）" />
@@ -198,7 +166,6 @@ function subscriptionLabel(user: AdminPortalUser) {
           </BaseButton>
         </div>
       </div>
-      <BaseInput v-model="endsAt" placeholder="到期时间 RFC3339（可选）" />
       <BaseButton variant="primary" :loading="pending" @click="create">
         创建
       </BaseButton>
@@ -207,14 +174,12 @@ function subscriptionLabel(user: AdminPortalUser) {
       <li v-for="user in users" :key="user.id" class="flex flex-wrap items-center justify-between gap-2 rounded-md bg-cp-bg-container px-3 py-2">
         <span>{{ user.username }} · {{ user.status }} · {{ subscriptionLabel(user) }}</span>
         <span class="flex flex-wrap gap-2">
-          <select class="rounded-md px-2 py-1" aria-label="开通或续期订阅" @change="assign(user.id, ($event.target as HTMLSelectElement).value)">
-            <option value="">
-              开通 / 续期
-            </option>
-            <option v-for="plan in plans" :key="plan.id" :value="plan.id">
-              {{ plan.name }}
-            </option>
-          </select>
+          <BaseButton size="sm" @click="subscriptionTarget = { user, mode: 'assign' }">
+            {{ user.planId ? '更换套餐' : '开通订阅' }}
+          </BaseButton>
+          <BaseButton v-if="user.planId && user.subscriptionEndsAt" size="sm" @click="subscriptionTarget = { user, mode: 'renew' }">
+            续期
+          </BaseButton>
           <BaseButton size="sm" @click="expire(user.id)">
             停用订阅
           </BaseButton>
@@ -227,6 +192,14 @@ function subscriptionLabel(user: AdminPortalUser) {
         </span>
       </li>
     </ul>
+    <PortalSubscriptionModal
+      v-if="subscriptionTarget"
+      :key="`${subscriptionTarget.user.id}:${subscriptionTarget.mode}`"
+      :user="subscriptionTarget.user"
+      :mode="subscriptionTarget.mode"
+      @close="subscriptionTarget = null"
+      @saved="subscriptionSaved"
+    />
     <BaseTablePagination
       :pagination="pagination"
       :loading="loading"

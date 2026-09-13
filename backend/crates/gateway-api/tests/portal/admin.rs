@@ -8,6 +8,49 @@ use tower::ServiceExt;
 use super::portal_router;
 
 #[tokio::test]
+async fn subscription_assignment_rejects_invalid_or_nonincreasing_times() {
+    let app = portal_router().await;
+    let login = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/admin/auth/login")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({"username":"admin_1","password":"strong-admin-password"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(login.status(), StatusCode::OK);
+    let cookie = login.headers()[header::SET_COOKIE]
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_owned();
+    for (start, end) in [
+        ("2035-01-01T00:00:00Z", "2035-01-01T00:00:00Z"),
+        ("2035-01-01T00:00:00Z", "2034-01-01T00:00:00Z"),
+        ("2035-01-01T00:00:00Z", "not-a-date"),
+        ("not-a-date", "2035-01-01T00:00:00Z"),
+    ] {
+        let response = app.clone().oneshot(
+            Request::builder().method("POST").uri("/api/admin/portal/subscriptions/assign")
+                .header(header::COOKIE, &cookie).header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(json!({"userId":"user_test","planId":"plan_test","startsAt":start,"endsAt":end}).to_string())).unwrap(),
+        ).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body: serde_json::Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), 8192).await.unwrap()).unwrap();
+        assert_eq!(body["code"], 40001);
+    }
+}
+
+#[tokio::test]
 async fn invalid_plan_names_return_input_errors_instead_of_dependency_failures() {
     let app = portal_router().await;
     let login = app

@@ -31,6 +31,7 @@ const COOKIE_ATTRS: &str = "Path=/; Secure; HttpOnly; SameSite=Lax";
 
 pub trait PortalSessionState {
     fn portal_services(&self) -> &PortalServices;
+    fn trusted_proxy_ips(&self) -> &[IpAddr];
 }
 
 pub struct PortalAuth {
@@ -98,6 +99,7 @@ struct ChangePasswordRequest {
 async fn change_password<S>(
     State(state): State<S>,
     auth: PortalAuth,
+    headers: HeaderMap,
     connect_info: Option<axum::extract::Extension<ConnectInfo<SocketAddr>>>,
     PortalJson(payload): PortalJson<ChangePasswordRequest>,
 ) -> Result<Response, PortalError>
@@ -120,7 +122,9 @@ where
                 current_password: SecretString::from(payload.current_password),
                 new_password: SecretString::from(payload.new_password),
                 client_ip: client_ip(
+                    &headers,
                     connect_info.map(|axum::extract::Extension(ConnectInfo(address))| address),
+                    state.trusted_proxy_ips(),
                 ),
             },
         )
@@ -166,7 +170,9 @@ where
             username: payload.username,
             password: SecretString::from(payload.password),
             client_ip: client_ip(
+                &headers,
                 connect_info.map(|axum::extract::Extension(ConnectInfo(address))| address),
+                state.trusted_proxy_ips(),
             ),
         })
         .await
@@ -233,17 +239,47 @@ fn session_cookie(headers: &HeaderMap) -> Option<String> {
     })
 }
 
-fn client_ip(peer: Option<SocketAddr>) -> String {
-    peer.map(|address| address.ip())
-        .map(format_ip)
-        .unwrap_or_else(|| "unknown".to_owned())
+fn client_ip(headers: &HeaderMap, peer: Option<SocketAddr>, trusted: &[IpAddr]) -> String {
+    let Some(peer) = peer.map(|address| address.ip().to_canonical()) else {
+        return "unknown".to_owned();
+    };
+    let is_trusted = |ip: IpAddr| trusted.iter().any(|proxy| proxy.to_canonical() == ip);
+    if !is_trusted(peer) {
+        return peer.to_string();
+    }
+    // 先完整校验有界链，避免从损坏或截断的头部猜测地址；重复头按到达顺序组合。
+    let Some(chain) = forwarded_chain(headers) else {
+        return peer.to_string();
+    };
+    let mut client = peer;
+    for address in chain.into_iter().rev() {
+        // 与 Nginx real_ip_recursive 一致：只有当前一跳可信，才采纳其左侧地址。
+        if !is_trusted(client) {
+            break;
+        }
+        client = address;
+    }
+    client.to_string()
 }
 
-fn format_ip(ip: IpAddr) -> String {
-    match ip {
-        IpAddr::V4(value) => value.to_string(),
-        IpAddr::V6(value) => value.to_string(),
+fn forwarded_chain(headers: &HeaderMap) -> Option<Vec<IpAddr>> {
+    const MAX_BYTES: usize = 8 * 1024;
+    const MAX_HOPS: usize = 32;
+    let mut bytes = 0_usize;
+    let mut chain = Vec::new();
+    for header in headers.get_all("x-forwarded-for") {
+        bytes = bytes.checked_add(header.as_bytes().len())?;
+        if bytes > MAX_BYTES {
+            return None;
+        }
+        for part in header.to_str().ok()?.split(',') {
+            if chain.len() >= MAX_HOPS {
+                return None;
+            }
+            chain.push(part.trim().parse::<IpAddr>().ok()?.to_canonical());
+        }
     }
+    Some(chain)
 }
 
 fn reject_cross_site(headers: &HeaderMap) -> Result<(), PortalError> {

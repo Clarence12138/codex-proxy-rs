@@ -418,6 +418,44 @@ async fn owned_keys_share_user_budget_and_survive_key_deletion() {
             .canonical(),
         "1.3",
     );
+
+    // 续期仍提交绝对期限；替换订阅不得清空跨 Key 归集的用户账本。
+    let previous = store.load_current(&user.id).await.unwrap().unwrap();
+    let ends_at = Utc::now() + chrono::Duration::days(30);
+    let renewed = store
+        .assign(
+            AssignSubscription {
+                user_id: user.id.clone(),
+                plan_id: previous.plan_id,
+                starts_at: previous.starts_at,
+                ends_at: Some(ends_at),
+            },
+            &context(),
+        )
+        .await
+        .expect("renew subscription")
+        .1;
+    assert_eq!(renewed.starts_at, previous.starts_at);
+    assert_eq!(
+        renewed.ends_at.unwrap().timestamp_micros(),
+        ends_at.timestamp_micros()
+    );
+    let active: i64 = sqlx::query_scalar(
+        "select count(*) from user_subscriptions where user_id = $1 and status = 'active'",
+    )
+    .bind(&user.id)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(active, 1);
+    let denied = budgets
+        .admit(ClientApiKeyId::new(&second.id).unwrap())
+        .await
+        .expect_err("renewal must not reset user budget");
+    assert_eq!(
+        denied.client_error_code(),
+        Some("user_daily_budget_exceeded")
+    );
     database.close().await;
 }
 

@@ -56,6 +56,8 @@ admin:
   default_password: ''
 
 api:
+  # Portal 登录仅信任这些 TCP 对端提供的 X-Forwarded-For；填写实际反代 IP，不支持 CIDR。
+  trusted_proxy_ips: []
   # Docker 内由 CPR_WEB_DIST_DIR 覆盖。
   asset_directory: '../frontend/dist'
   cors_allowed_origins: []

@@ -11,6 +11,10 @@ use super::portal_router;
 struct AuthenticatedState(gateway_portal::PortalServices);
 
 impl gateway_api::portal::PortalSessionState for AuthenticatedState {
+    fn trusted_proxy_ips(&self) -> &[std::net::IpAddr] {
+        &[]
+    }
+
     fn portal_services(&self) -> &gateway_portal::PortalServices {
         &self.0
     }
@@ -155,6 +159,154 @@ async fn password_change_requires_portal_session_and_same_origin() {
             .unwrap();
         assert_eq!(response.status(), expected);
         assert!(response.headers().get(header::SET_COOKIE).is_none());
+    }
+}
+
+async fn proxy_router(trusted: &[&str]) -> axum::Router {
+    crate::openai::api_router_with_trusted_proxies(
+        std::sync::Arc::new(super::UnusedExecution),
+        trusted.iter().map(|ip| ip.parse().unwrap()).collect(),
+    )
+    .await
+}
+
+fn proxy_login(peer: Option<&str>, forwarded: &[&str], username: &str) -> Request<Body> {
+    let mut request = login_request(Some("https://portal.example"), "portal.example");
+    *request.body_mut() =
+        Body::from(json!({ "username": username, "password": "wrong-password-12" }).to_string());
+    if let Some(peer) = peer {
+        request.extensions_mut().insert(axum::extract::ConnectInfo(
+            peer.parse::<std::net::SocketAddr>().unwrap(),
+        ));
+    }
+    for value in forwarded {
+        request
+            .headers_mut()
+            .append("x-forwarded-for", value.parse().unwrap());
+    }
+    request
+}
+
+async fn exhaust_ip(app: &axum::Router, peer: Option<&str>, forwarded: &[&str]) {
+    for i in 0..8 {
+        let response = app
+            .clone()
+            .oneshot(proxy_login(peer, forwarded, &format!("unknown-{i}")))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+}
+
+#[tokio::test]
+async fn trusted_proxy_separates_clients_but_preserves_ip_and_username_limits() {
+    let app = proxy_router(&["127.0.0.1"]).await;
+    let peer = Some("127.0.0.1:1000");
+    exhaust_ip(&app, peer, &["192.0.2.1"]).await;
+    let denied = app
+        .clone()
+        .oneshot(proxy_login(peer, &["192.0.2.1"], "another-user"))
+        .await
+        .unwrap();
+    assert_eq!(denied.status(), StatusCode::TOO_MANY_REQUESTS);
+    let independent = app
+        .clone()
+        .oneshot(proxy_login(peer, &["192.0.2.2"], "another-user"))
+        .await
+        .unwrap();
+    assert_eq!(independent.status(), StatusCode::UNAUTHORIZED);
+    for i in 1..8 {
+        let response = app
+            .clone()
+            .oneshot(proxy_login(
+                peer,
+                &[&format!("192.0.2.{}", i + 2)],
+                "another-user",
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+    let denied = app
+        .oneshot(proxy_login(peer, &["192.0.2.100"], "another-user"))
+        .await
+        .unwrap();
+    assert_eq!(denied.status(), StatusCode::TOO_MANY_REQUESTS);
+}
+
+#[tokio::test]
+async fn untrusted_peer_cannot_rotate_forwarded_headers_to_evade_throttle() {
+    let app = proxy_router(&["127.0.0.1"]).await;
+    let peer = Some("192.0.2.10:1000");
+    exhaust_ip(&app, peer, &["198.51.100.1"]).await;
+    let response = app
+        .oneshot(proxy_login(peer, &["198.51.100.2"], "new-user"))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+}
+
+#[tokio::test]
+async fn forwarded_chains_are_bounded_validated_and_walked_from_the_trusted_right_edge() {
+    let too_many = vec!["192.0.2.1"; 33].join(",");
+    let too_long = format!("{}192.0.2.1", " ".repeat(8192));
+    let cases: Vec<(Option<&str>, Vec<&str>, &str)> = vec![
+        (
+            Some("127.0.0.1:1000"),
+            vec!["198.51.100.99, 192.0.2.1", "10.0.0.1"],
+            "192.0.2.1",
+        ),
+        (
+            Some("[::ffff:127.0.0.1]:1000"),
+            vec!["::ffff:192.0.2.1"],
+            "192.0.2.1",
+        ),
+        (Some("[::1]:1000"), vec!["2001:db8::1"], "2001:db8::1"),
+        (Some("127.0.0.1:1000"), vec!["bad, 192.0.2.1"], "127.0.0.1"),
+        (Some("127.0.0.1:1000"), vec!["192.0.2.1,"], "127.0.0.1"),
+        (Some("127.0.0.1:1000"), vec![&too_many], "127.0.0.1"),
+        (Some("127.0.0.1:1000"), vec![&too_long], "127.0.0.1"),
+        (Some("127.0.0.1:1000"), vec![], "127.0.0.1"),
+    ];
+    for (peer, headers, expected) in cases {
+        let app = proxy_router(&["127.0.0.1", "10.0.0.1", "::1"]).await;
+        exhaust_ip(&app, peer, &headers).await;
+        let response = app
+            .oneshot(proxy_login(
+                Some("127.0.0.1:2000"),
+                &[expected],
+                "fresh-user",
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::TOO_MANY_REQUESTS,
+            "{headers:?}"
+        );
+    }
+    let app = proxy_router(&["127.0.0.1"]).await;
+    exhaust_ip(&app, None, &["192.0.2.1"]).await;
+    let response = app
+        .oneshot(proxy_login(None, &["192.0.2.2"], "fresh-user"))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+}
+
+#[test]
+fn trusted_proxy_configuration_is_opt_in_and_requires_ip_literals() {
+    let mut config = json!({
+        "asset_directory": "/tmp/web", "cors_allowed_origins": [],
+        "request_timeout_seconds": null, "request_id_header": "x-request-id"
+    });
+    let legacy: gateway_api::ApiConfig = serde_json::from_value(config.clone()).unwrap();
+    assert!(legacy.trusted_proxy_ips.is_empty());
+    config["trusted_proxy_ips"] = json!(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
+    assert!(serde_json::from_value::<gateway_api::ApiConfig>(config.clone()).is_ok());
+    for invalid in ["localhost", "10.0.0.0/8", "bad"] {
+        config["trusted_proxy_ips"] = json!([invalid]);
+        assert!(serde_json::from_value::<gateway_api::ApiConfig>(config.clone()).is_err());
     }
 }
 

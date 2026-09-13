@@ -220,10 +220,11 @@ export interface AdminPortalPlan {
   enabled: boolean
 }
 
-export function listAdminPortalPlans() {
+export function listAdminPortalPlans(params: { page?: number, pageSize?: number } = {}) {
   return request<{ items: AdminPortalPlan[], total: number }>({
     url: '/api/admin/portal/plans',
     method: 'GET',
+    params,
   })
 }
 
