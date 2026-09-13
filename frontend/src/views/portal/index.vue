@@ -14,14 +14,14 @@ onMounted(async () => {
     me.value = await getPortalMe()
   }
   catch {
-    error.value = '无法加载套餐信息'
+    error.value = '无法加载订阅信息'
   }
 })
 </script>
 
 <template>
   <div class="grid gap-4">
-    <BasePageHeader title="用量概览" description="查看当前套餐与日/周已用金额" />
+    <BasePageHeader title="用量概览" description="查看当前订阅与日/周已用金额" />
     <p v-if="error" class="text-cp-error">
       {{ error }}
     </p>
@@ -31,7 +31,7 @@ onMounted(async () => {
     <div v-else class="grid gap-4 sm:grid-cols-2">
       <BaseCard>
         <h2 class="mb-2 font-medium">
-          套餐
+          订阅
         </h2>
         <p>{{ me.planName ?? '未开通' }}</p>
         <p class="text-cp-text-tertiary">

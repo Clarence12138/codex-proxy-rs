@@ -35,13 +35,13 @@ async function loadPlans() {
 async function reload() {
   error.value = null
   await Promise.all([reloadUsers(), loadPlans().catch(() => {
-    error.value = '无法加载套餐，请重试'
+    error.value = '无法加载订阅，请重试'
   })])
 }
 
 onMounted(() => {
   void loadPlans().catch(() => {
-    error.value = '无法加载套餐，请重试'
+    error.value = '无法加载订阅，请重试'
   })
 })
 
@@ -78,7 +78,7 @@ async function assign(userId: string, planId: string) {
     await reload()
   }
   catch {
-    error.value = '开通套餐失败'
+    error.value = '开通订阅失败'
   }
   finally {
     pending.value = false
@@ -150,7 +150,7 @@ function subscriptionLabel(user: AdminPortalUser) {
 
 <template>
   <div class="grid gap-4">
-    <BasePageHeader title="用户" description="创建拼车用户、开通或续期套餐，并重置密码" />
+    <BasePageHeader title="用户" description="创建拼车用户、开通或续期订阅，并重置密码" />
     <div v-if="error || queryError" role="alert" class="flex items-center gap-2 text-cp-error">
       <span>{{ error || queryError }}</span>
       <BaseButton :loading="loading" @click="reload">
@@ -176,7 +176,7 @@ function subscriptionLabel(user: AdminPortalUser) {
       <li v-for="user in users" :key="user.id" class="flex flex-wrap items-center justify-between gap-2 rounded-md bg-cp-bg-container px-3 py-2">
         <span>{{ user.username }} · {{ user.status }} · {{ subscriptionLabel(user) }}</span>
         <span class="flex flex-wrap gap-2">
-          <select class="rounded-md px-2 py-1" aria-label="开通或续期套餐" @change="assign(user.id, ($event.target as HTMLSelectElement).value)">
+          <select class="rounded-md px-2 py-1" aria-label="开通或续期订阅" @change="assign(user.id, ($event.target as HTMLSelectElement).value)">
             <option value="">
               开通 / 续期
             </option>

@@ -88,7 +88,7 @@ const {
     <BasePageHeader
       class="shrink-0"
       title="我的密钥"
-      description="分组由套餐决定；Key 限额不能高于套餐"
+      description="分组由订阅决定；Key 限额不能高于订阅"
     >
       <template v-if="loadError" #actions>
         <BaseButton variant="secondary" :loading="loading" @click="loadPortalKeys">
@@ -151,7 +151,7 @@ const {
             <template #scope>
               <div class="grid w-full justify-items-center gap-1.5">
                 <span class="inline-flex h-6 items-center rounded-lg bg-cp-fill-quaternary px-2 text-cp-xs font-bold text-cp-text-secondary">
-                  由套餐决定
+                  由订阅决定
                 </span>
               </div>
             </template>

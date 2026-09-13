@@ -93,7 +93,7 @@ const title = computed(() => props.editing ? '编辑 API Key' : '创建 API Key'
           :disabled="saving"
         />
         <p v-else class="m-0 text-cp-sm text-cp-text-secondary">
-          由套餐决定
+          由订阅决定
         </p>
       </BaseFormItem>
 
