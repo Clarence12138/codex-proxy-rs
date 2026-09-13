@@ -16,7 +16,7 @@ const { effectiveTheme } = storeToRefs(themeStore)
 const username = shallowRef('')
 const password = shallowRef('')
 const loginPending = shallowRef(false)
-const canSubmit = computed(() => !!username.value.trim() && !!password.value.trim())
+const canSubmit = computed(() => !!username.value.trim() && !!password.value)
 const loginLoading = computed(() => authStore.loading || loginPending.value)
 const submitDisabled = computed(() => loginLoading.value || !canSubmit.value)
 

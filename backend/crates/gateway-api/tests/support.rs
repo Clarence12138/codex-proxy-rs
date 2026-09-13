@@ -42,6 +42,16 @@ fn unavailable<T>() -> PortalStoreResult<T> {
 
 #[async_trait]
 impl PortalAuthStore for EmptyStore {
+    async fn change_password(
+        &self,
+        _: &str,
+        _: &str,
+        _: &str,
+        _: &MutationContext,
+    ) -> PortalStoreResult<()> {
+        unavailable()
+    }
+
     async fn load_password_hash(
         &self,
         _: &str,
@@ -234,11 +244,15 @@ impl SnapshotControl for NoopSnapshot {
 /// 构造不访问数据库的 Portal 服务，供 API 装配测试使用。
 #[must_use]
 pub fn services() -> PortalServices {
+    services_with_auth(Arc::new(EmptyStore))
+}
+
+pub fn services_with_auth(auth: Arc<dyn PortalAuthStore>) -> PortalServices {
     let store = Arc::new(EmptyStore);
     initialize(
         PortalConfig::default(),
         PortalStorePorts::new(
-            store.clone(),
+            auth,
             store.clone(),
             store.clone(),
             store.clone(),

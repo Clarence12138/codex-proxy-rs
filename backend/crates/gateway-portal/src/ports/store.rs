@@ -61,6 +61,14 @@ pub type PortalStoreResult<T> = Result<T, PortalStoreError>;
 /// 认证存储。
 #[async_trait]
 pub trait PortalAuthStore: Send + Sync {
+    /// 在用户行锁内核对已验证凭据，原子改密、撤销会话并记录审计。
+    async fn change_password(
+        &self,
+        user_id: &str,
+        expected_hash: &str,
+        new_hash: &str,
+        context: &MutationContext,
+    ) -> PortalStoreResult<()>;
     async fn load_password_hash(
         &self,
         username: &str,

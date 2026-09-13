@@ -10,6 +10,15 @@ pub struct LoginCommand {
     pub client_ip: String,
 }
 
+/// 自助改密命令；目标身份来自已认证会话。
+#[derive(Debug)]
+pub struct ChangePasswordCommand {
+    pub principal: PortalPrincipal,
+    pub current_password: SecretString,
+    pub new_password: SecretString,
+    pub client_ip: String,
+}
+
 /// 登录结果；明文会话令牌只存在于此。
 pub struct LoginResult {
     pub session_token: String,

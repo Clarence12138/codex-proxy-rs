@@ -146,6 +146,14 @@ export function listPortalUsage(params: { cursor?: string, pageSize?: number }) 
   })
 }
 
+export function changePortalPassword(payload: { currentPassword: string, newPassword: string }) {
+  return request<Record<string, never>>({
+    url: '/api/portal/auth/password',
+    method: 'POST',
+    data: payload,
+  })
+}
+
 export function getPortalUsageSummary() {
   return request<{ requestCount: number, totalTokens: number, totalUsd: string }>({
     url: '/api/portal/usage/summary',

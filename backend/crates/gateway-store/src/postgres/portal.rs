@@ -228,6 +228,58 @@ async fn load_effective_plan(
 
 #[async_trait]
 impl PortalAuthStore for PgPortalStore {
+    async fn change_password(
+        &self,
+        user_id: &str,
+        expected_hash: &str,
+        new_hash: &str,
+        context: &MutationContext,
+    ) -> PortalStoreResult<()> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|error| map_sqlx(error, "begin change password"))?;
+        let row = sqlx::query_as::<_, (String, String)>(
+            "select status, password_hash from portal_users where id = $1 for update",
+        )
+        .bind(user_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|error| map_sqlx(error, "lock portal user for password change"))?;
+        if !row.is_some_and(|(status, hash)| status == "active" && hash == expected_hash) {
+            return Err(store_error(
+                PortalStoreErrorKind::Conflict,
+                "用户凭据已变化，请重新登录后重试",
+            ));
+        }
+        sqlx::query("update portal_users set password_hash = $2, updated_at = now() where id = $1")
+            .bind(user_id)
+            .bind(new_hash)
+            .execute(&mut *tx)
+            .await
+            .map_err(|error| map_sqlx(error, "change portal password"))?;
+        sqlx::query("delete from portal_sessions where user_id = $1")
+            .bind(user_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|error| map_sqlx(error, "revoke sessions after password change"))?;
+        append_audit(
+            &mut tx,
+            context,
+            "change_password",
+            "portal_user",
+            user_id,
+            None,
+            &["password_hash"],
+        )
+        .await?;
+        tx.commit()
+            .await
+            .map_err(|error| map_sqlx(error, "commit password change"))?;
+        Ok(())
+    }
+
     async fn load_password_hash(
         &self,
         username: &str,

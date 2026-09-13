@@ -15,12 +15,30 @@ import BaseConfirmModal from '@/components/base/BaseConfirmModal.vue'
 import BaseInput from '@/components/base/BaseInput.vue'
 import BasePageHeader from '@/components/base/BasePageHeader.vue'
 import BaseTablePagination from '@/components/base/BaseTable/BaseTablePagination.vue'
+import { useCopyText } from '@/composables/useCopyText'
+import { errorMessage } from '@/utils/async'
 import { usePortalUsersQuery } from './usePortalUsersQuery'
 
 const { users, search, pagination, loading, error: queryError, reload: reloadUsers, changePage, changePageSize } = usePortalUsersQuery()
 const plans = shallowRef<Array<{ id: string, name: string }>>([])
 const username = shallowRef('')
-const password = shallowRef('')
+const password = shallowRef(generatePassword())
+const showPassword = shallowRef(false)
+const copyText = useCopyText()
+
+function generatePassword() {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
+  let value = ''
+  // 拒绝偏置采样；每位字符等概率，不使用所有用户共用的固定密码。
+  while (value.length < 8) {
+    const bytes = crypto.getRandomValues(new Uint8Array(16))
+    for (const byte of bytes) {
+      if (byte < 248 && value.length < 8)
+        value += alphabet[byte % alphabet.length]
+    }
+  }
+  return value
+}
 const resetUserId = shallowRef<string | null>(null)
 const resetPassword = shallowRef('')
 const pendingDisableId = shallowRef<string | null>(null)
@@ -46,16 +64,19 @@ onMounted(() => {
 })
 
 async function create() {
+  if (pending.value)
+    return
   error.value = null
   pending.value = true
   try {
     await createAdminPortalUser({ username: username.value.trim(), password: password.value })
     username.value = ''
-    password.value = ''
+    password.value = generatePassword()
+    showPassword.value = false
     await reloadUsers(1)
   }
-  catch {
-    error.value = '创建用户失败'
+  catch (cause: unknown) {
+    error.value = errorMessage(cause, '创建用户失败')
   }
   finally {
     pending.value = false
@@ -124,8 +145,8 @@ async function reset() {
     resetPassword.value = ''
     await reloadUsers()
   }
-  catch {
-    error.value = '重置密码失败'
+  catch (cause: unknown) {
+    error.value = errorMessage(cause, '重置密码失败')
   }
 }
 
@@ -166,7 +187,17 @@ function subscriptionLabel(user: AdminPortalUser) {
     </p>
     <div class="grid max-w-3xl gap-2 sm:grid-cols-4">
       <BaseInput v-model="username" placeholder="用户名" />
-      <BaseInput v-model="password" type="password" placeholder="密码（至少 12 位）" />
+      <div class="grid gap-2">
+        <BaseInput v-model="password" :type="showPassword ? 'text' : 'password'" aria-label="初始密码" autocomplete="new-password" placeholder="密码（至少 6 个字符）" />
+        <div class="flex gap-2">
+          <BaseButton size="sm" :aria-pressed="showPassword" @click="showPassword = !showPassword">
+            {{ showPassword ? '隐藏' : '显示' }}
+          </BaseButton>
+          <BaseButton size="sm" @click="copyText(password, { successText: '初始密码已复制', emptyErrorText: '请先输入密码' })">
+            复制
+          </BaseButton>
+        </div>
+      </div>
       <BaseInput v-model="endsAt" placeholder="到期时间 RFC3339（可选）" />
       <BaseButton variant="primary" :loading="pending" @click="create">
         创建
@@ -218,7 +249,7 @@ function subscriptionLabel(user: AdminPortalUser) {
       @confirm="reset"
       @update:model-value="resetUserId = $event ? resetUserId : null; resetPassword = ''"
     >
-      <BaseInput v-model="resetPassword" type="password" placeholder="新密码（至少 12 位）" />
+      <BaseInput v-model="resetPassword" type="password" aria-label="新密码" autocomplete="new-password" placeholder="新密码（至少 6 个字符）" />
     </BaseConfirmModal>
   </div>
 </template>

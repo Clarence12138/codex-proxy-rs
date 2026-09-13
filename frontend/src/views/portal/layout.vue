@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { KeyRound, LayoutDashboard, LogOut, ScrollText } from '@lucide/vue'
+import { KeyRound, LayoutDashboard, LogOut, ScrollText, UserRound } from '@lucide/vue'
 import { useRouter } from 'vue-router'
 
 import { usePortalAuthStore } from '@/stores/modules/portal-auth'
@@ -10,6 +10,7 @@ const nav = [
   { label: '概览', path: '/portal', icon: LayoutDashboard },
   { label: '我的密钥', path: '/portal/keys', icon: KeyRound },
   { label: '用量', path: '/portal/usage', icon: ScrollText },
+  { label: '我的', path: '/portal/me', icon: UserRound },
 ]
 
 async function logout() {

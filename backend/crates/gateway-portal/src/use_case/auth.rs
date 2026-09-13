@@ -15,8 +15,11 @@ use uuid::Uuid;
 
 use crate::{
     model::{
-        PortalError,
-        auth::{LoginCommand, LoginError, LoginResult, PortalPrincipal, PortalSession},
+        MutationContext, PortalError,
+        auth::{
+            ChangePasswordCommand, LoginCommand, LoginError, LoginResult, PortalPrincipal,
+            PortalSession,
+        },
     },
     ports::store::{PortalAuthStore, PortalStoreErrorKind},
 };
@@ -42,6 +45,11 @@ struct ThrottleBook {
 #[async_trait]
 pub trait PortalAuthService: Send + Sync {
     async fn login(&self, command: LoginCommand) -> Result<LoginResult, LoginError>;
+    async fn change_password(
+        &self,
+        context: &MutationContext,
+        command: ChangePasswordCommand,
+    ) -> Result<(), PortalError>;
     async fn validate_session(
         &self,
         token: Option<&str>,
@@ -115,6 +123,50 @@ impl DefaultPortalAuthService {
 
 #[async_trait]
 impl PortalAuthService for DefaultPortalAuthService {
+    async fn change_password(
+        &self,
+        context: &MutationContext,
+        command: ChangePasswordCommand,
+    ) -> Result<(), PortalError> {
+        validate_password(command.new_password.expose_secret())?;
+        let username = command.principal.username.to_ascii_lowercase();
+        let ip = command.client_ip.trim();
+        if ip.is_empty()
+            || ip.chars().count() > MAX_IP_CHARS
+            || command.current_password.expose_secret().len() > MAX_PASSWORD_BYTES
+        {
+            return Err(PortalError::invalid("当前密码或请求来源不合法"));
+        }
+        self.reserve_attempt(&username, ip, Utc::now())
+            .map_err(password_attempt_error)?;
+        let (user_id, status, hash) = self
+            .store
+            .load_password_hash(&username)
+            .await
+            .map_err(super::store_error)?
+            .ok_or_else(|| PortalError::conflict("用户凭据已失效"))?;
+        if user_id != command.principal.user_id || status != "active" {
+            return Err(PortalError::conflict("用户凭据已失效"));
+        }
+        if !verify_password_blocking(
+            command.current_password.expose_secret().to_owned(),
+            hash.clone(),
+        )
+        .await
+        .map_err(password_attempt_error)?
+        {
+            return Err(PortalError::invalid("当前密码不正确"));
+        }
+        let new_hash =
+            hash_password_blocking(command.new_password.expose_secret().to_owned()).await?;
+        self.store
+            .change_password(&user_id, &hash, &new_hash, context)
+            .await
+            .map_err(super::store_error)?;
+        self.clear_throttle(&username, ip);
+        Ok(())
+    }
+
     async fn login(&self, command: LoginCommand) -> Result<LoginResult, LoginError> {
         let now = Utc::now();
         let username = command.username.trim().to_ascii_lowercase();
@@ -192,6 +244,29 @@ impl PortalAuthService for DefaultPortalAuthService {
             .delete_session_by_token_hash(&hash_session_token(token))
             .await
             .map_err(super::store_error)
+    }
+}
+
+pub(crate) fn validate_password(password: &str) -> Result<(), PortalError> {
+    if password.chars().count() < 6 || password.len() > MAX_PASSWORD_BYTES {
+        return Err(PortalError::invalid(
+            "密码至少 6 个字符，最多 256 个 UTF-8 字节",
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) async fn hash_password_blocking(password: String) -> Result<String, PortalError> {
+    tokio::task::spawn_blocking(move || hash_password(&password))
+        .await
+        .map_err(|_| PortalError::internal("密码哈希失败"))?
+}
+
+fn password_attempt_error(error: LoginError) -> PortalError {
+    match error {
+        LoginError::RateLimited => PortalError::rate_limited("尝试次数过多，请稍后再试"),
+        LoginError::InvalidCredentials => PortalError::invalid("当前密码不正确"),
+        LoginError::Unavailable => PortalError::unavailable("认证服务暂不可用"),
     }
 }
 

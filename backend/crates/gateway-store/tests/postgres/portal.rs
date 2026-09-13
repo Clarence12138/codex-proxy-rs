@@ -65,6 +65,191 @@ fn plaintext(index: u8) -> String {
 }
 
 #[tokio::test]
+async fn self_password_change_is_atomic_fenced_and_audited_without_secret_values() {
+    let Some(database) = TestDatabase::create("portal_self_password").await else {
+        return;
+    };
+    let store = PgPortalStore::new(database.pool.clone());
+    let ctx = context();
+    let user = store
+        .create_user(
+            CreatePortalUser {
+                username: "change-user".to_owned(),
+                password: "unused".to_owned(),
+            },
+            "old-hash",
+            &ctx,
+        )
+        .await
+        .unwrap();
+    let other = store
+        .create_user(
+            CreatePortalUser {
+                username: "other-user".to_owned(),
+                password: "unused".to_owned(),
+            },
+            "other-hash",
+            &ctx,
+        )
+        .await
+        .unwrap();
+    for (id, owner, hash) in [
+        ("first", &user.id, "old-hash"),
+        ("second", &user.id, "old-hash"),
+        ("other", &other.id, "other-hash"),
+    ] {
+        store
+            .store_session(
+                &PortalSession {
+                    id: id.to_owned(),
+                    user_id: owner.clone(),
+                    token_hash: id.to_owned(),
+                    expires_at: Utc::now() + chrono::Duration::days(1),
+                },
+                hash,
+            )
+            .await
+            .unwrap();
+    }
+    let actor = MutationContext {
+        actor: MutationActor::PortalSession {
+            user_id: user.id.clone(),
+        },
+        request_id: "self-password-test".to_owned(),
+    };
+    // 审计失败必须回滚密码更新和会话撤销，不能留下部分成功。
+    sqlx::query("alter table portal_audit_events add constraint reject_password_test check (action <> 'change_password')").execute(&database.pool).await.unwrap();
+    assert!(
+        store
+            .change_password(&user.id, "old-hash", "failed-hash", &actor)
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        store
+            .load_password_hash("change-user")
+            .await
+            .unwrap()
+            .unwrap()
+            .2,
+        "old-hash"
+    );
+    assert!(
+        store
+            .load_session_by_token_hash("first", Utc::now())
+            .await
+            .unwrap()
+            .is_some()
+    );
+    sqlx::query("alter table portal_audit_events drop constraint reject_password_test")
+        .execute(&database.pool)
+        .await
+        .unwrap();
+    let (first, second) = tokio::join!(
+        store.change_password(&user.id, "old-hash", "new-hash-a", &actor),
+        store.change_password(&user.id, "old-hash", "new-hash-b", &actor),
+    );
+    assert_ne!(first.is_ok(), second.is_ok());
+    assert_eq!(
+        first.err().or_else(|| second.err()).unwrap().kind(),
+        PortalStoreErrorKind::Conflict
+    );
+    for token in ["first", "second"] {
+        assert!(
+            store
+                .load_session_by_token_hash(token, Utc::now())
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+    assert!(
+        store
+            .load_session_by_token_hash("other", Utc::now())
+            .await
+            .unwrap()
+            .is_some()
+    );
+    let audit: Vec<String> = sqlx::query_scalar(
+        "select row_to_json(a)::text from portal_audit_events a where action = 'change_password'",
+    )
+    .fetch_all(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(audit.len(), 1);
+    for secret in ["old-hash", "new-hash-a", "new-hash-b", "failed-hash"] {
+        assert!(!audit[0].contains(secret));
+    }
+    let stale = PortalSession {
+        id: "stale".to_owned(),
+        user_id: user.id.clone(),
+        token_hash: "stale".to_owned(),
+        expires_at: Utc::now() + chrono::Duration::days(1),
+    };
+    assert_eq!(
+        store
+            .store_session(&stale, "old-hash")
+            .await
+            .unwrap_err()
+            .kind(),
+        PortalStoreErrorKind::Conflict
+    );
+    let verified = store
+        .load_password_hash("change-user")
+        .await
+        .unwrap()
+        .unwrap()
+        .2;
+    store
+        .reset_password(
+            ResetPortalPassword {
+                user_id: user.id.clone(),
+                password: "unused".to_owned(),
+            },
+            "admin-hash",
+            &ctx,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .change_password(&user.id, &verified, "stale-change", &actor)
+            .await
+            .unwrap_err()
+            .kind(),
+        PortalStoreErrorKind::Conflict
+    );
+    PortalUserStore::set_enabled(
+        &store,
+        SetPortalUserEnabled {
+            user_id: user.id.clone(),
+            enabled: false,
+        },
+        &ctx,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        store
+            .change_password(&user.id, "admin-hash", "disabled-change", &actor)
+            .await
+            .unwrap_err()
+            .kind(),
+        PortalStoreErrorKind::Conflict
+    );
+    assert_eq!(
+        store
+            .load_password_hash("change-user")
+            .await
+            .unwrap()
+            .unwrap()
+            .2,
+        "admin-hash"
+    );
+    database.close().await;
+}
+
+#[tokio::test]
 async fn portal_migrations_create_user_ledger_tables() {
     let Some(database) = TestDatabase::create("portal_schema").await else {
         return;

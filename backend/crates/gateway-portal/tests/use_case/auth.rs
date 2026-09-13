@@ -47,6 +47,29 @@ fn unavailable<T>() -> PortalStoreResult<T> {
 
 #[async_trait]
 impl PortalAuthStore for MemoryAuth {
+    async fn change_password(
+        &self,
+        user_id: &str,
+        expected_hash: &str,
+        new_hash: &str,
+        _: &MutationContext,
+    ) -> PortalStoreResult<()> {
+        let mut users = self.users.lock().expect("auth map");
+        let row = users
+            .values_mut()
+            .find(|(id, _, _)| id == user_id)
+            .filter(|(_, status, hash)| status == "active" && hash == expected_hash)
+            .ok_or_else(|| {
+                PortalStoreError::new(PortalStoreErrorKind::Conflict, "portal", "stale")
+            })?;
+        row.2 = new_hash.to_owned();
+        self.sessions
+            .lock()
+            .expect("session map")
+            .retain(|_, session| session.user_id != user_id);
+        Ok(())
+    }
+
     async fn load_password_hash(
         &self,
         username: &str,
@@ -109,11 +132,26 @@ impl PortalAuthStore for MemoryAuth {
 impl PortalUserStore for MemoryAuth {
     async fn create_user(
         &self,
-        _: CreatePortalUser,
-        _: &str,
+        command: CreatePortalUser,
+        password_hash: &str,
         _: &MutationContext,
     ) -> PortalStoreResult<PortalUser> {
-        unavailable()
+        let id = format!("usr_{}", command.username);
+        self.users.lock().unwrap().insert(
+            command.username.to_ascii_lowercase(),
+            (id.clone(), "active".to_owned(), password_hash.to_owned()),
+        );
+        Ok(PortalUser {
+            id,
+            username: command.username,
+            status: gateway_portal::model::users::UserStatus::Active,
+            plan_id: None,
+            plan_name: None,
+            subscription_starts_at: None,
+            subscription_ends_at: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        })
     }
     async fn list_users(&self, _: PortalUserListQuery) -> PortalStoreResult<PortalUserPage> {
         unavailable()
@@ -123,11 +161,21 @@ impl PortalUserStore for MemoryAuth {
     }
     async fn reset_password(
         &self,
-        _: ResetPortalPassword,
-        _: &str,
+        command: ResetPortalPassword,
+        password_hash: &str,
         _: &MutationContext,
     ) -> PortalStoreResult<()> {
-        unavailable()
+        let mut users = self.users.lock().unwrap();
+        let row = users
+            .values_mut()
+            .find(|(id, _, _)| id == &command.user_id)
+            .unwrap();
+        row.2 = password_hash.to_owned();
+        self.sessions
+            .lock()
+            .unwrap()
+            .retain(|_, session| session.user_id != command.user_id);
+        Ok(())
     }
     async fn set_enabled(
         &self,
@@ -264,7 +312,7 @@ fn hash(password: &str) -> String {
         .to_string()
 }
 
-fn services(store: MemoryAuth) -> gateway_portal::PortalServices {
+pub(super) fn services(store: MemoryAuth) -> gateway_portal::PortalServices {
     let ports = PortalStorePorts::new(
         Arc::new(store.clone()),
         Arc::new(store.clone()),
@@ -281,6 +329,168 @@ fn services(store: MemoryAuth) -> gateway_portal::PortalServices {
 #[test]
 fn login_error_kinds_are_stable() {
     assert_ne!(LoginError::InvalidCredentials, LoginError::RateLimited);
+}
+
+fn change_command(current: &str, new: &str) -> gateway_portal::model::auth::ChangePasswordCommand {
+    gateway_portal::model::auth::ChangePasswordCommand {
+        principal: PortalPrincipal {
+            user_id: "usr_known".to_owned(),
+            username: "known".to_owned(),
+        },
+        current_password: SecretString::from(current),
+        new_password: SecretString::from(new),
+        client_ip: "127.0.0.1".to_owned(),
+    }
+}
+
+fn change_context() -> MutationContext {
+    MutationContext {
+        actor: gateway_portal::model::MutationActor::PortalSession {
+            user_id: "usr_known".to_owned(),
+        },
+        request_id: "password-test".to_owned(),
+    }
+}
+
+#[test]
+fn change_command_debug_redacts_both_passwords() {
+    let debug = format!("{:?}", change_command("old-secret", "new-secret"));
+    assert!(!debug.contains("old-secret"));
+    assert!(!debug.contains("new-secret"));
+}
+
+#[tokio::test]
+async fn password_change_checks_current_password_and_length_then_revokes_only_owner_sessions() {
+    use gateway_portal::model::PortalErrorKind;
+    let store = MemoryAuth::default();
+    let old_hash = hash("old-password");
+    store.users.lock().unwrap().insert(
+        "known".to_owned(),
+        (
+            "usr_known".to_owned(),
+            "active".to_owned(),
+            old_hash.clone(),
+        ),
+    );
+    let services = services(store.clone());
+    let auth = services.auth();
+    for token in ["one", "two", "other"] {
+        store.sessions.lock().unwrap().insert(
+            token.to_owned(),
+            PortalSession {
+                id: token.to_owned(),
+                user_id: if token == "other" {
+                    "usr_other"
+                } else {
+                    "usr_known"
+                }
+                .to_owned(),
+                token_hash: token.to_owned(),
+                expires_at: Utc::now() + chrono::Duration::days(1),
+            },
+        );
+    }
+    for new in [
+        "12345".to_owned(),
+        "字".repeat(5),
+        "a".repeat(257),
+        "字".repeat(86),
+    ] {
+        assert_eq!(
+            auth.change_password(&change_context(), change_command("old-password", &new))
+                .await
+                .unwrap_err()
+                .kind(),
+            PortalErrorKind::Invalid
+        );
+    }
+    assert_eq!(
+        auth.change_password(
+            &change_context(),
+            change_command("wrong-password", "123456")
+        )
+        .await
+        .unwrap_err()
+        .kind(),
+        PortalErrorKind::Invalid
+    );
+    assert_eq!(store.users.lock().unwrap()["known"].2, old_hash);
+    assert_eq!(store.sessions.lock().unwrap().len(), 3);
+    let mut current = "old-password".to_owned();
+    for new in [
+        "123456".to_owned(),
+        "$$$$$$".to_owned(),
+        "abcdef".to_owned(),
+        "字".repeat(6),
+        "a".repeat(256),
+        " 1234 ".to_owned(),
+    ] {
+        auth.change_password(&change_context(), change_command(&current, &new))
+            .await
+            .unwrap();
+        assert_eq!(
+            auth.login(LoginCommand {
+                username: "known".to_owned(),
+                password: SecretString::from(current),
+                client_ip: "127.0.0.1".to_owned()
+            })
+            .await
+            .unwrap_err(),
+            LoginError::InvalidCredentials
+        );
+        auth.login(LoginCommand {
+            username: "known".to_owned(),
+            password: SecretString::from(new.clone()),
+            client_ip: "127.0.0.1".to_owned(),
+        })
+        .await
+        .unwrap();
+        current = new;
+    }
+    let sessions = store.sessions.lock().unwrap();
+    assert!(!sessions.contains_key("one"));
+    assert!(!sessions.contains_key("two"));
+    assert!(sessions.contains_key("other"));
+}
+
+#[tokio::test]
+async fn wrong_current_password_shares_login_throttle() {
+    let store = MemoryAuth::default();
+    store.users.lock().unwrap().insert(
+        "known".to_owned(),
+        (
+            "usr_known".to_owned(),
+            "active".to_owned(),
+            hash("old-password"),
+        ),
+    );
+    let services = services(store);
+    for _ in 0..8 {
+        let error = services
+            .auth()
+            .change_password(
+                &change_context(),
+                change_command("wrong-password", "123456"),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error.kind(),
+            gateway_portal::model::PortalErrorKind::Invalid
+        );
+    }
+    assert_eq!(
+        services
+            .auth()
+            .login(LoginCommand {
+                username: "known".to_owned(),
+                password: SecretString::from("old-password"),
+                client_ip: "127.0.0.1".to_owned()
+            })
+            .await
+            .unwrap_err(),
+        LoginError::RateLimited
+    );
 }
 
 #[tokio::test]

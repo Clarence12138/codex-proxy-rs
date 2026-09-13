@@ -11,7 +11,10 @@ use axum::{
 };
 use gateway_portal::{
     PortalServices,
-    model::auth::{LoginCommand, LoginError, PortalPrincipal},
+    model::{
+        MutationActor, MutationContext,
+        auth::{ChangePasswordCommand, LoginCommand, LoginError, PortalPrincipal},
+    },
 };
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
@@ -75,6 +78,7 @@ where
         .route("/api/portal/auth/login", post(login::<S>))
         .route("/api/portal/auth/status", get(status::<S>))
         .route("/api/portal/auth/logout", post(logout::<S>))
+        .route("/api/portal/auth/password", post(change_password::<S>))
 }
 
 #[derive(Deserialize)]
@@ -82,6 +86,55 @@ where
 struct LoginRequest {
     username: String,
     password: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ChangePasswordRequest {
+    current_password: String,
+    new_password: String,
+}
+
+async fn change_password<S>(
+    State(state): State<S>,
+    auth: PortalAuth,
+    connect_info: Option<axum::extract::Extension<ConnectInfo<SocketAddr>>>,
+    PortalJson(payload): PortalJson<ChangePasswordRequest>,
+) -> Result<Response, PortalError>
+where
+    S: PortalSessionState + Send + Sync,
+{
+    let context = MutationContext {
+        actor: MutationActor::PortalSession {
+            user_id: auth.principal.user_id.clone(),
+        },
+        request_id: auth.request_id,
+    };
+    state
+        .portal_services()
+        .auth()
+        .change_password(
+            &context,
+            ChangePasswordCommand {
+                principal: auth.principal,
+                current_password: SecretString::from(payload.current_password),
+                new_password: SecretString::from(payload.new_password),
+                client_ip: client_ip(
+                    connect_info.map(|axum::extract::Extension(ConnectInfo(address))| address),
+                ),
+            },
+        )
+        .await
+        .map_err(map_portal_error)?;
+    let mut response =
+        PortalResponse::new(StatusCode::OK, PortalEnvelope::ok(serde_json::json!({})))
+            .into_response();
+    let cookie = format!("{SESSION_COOKIE}=; {COOKIE_ATTRS}; Max-Age=0");
+    response.headers_mut().insert(
+        SET_COOKIE,
+        HeaderValue::from_str(&cookie).map_err(|_| PortalError::internal())?,
+    );
+    Ok(response)
 }
 
 #[derive(Serialize)]

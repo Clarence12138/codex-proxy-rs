@@ -245,6 +245,7 @@ Responses wire 之间的协议转换层，转换只在 xAI Provider 内完成。
 | `POST` | `/api/portal/auth/login` | 用户登录 |
 | `GET` | `/api/portal/auth/status` | 当前 Cookie 是否已认证 |
 | `POST` | `/api/portal/auth/logout` | 退出 |
+| `POST` | `/api/portal/auth/password` | 当前用户自助改密，撤销全部 Portal 会话 |
 | `GET` | `/api/portal/me` | 当前套餐与用户合计日/周已用 |
 | `GET`/`POST` | `/api/portal/keys` | 列出或创建当前用户 Key |
 | `POST` | `/api/portal/keys/update` | 更新名称与限额 |
@@ -255,6 +256,12 @@ Responses wire 之间的协议转换层，转换只在 xAI Provider 内完成。
 | `GET`/`POST` | `/api/admin/portal/users` 及 `/create` `/enable` `/disable` `/reset-password` | 管理员用户管理 |
 | `GET`/`POST` | `/api/admin/portal/plans` 及 `/create` `/update` | 套餐 |
 | `POST` | `/api/admin/portal/subscriptions/assign` `/disable` | 开通或停用订阅 |
+
+Portal 创建用户、管理员重置密码与自助改密统一要求至少 **6 个字符**、最多 **256 个 UTF-8 字节**；允许纯数字、纯字母和 `$`，不要求字符组合，不去除首尾空格。系统管理员初始化密码策略不变。创建接口仍须显式传入 `password`，没有服务端默认密码。
+
+`POST /api/portal/auth/password` 仅接受 JSON `{ "currentPassword": "旧密码", "newPassword": "新密码" }`，拒绝包括 `userId` 在内的未知字段（沿用 Portal JSON 解码的 422），目标仅来自当前 Portal 会话。当前密码不正确或新密码长度不合法返回 400（不会当作会话过期）；未登录返回 401，同源检查失败返回 403，凭据并发变化返回 409，认证尝试过多返回 429。当前密码验证复用登录的用户名/IP 限流。
+
+改密成功返回 200、现有响应信封中的空对象 `{}`，清除 Portal Cookie，并在同一事务撤销该用户所有 Portal 会话。用户需重新登录；API Key 与订阅不变。
 
 用户用量接口不返回上游账号邮箱、内部 metadata、原始诊断或凭据。用户 Key 必须绑定套餐分组，空分组不会回退到全部账号。
 

@@ -16,7 +16,7 @@ use crate::{
     ports::store::PortalUserStore,
 };
 
-use super::auth::hash_password;
+use super::auth::{hash_password_blocking, validate_password};
 
 /// 用户管理服务。
 #[async_trait]
@@ -60,7 +60,7 @@ impl PortalUserService for DefaultPortalUserService {
     ) -> Result<PortalUser, PortalError> {
         validate_username(&command.username)?;
         validate_password(&command.password)?;
-        let hash = hash_password(&command.password)?;
+        let hash = hash_password_blocking(command.password.clone()).await?;
         self.users
             .create_user(command, &hash, context)
             .await
@@ -80,7 +80,7 @@ impl PortalUserService for DefaultPortalUserService {
         command: ResetPortalPassword,
     ) -> Result<(), PortalError> {
         validate_password(&command.password)?;
-        let hash = hash_password(&command.password)?;
+        let hash = hash_password_blocking(command.password.clone()).await?;
         self.users
             .reset_password(command, &hash, context)
             .await
@@ -106,13 +106,6 @@ fn validate_username(username: &str) -> Result<(), PortalError> {
     let username = username.trim();
     if username.is_empty() || username.len() > 64 || username.chars().any(char::is_control) {
         return Err(PortalError::invalid("用户名不合法"));
-    }
-    Ok(())
-}
-
-fn validate_password(password: &str) -> Result<(), PortalError> {
-    if password.len() < 12 || password.contains('$') {
-        return Err(PortalError::invalid("密码至少 12 位且不能包含 $"));
     }
     Ok(())
 }
