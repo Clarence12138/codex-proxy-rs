@@ -5,6 +5,7 @@ mod refresh_timing;
 mod scheduling;
 mod slots;
 mod snapshot;
+mod subscription;
 
 use std::sync::Arc;
 use std::time::SystemTime;

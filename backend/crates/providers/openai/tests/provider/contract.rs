@@ -465,6 +465,8 @@ fn contract_account_scope() -> Arc<FrozenAccountScope> {
         "acct_websocket_busy_replay",
         "acct_websocket_metadata_close",
         "acct_websocket_turn_state",
+        "acct_ws_quota_a",
+        "acct_ws_quota_b",
     ]
     .into_iter()
     .map(|id| {
@@ -3125,6 +3127,60 @@ async fn downstream_websocket_new_chain_should_override_session_and_attempt_http
 }
 
 #[tokio::test]
+async fn websocket_opening_account_rejection_keeps_replay_safe_without_transport_retry() {
+    let store = Arc::new(MemoryAccountStore::default());
+    create_account(&store, "acct_ws_quota_a").await;
+    create_account(&store, "acct_ws_quota_b").await;
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base_url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        let (mut opening, _) = listener.accept().await.unwrap();
+        let request = capture_http_request(&mut opening).await;
+        assert!(String::from_utf8_lossy(&request).starts_with("GET /codex/responses"));
+        // 额度耗尽拒绝通常携带小时级的 retry-after；同账号重试注定再次命中。
+        let body = r#"{"error":{"message":"You have reached your usage limit.","type":"rate_limit_error"}}"#;
+        opening
+            .write_all(
+                format!(
+                    "HTTP/1.1 429 Too Many Requests\r\nretry-after: 129600\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .as_bytes(),
+            )
+            .await
+            .unwrap();
+    });
+
+    let provider = provider_with_base_url(&store, base_url);
+    let mut stream = provider
+        .execute(
+            planned_request("openai", generate_operation()),
+            context("req_ws_quota_rotation", CancellationToken::new()),
+        )
+        .await
+        .expect("prepare quota-rejected stream");
+    let error = loop {
+        match stream.next().await {
+            Some(Ok(_)) => {}
+            Some(Err(error)) => break error,
+            None => panic!("quota rejection must surface as a terminal error"),
+        }
+    };
+    server.await.expect("upstream server");
+
+    assert_eq!(error.kind(), ProviderErrorKind::RateLimited);
+    assert_eq!(error.upstream_status(), Some(429));
+    assert_eq!(error.send_state(), UpstreamSendState::NotSent);
+    assert!(
+        error.replay_is_safe(),
+        "before-payload rejection is replay safe"
+    );
+    // 回放安全的账号级拒绝必须把换号决策留给 Core，不得钉死同账号传输重试
+    // （旧行为会携带小时级 retry-after 的同账号重试标记，请求必然超时）。
+    assert_eq!(error.pre_delivery_retry(), None);
+}
+
+#[tokio::test]
 async fn websocket_turn_state_metadata_is_exposed_through_response_observation() {
     let store = Arc::new(MemoryAccountStore::default());
     create_account(&store, "acct_websocket_turn_state").await;
@@ -4843,8 +4899,155 @@ async fn completed_response_persists_session_affinity_before_stream_consumer_sto
     drop(stream);
 
     assert_eq!(affinity.binding_count(), 1);
-    assert_eq!(observed_service_tier.as_deref(), Some("default"));
+    assert_eq!(observed_service_tier.as_deref(), Some("priority"));
     assert_eq!(upstream_service_tier.as_deref(), Some("default"));
+}
+
+#[tokio::test]
+async fn responses_should_observe_and_bill_the_outbound_service_tier_on_both_transports() {
+    for use_websocket in [false, true] {
+        for (requested, reported, expected_cost) in [
+            (Some("priority"), Some("default"), 6_875_000),
+            (Some("priority"), None, 6_875_000),
+            (Some("default"), Some("priority"), 3_437_500),
+            (None, Some("priority"), 3_437_500),
+        ] {
+            let store = Arc::new(MemoryAccountStore::default());
+            create_account(&store, "acct_provider_contract").await;
+            let mut created =
+                json!({"type":"response.created","response":{"id":"resp_tier","model":"gpt-5.4"}});
+            let mut completed = json!({
+                "type":"response.completed",
+                "response":{
+                    "id":"resp_tier","model":"gpt-5.4","status":"completed","output":[],
+                    "usage":{"input_tokens":100,"output_tokens":10,"input_tokens_details":{"cached_tokens":25,"cache_write_tokens":0},"total_tokens":110}
+                }
+            });
+            if let Some(reported) = reported {
+                created["response"]["service_tier"] = json!("auto");
+                completed["response"]["service_tier"] = json!(reported);
+            }
+            let response_frames = format!(
+                "event: response.created\ndata: {created}\n\nevent: response.completed\ndata: {completed}\n\n"
+            );
+            let (base_url, http_server, websocket_server) = if use_websocket {
+                let listener = TcpListener::bind("127.0.0.1:0").await.expect("listener");
+                let base_url = format!("http://{}", listener.local_addr().expect("address"));
+                let server = tokio::spawn(async move {
+                    let (socket, _) = listener.accept().await.expect("accept WebSocket");
+                    let mut websocket = accept_codex_test_websocket(socket).await;
+                    let request = websocket.next().await.expect("request").expect("frame");
+                    let request: Value = serde_json::from_str(request.to_text().expect("text"))
+                        .expect("request JSON");
+                    for event in [created, completed] {
+                        websocket
+                            .send(Message::Text(event.to_string().into()))
+                            .await
+                            .expect("response");
+                    }
+                    request
+                });
+                (base_url, None, Some(server))
+            } else {
+                let server = MockServer::start().await;
+                Mock::given(method("POST"))
+                    .and(path("/codex/responses"))
+                    .respond_with(
+                        ResponseTemplate::new(200)
+                            .set_body_raw(response_frames.clone(), "text/event-stream"),
+                    )
+                    .expect(1)
+                    .mount(&server)
+                    .await;
+                (server.uri(), Some(server), None)
+            };
+            let mut body = Map::from_iter([
+                ("model".to_owned(), json!("gpt-5.4")),
+                ("input".to_owned(), json!("hello")),
+            ]);
+            if let Some(requested) = requested {
+                body.insert("service_tier".to_owned(), json!(requested));
+            }
+            let payload = ProtocolPayload::json_object("openai", body)
+                .expect("payload")
+                .with_context(Map::from_iter([(
+                    "use_websocket".to_owned(),
+                    json!(use_websocket),
+                )]));
+            let mut stream = provider_with_base_url(&store, base_url)
+                .execute(
+                    planned_request(
+                        "openai",
+                        Operation::Generate(GenerateRequest::from_protocol_payload(payload)),
+                    ),
+                    context("req_service_tier", CancellationToken::new()),
+                )
+                .await
+                .expect("provider stream");
+            let mut observations = Vec::new();
+            let mut costs = Vec::new();
+            let mut raw_response = Vec::new();
+            while let Some(event) = stream.next().await {
+                let event = event.expect("provider event");
+                if let Some(observation) = event.response_observation() {
+                    observations.push(observation.clone());
+                }
+                for fact in event.canonical_facts() {
+                    if let GatewayEvent::CalculatedCost(cost) = fact {
+                        costs.push(cost.total().amount().scaled());
+                    }
+                }
+                if let Some(frame) = event.wire_event().and_then(|wire| wire.raw_sse_frame()) {
+                    raw_response.extend_from_slice(frame);
+                }
+            }
+            let outbound = if let Some(server) = http_server {
+                server.verify().await;
+                let requests = server.received_requests().await.expect("upstream requests");
+                captured_request_body(&requests[0])
+            } else {
+                websocket_server
+                    .expect("WebSocket server")
+                    .await
+                    .expect("server task")
+            };
+            assert_eq!(
+                outbound.get("service_tier").and_then(Value::as_str),
+                requested
+            );
+            assert!(!observations.is_empty());
+            for observation in &observations {
+                assert_eq!(
+                    observation.service_tier(),
+                    requested,
+                    "WebSocket={use_websocket}"
+                );
+            }
+            let metadata: Value = serde_json::from_str(
+                observations
+                    .last()
+                    .expect("final observation")
+                    .provider_metadata()
+                    .expect("metadata")
+                    .as_json(),
+            )
+            .expect("metadata JSON");
+            assert_eq!(
+                metadata.get("requestedServiceTier").and_then(Value::as_str),
+                requested
+            );
+            assert_eq!(
+                metadata.get("upstreamServiceTier").and_then(Value::as_str),
+                reported
+            );
+            assert_eq!(
+                costs,
+                vec![expected_cost],
+                "WebSocket={use_websocket}, requested={requested:?}, reported={reported:?}"
+            );
+            assert_eq!(raw_response, response_frames.as_bytes());
+        }
+    }
 }
 
 #[tokio::test]
@@ -5092,6 +5295,218 @@ async fn official_usage_limit_failure_persists_fact_without_fabricating_usage() 
         QuotaAccessState::Exhausted,
         "a failure follow-up must preserve access even when the reset recovery condition is met"
     );
+}
+
+#[tokio::test]
+async fn capacity_http_and_websocket_opening_rejections_use_bounded_business_retry() {
+    for use_websocket in [false, true] {
+        for status in [400, 429, 503] {
+            let store = Arc::new(MemoryAccountStore::default());
+            let account_id = "acct_provider_contract";
+            create_account(&store, account_id).await;
+            let server = MockServer::start().await;
+            let body = json!({"error": {
+                "code": if status == 503 { Some("server_is_overloaded") } else { None },
+                "type": "server_error",
+                "message": "Selected model is at capacity. Please try a different model.",
+                "extension": {"preserved": true}
+            }});
+            Mock::given(method(if use_websocket { "GET" } else { "POST" }))
+                .and(path("/codex/responses"))
+                .respond_with(
+                    ResponseTemplate::new(status)
+                        .insert_header("retry-after", "129600")
+                        .set_body_json(body.clone()),
+                )
+                .expect(1)
+                .mount(&server)
+                .await;
+            let operation = if use_websocket {
+                generate_operation()
+            } else {
+                http_generate_operation()
+            };
+            let mut stream = provider_with_base_url(&store, server.uri())
+                .execute(
+                    planned_request("openai", operation),
+                    context("req_capacity", CancellationToken::new()),
+                )
+                .await
+                .expect("prepare stream");
+            let error = loop {
+                match stream.next().await {
+                    Some(Ok(_)) => {}
+                    Some(Err(error)) => break error,
+                    None => panic!("expected capacity rejection"),
+                }
+            };
+            assert_eq!(error.kind(), ProviderErrorKind::UpstreamCapacityUnavailable);
+            assert_eq!(error.upstream_status(), Some(status));
+            assert!(error.replay_is_safe());
+            assert!(
+                matches!(error.pre_delivery_retry(), Some(PreDeliveryRetry::SameAccountTransientRetry {
+                max_retries, initial_delay, max_delay,
+            }) if max_retries.get() == 3 && initial_delay == Duration::from_secs(8) && max_delay == Duration::from_secs(8))
+            );
+            assert!(!provider_openai::openai_failure_affects_account_score(
+                &error
+            ));
+            assert_eq!(
+                serde_json::from_str::<Value>(
+                    error.raw_upstream_error().expect("original error").as_str()
+                )
+                .expect("JSON"),
+                body
+            );
+            let response = error
+                .client_visible_upstream_response()
+                .expect("client response");
+            assert_eq!(response.status(), status);
+            assert_eq!(response.body().as_ref(), body.to_string().as_bytes());
+            let account = store.account(account_id).expect("account");
+            assert_eq!(account.quota().access(), QuotaAccessState::Unknown);
+            assert_eq!(account.credential_state(), CredentialState::Ready);
+        }
+    }
+}
+
+#[tokio::test]
+async fn websocket_usage_limit_rejection_preserves_quota_state_for_account_rotation() {
+    let store = Arc::new(MemoryAccountStore::default());
+    let account_id = "acct_provider_contract";
+    create_account(&store, account_id).await;
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/codex/responses"))
+        .respond_with(ResponseTemplate::new(429).insert_header("retry-after", "129600")
+            .set_body_json(json!({"error": {"type": "usage_limit_reached", "message": "limit reached", "resets_at": 1_900_000_000}})))
+        .expect(1).mount(&server).await;
+    let mut stream = provider_with_base_url(&store, server.uri())
+        .execute(
+            planned_request("openai", generate_operation()),
+            context("req_ws_quota", CancellationToken::new()),
+        )
+        .await
+        .expect("prepare stream");
+    let error = loop {
+        match stream.next().await {
+            Some(Ok(_)) => {}
+            Some(Err(error)) => break error,
+            None => panic!("expected quota rejection"),
+        }
+    };
+    assert_eq!(error.send_state(), UpstreamSendState::NotSent);
+    assert!(error.replay_is_safe());
+    assert_eq!(error.pre_delivery_retry(), None);
+    assert_eq!(error.retry_after(), Some(Duration::from_secs(129_600)));
+    assert_eq!(error.kind(), ProviderErrorKind::QuotaExhausted);
+    assert_eq!(
+        store.account(account_id).expect("account").quota().access(),
+        QuotaAccessState::Exhausted
+    );
+}
+
+#[tokio::test]
+async fn capacity_stream_rejection_only_retries_before_semantic_output_on_both_transports() {
+    for use_websocket in [false, true] {
+        for semantic_output in [false, true] {
+            let store = Arc::new(MemoryAccountStore::default());
+            create_account(&store, "acct_provider_contract").await;
+            let mut events = vec![
+                json!({"type": "response.created", "response": {"id": "resp_capacity", "model": "gpt-5.4"}}),
+            ];
+            if semantic_output {
+                events.push(json!({"type": "response.output_text.delta", "output_index": 0, "content_index": 0, "delta": "hello"}));
+            }
+            let original = json!({"type": "response.failed", "response": {"id": "resp_capacity", "error": {"code": "server_is_overloaded", "message": "Selected model is at capacity. Please try a different model."}}});
+            events.push(original.clone());
+            let (base_url, _http_server, websocket_server) = if use_websocket {
+                let listener = TcpListener::bind("127.0.0.1:0").await.expect("listener");
+                let base_url = format!("http://{}", listener.local_addr().expect("address"));
+                let server = tokio::spawn(async move {
+                    let (socket, _) = listener.accept().await.expect("accept WebSocket");
+                    let mut websocket = accept_codex_test_websocket(socket).await;
+                    websocket.next().await.expect("request").expect("frame");
+                    for event in events {
+                        websocket
+                            .send(Message::Text(event.to_string().into()))
+                            .await
+                            .expect("response");
+                    }
+                });
+                (base_url, None, Some(server))
+            } else {
+                let server = MockServer::start().await;
+                let frames = events
+                    .iter()
+                    .map(|event| {
+                        format!(
+                            "event: {}\ndata: {event}\n\n",
+                            event["type"].as_str().expect("type")
+                        )
+                    })
+                    .collect::<String>();
+                Mock::given(method("POST"))
+                    .and(path("/codex/responses"))
+                    .respond_with(
+                        ResponseTemplate::new(200).set_body_raw(frames, "text/event-stream"),
+                    )
+                    .expect(1)
+                    .mount(&server)
+                    .await;
+                (server.uri(), Some(server), None)
+            };
+            let operation = if use_websocket {
+                generate_operation()
+            } else {
+                http_generate_operation()
+            };
+            let mut stream = provider_with_base_url(&store, base_url)
+                .execute(
+                    planned_request("openai", operation),
+                    context("req_capacity_stream", CancellationToken::new()),
+                )
+                .await
+                .expect("prepare stream");
+            let mut client_events = Vec::new();
+            let mut error = loop {
+                match stream.next().await {
+                    Some(Ok(event)) => {
+                        if event.has_client_event() {
+                            client_events.push(event);
+                        }
+                    }
+                    Some(Err(error)) => break error,
+                    None => panic!("expected capacity failure"),
+                }
+            };
+            assert_eq!(error.replay_is_safe(), !semantic_output);
+            assert_eq!(error.kind(), ProviderErrorKind::UpstreamCapacityUnavailable);
+            assert_eq!(error.pre_delivery_retry().is_some(), !semantic_output);
+            assert!(!provider_openai::openai_failure_affects_account_score(
+                &error
+            ));
+            assert_eq!(
+                serde_json::from_str::<Value>(
+                    error.raw_upstream_error().expect("raw error").as_str()
+                )
+                .expect("JSON"),
+                original
+            );
+            if !semantic_output {
+                assert!(client_events.is_empty());
+            }
+            client_events.extend(error.take_atomic_client_events());
+            let wire = client_events
+                .last()
+                .and_then(|event| event.wire_event())
+                .expect("failure wire");
+            assert_eq!(wire.data(), &original);
+            if let Some(server) = websocket_server {
+                server.await.expect("server");
+            }
+        }
+    }
 }
 
 #[tokio::test]

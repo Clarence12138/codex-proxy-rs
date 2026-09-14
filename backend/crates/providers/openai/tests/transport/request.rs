@@ -118,6 +118,51 @@ fn encoder_should_remove_unsupported_fields_from_upstream_body() {
 }
 
 #[test]
+fn encoder_should_preserve_environment_history_and_web_search_locations() {
+    // 拼车用户的环境和搜索地域属于请求语义，不能按网关的时间或统一地域改写。
+    let body = json!({
+        "model": "client-model",
+        "input": [{
+            "type": "message",
+            "role": "user",
+            "content": [{
+                "type": "input_text",
+                "text": "<environment_context><current_date>2001-01-01</current_date><timezone>Asia/Shanghai</timezone></environment_context>"
+            }, {
+                "type": "input_text",
+                "text": "<environment_context><current_date>2001-01-02</current_date><timezone>Asia/Tokyo</timezone></environment_context>"
+            }],
+            "internal_chat_message_metadata_passthrough": {
+                "content_item_kinds": ["environments.environment_context", "user.text"],
+                "create_time": 978307200
+            }
+        }],
+        "tools": [{
+            "type": "web_search"
+        }, {
+            "type": "web_search_preview",
+            "user_location": {
+                "type": "approximate",
+                "country": "JP",
+                "region": "Tokyo",
+                "city": "Tokyo",
+                "timezone": "Asia/Tokyo"
+            }
+        }]
+    });
+    let mut expected = body.clone();
+    expected["model"] = json!("gpt-test");
+
+    let encoded = encode_generate_request(
+        &request(body.as_object().expect("request object").clone()),
+        "gpt-test",
+    )
+    .expect("encode");
+
+    assert_eq!(Value::Object(encoded.body().clone()), expected);
+}
+
+#[test]
 fn encoder_should_preserve_client_store_intent() {
     let request = request(Map::from_iter([
         ("model".to_owned(), json!("client-model")),

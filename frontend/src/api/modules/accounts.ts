@@ -242,6 +242,15 @@ export interface AccountProfileActivityInsights {
   invocations: AccountProfileInvocation[] | null
 }
 
+export interface AccountSubscription {
+  startsAt: string | null
+  expiresAt: string
+  willRenew: boolean | null
+  billingPeriod: string | null
+  billingCurrency: string | null
+  observedAt: string
+}
+
 export interface AccountProfileStatisticsResponse {
   displayName: string | null
   username: string | null
@@ -250,6 +259,12 @@ export interface AccountProfileStatisticsResponse {
   summary: AccountProfileStatisticsSummary
   dailyUsage: AccountProfileDailyUsage[] | null
   activityInsights: AccountProfileActivityInsights
+}
+
+export interface AccountPersonalInfoResponse {
+  profile: AccountProfileStatisticsResponse | null
+  profileError: string | null
+  subscription: AccountSubscription | null
 }
 
 export interface AccountResetCredit {
@@ -420,9 +435,9 @@ export function recoverAccount(data: AccountIdParam, options: RequestOptions = {
   })
 }
 
-export function getAccountProfileStatistics(data: AccountIdParam, options: RequestOptions = {}) {
-  return request<AccountProfileStatisticsResponse>({
-    url: '/api/admin/accounts/profile-statistics',
+export function getAccountPersonalInfo(data: AccountIdParam, options: RequestOptions = {}) {
+  return request<AccountPersonalInfoResponse>({
+    url: '/api/admin/accounts/personal-info',
     method: 'GET',
     params: data,
     ...options,
