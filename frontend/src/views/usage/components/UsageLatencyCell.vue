@@ -1,12 +1,10 @@
 <script setup lang="ts">
-import type { UsageDisplayRecord } from '../utils/records'
-
 import { computed } from 'vue'
 import { usageLatencyDetails } from '../utils/records'
 import UsageDetailPopover from './UsageDetailPopover.vue'
 
 const props = defineProps<{
-  record: UsageDisplayRecord
+  record: Parameters<typeof usageLatencyDetails>[0]
 }>()
 
 const latencyDetails = computed(() => usageLatencyDetails(props.record))

@@ -186,18 +186,18 @@ export function usageUserAgent(record: { userAgent?: string | null }) {
   return record.userAgent || '—'
 }
 
-export function usageReasoningEffort(record: UsageCommonRecord) {
+export function usageReasoningEffort(record: Pick<UsageCommonRecord, 'reasoningEffort' | 'reasoningPreset' | 'subagentKind'>) {
   const reasoningEffort = record.reasoningEffort || '—'
   if (usageIsSubagent(record))
     return reasoningEffort
   return record.reasoningPreset || reasoningEffort
 }
 
-export function usageIsSubagent(record: UsageCommonRecord) {
+export function usageIsSubagent(record: Pick<UsageCommonRecord, 'subagentKind'>) {
   return Boolean(record.subagentKind)
 }
 
-export function usageIsReview(record: UsageCommonRecord) {
+export function usageIsReview(record: Pick<UsageCommonRecord, 'subagentKind'>) {
   return record.subagentKind === 'review'
 }
 
@@ -205,7 +205,7 @@ export function usageIsCompact(record: UsageCommonRecord) {
   return record.compact === true
 }
 
-export function usageModelDisplay(record: UsageCommonRecord) {
+export function usageModelDisplay(record: Pick<UsageCommonRecord, 'model' | 'requestedModel' | 'upstreamModel'>) {
   const requestedModel = record.requestedModel || ''
   const upstreamModel = record.upstreamModel || ''
   const storedModel = record.model || ''
@@ -220,11 +220,11 @@ export function usageModelDisplay(record: UsageCommonRecord) {
   return { primary, secondary }
 }
 
-export function usageTokenDetails(record: UsageCommonRecord) {
+export function usageTokenDetails(record: Pick<UsageCommonRecord, 'tokenDetails'>) {
   return record.tokenDetails
 }
 
-export function usageLatencyDetails(record: UsageCommonRecord) {
+export function usageLatencyDetails(record: { latencyDetails: Partial<UsageLatencyDetails> | null, firstTokenLatencyMs: number | null, latencyMs: number | null }) {
   const latencyDetails = record.latencyDetails
   const firstTokenMs = durationValue(
     record.firstTokenLatencyMs ?? latencyDetails?.firstTokenMs,
@@ -291,11 +291,11 @@ export function usageLatencyDetails(record: UsageCommonRecord) {
   }
 }
 
-export function usageBilling(record: UsageCommonRecord) {
+export function usageBilling(record: Pick<UsageCommonRecord, 'billing'>) {
   return record.billing
 }
 
-export function usageBillingText(record: UsageCommonRecord) {
+export function usageBillingText(record: Pick<UsageCommonRecord, 'billing'>) {
   return usageBilling(record)?.totalAmountDisplay || '—'
 }
 

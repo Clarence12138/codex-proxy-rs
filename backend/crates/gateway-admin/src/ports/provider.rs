@@ -234,6 +234,16 @@ pub struct ProviderAdminRegistry {
     providers: Arc<BTreeMap<ProviderKind, Arc<dyn ProviderAdmin>>>,
 }
 
+impl gateway_core::metering::BillingResolver for ProviderAdminRegistry {
+    fn resolve(
+        &self,
+        provider: &ProviderKind,
+        input: &ProviderBillingInput,
+    ) -> Option<CalculatedBillingBreakdown> {
+        self.calculated_billing(provider, input).ok().flatten()
+    }
+}
+
 impl ProviderAdminRegistry {
     /// 创建无重复 ProviderKind 的注册表。
     ///

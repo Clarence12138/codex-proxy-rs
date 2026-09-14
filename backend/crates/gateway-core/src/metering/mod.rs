@@ -1,5 +1,11 @@
 //! 跨 Provider 的标准化用量与单次请求总费用。
 
+mod billing;
+pub use billing::{
+    BillingResolver, CalculatedBillingBreakdown, CurrencyCost, DecimalAmount, ProviderBillingInput,
+    UsageBilling,
+};
+
 use std::fmt;
 use std::str::FromStr;
 

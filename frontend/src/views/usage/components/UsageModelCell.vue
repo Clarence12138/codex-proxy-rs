@@ -6,7 +6,7 @@ import { computed } from 'vue'
 import { usageModelDisplay } from '../utils/records'
 
 const props = defineProps<{
-  record: UsageDisplayRecord
+  record: Pick<UsageDisplayRecord, 'model' | 'requestedModel' | 'upstreamModel'>
 }>()
 
 const modelDisplay = computed(() => usageModelDisplay(props.record))

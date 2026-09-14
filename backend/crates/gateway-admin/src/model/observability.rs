@@ -1,7 +1,5 @@
 //! 用量、成本、健康与错误诊断的 UTC 语义事实。
 
-use std::str::FromStr;
-
 use chrono::{DateTime, TimeDelta, Timelike as _, Utc};
 
 use super::{AdminModelError, PageSize};
@@ -165,81 +163,9 @@ pub enum DiagnosticDimension {
     Status,
 }
 
-/// `numeric(20,10)` 的非负规范金额。
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct DecimalAmount(String);
-
-impl DecimalAmount {
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-
-    /// 精确相加两个 `numeric(20,10)` 金额。
-    #[must_use]
-    pub fn checked_add(&self, other: &Self) -> Option<Self> {
-        Self::from_decimal(self.to_decimal()?.checked_add(other.to_decimal()?)?)
-    }
-
-    /// 将金额按非零请求数均分，保留最多十位小数。
-    #[must_use]
-    pub fn checked_div_u64(&self, divisor: u64) -> Option<Self> {
-        Self::from_decimal(self.to_decimal()?.checked_div_u64(divisor)?)
-    }
-
-    fn to_decimal(&self) -> Option<gateway_core::metering::Decimal> {
-        self.0.parse().ok()
-    }
-
-    fn from_decimal(value: gateway_core::metering::Decimal) -> Option<Self> {
-        Some(Self(value.canonical()))
-    }
-}
-
-impl FromStr for DecimalAmount {
-    type Err = AdminModelError;
-
-    fn from_str(input: &str) -> Result<Self, Self::Err> {
-        let input = input.trim();
-        let mut parts = input.split('.');
-        let whole = parts.next().unwrap_or_default();
-        let fraction = parts.next();
-        let valid = !whole.is_empty()
-            && whole.len() <= 10
-            && whole.bytes().all(|byte| byte.is_ascii_digit())
-            && parts.next().is_none()
-            && fraction.is_none_or(|value| {
-                !value.is_empty()
-                    && value.len() <= 10
-                    && value.bytes().all(|byte| byte.is_ascii_digit())
-            });
-        if !valid {
-            return Err(AdminModelError::InvalidDecimalAmount);
-        }
-        let whole = whole.trim_start_matches('0');
-        let whole = if whole.is_empty() { "0" } else { whole };
-        let fraction = fraction.unwrap_or_default().trim_end_matches('0');
-        let canonical = if fraction.is_empty() {
-            whole.to_owned()
-        } else {
-            format!("{whole}.{fraction}")
-        };
-        Ok(Self(canonical))
-    }
-}
-
-impl std::fmt::Display for DecimalAmount {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(&self.0)
-    }
-}
-
-/// 单一币种的成本合计。
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CurrencyCost {
-    pub currency: String,
-    pub amount: DecimalAmount,
-}
+pub use gateway_core::metering::{
+    CalculatedBillingBreakdown, CurrencyCost, DecimalAmount, ProviderBillingInput, UsageBilling,
+};
 
 /// PostgreSQL 连续百分位返回的非负有限毫秒值。
 ///
@@ -280,18 +206,6 @@ pub struct LatencyPercentiles {
     pub p99_ms: Option<PercentileMilliseconds>,
 }
 
-/// Provider 价格规则计算所需的持久请求事实。
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProviderBillingInput {
-    pub upstream_model_id: String,
-    pub service_tier: Option<String>,
-    pub input_tokens: Option<u64>,
-    pub output_tokens: Option<u64>,
-    pub cached_tokens: Option<u64>,
-    pub cache_write_tokens: Option<u64>,
-    pub total: CurrencyCost,
-}
-
 /// 已完整交付且由 Provider 计算费用的持久请求事实。
 ///
 /// 控制面仅保留通用事实，具体 Provider 负责校验已持久化总额并恢复标准费用。
@@ -306,32 +220,6 @@ pub struct UsageCalculatedBillingFact {
     pub cached_tokens: Option<u64>,
     pub cache_write_tokens: Option<u64>,
     pub total: CurrencyCost,
-}
-
-/// Provider 已确认的逐项费用与单价。
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CalculatedBillingBreakdown {
-    pub input_amount: CurrencyCost,
-    pub output_amount: CurrencyCost,
-    pub cache_read_amount: CurrencyCost,
-    pub cache_write_amount: CurrencyCost,
-    pub standard_amount: CurrencyCost,
-    pub total_amount: CurrencyCost,
-    pub input_price_per_million: CurrencyCost,
-    pub output_price_per_million: CurrencyCost,
-    pub cache_read_price_per_million: CurrencyCost,
-    pub cache_write_price_per_million: CurrencyCost,
-    pub service_tier: Option<String>,
-    pub multiplier_percent: u32,
-}
-
-/// 单次请求的费用语义。
-///
-/// Provider 上报费用或无法恢复逐项价格时保留总额；Provider 验证成功后升级为完整分解。
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum UsageBilling {
-    Total { source: String, total: CurrencyCost },
-    Calculated(Box<CalculatedBillingBreakdown>),
 }
 
 /// 计费数据覆盖情况。

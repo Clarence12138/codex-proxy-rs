@@ -110,7 +110,7 @@ pub(crate) fn attempt_metrics_view(metrics: &domain::AttemptMetrics) -> AttemptM
 }
 
 pub(crate) fn token_details(record: &domain::UsageRecord) -> TokenDetailsView {
-    TokenDetailsView {
+    crate::usage_presentation::token_details(&gateway_core::metering::Usage {
         input_tokens: record.input_tokens,
         output_tokens: record.output_tokens,
         cached_tokens: record.cached_tokens,
@@ -119,35 +119,11 @@ pub(crate) fn token_details(record: &domain::UsageRecord) -> TokenDetailsView {
         image_input_tokens: record.image_input_tokens,
         image_output_tokens: record.image_output_tokens,
         total_tokens: record.total_tokens,
-        input_tokens_display: record
-            .input_tokens
-            .map_or_else(|| "-".to_owned(), format_number),
-        output_tokens_display: record
-            .output_tokens
-            .map_or_else(|| "-".to_owned(), format_number),
-        cached_tokens_display: record
-            .cached_tokens
-            .map_or_else(|| "-".to_owned(), format_compact_number),
-        cache_write_tokens_display: record
-            .cache_write_tokens
-            .map_or_else(|| "-".to_owned(), format_compact_number),
-        reasoning_tokens_display: record
-            .reasoning_tokens
-            .map_or_else(|| "-".to_owned(), format_number),
-        image_input_tokens_display: record
-            .image_input_tokens
-            .map_or_else(|| "-".to_owned(), format_number),
-        image_output_tokens_display: record
-            .image_output_tokens
-            .map_or_else(|| "-".to_owned(), format_number),
-        total_tokens_display: record
-            .total_tokens
-            .map_or_else(|| "-".to_owned(), format_number),
-    }
+    })
 }
 
 pub(crate) fn usage_list_token_details(record: &domain::UsageListRecord) -> TokenDetailsView {
-    TokenDetailsView {
+    crate::usage_presentation::token_details(&gateway_core::metering::Usage {
         input_tokens: record.input_tokens,
         output_tokens: record.output_tokens,
         cached_tokens: record.cached_tokens,
@@ -156,97 +132,10 @@ pub(crate) fn usage_list_token_details(record: &domain::UsageListRecord) -> Toke
         image_input_tokens: record.image_input_tokens,
         image_output_tokens: record.image_output_tokens,
         total_tokens: record.total_tokens,
-        input_tokens_display: record
-            .input_tokens
-            .map_or_else(|| "-".to_owned(), format_number),
-        output_tokens_display: record
-            .output_tokens
-            .map_or_else(|| "-".to_owned(), format_number),
-        cached_tokens_display: record
-            .cached_tokens
-            .map_or_else(|| "-".to_owned(), format_compact_number),
-        cache_write_tokens_display: record
-            .cache_write_tokens
-            .map_or_else(|| "-".to_owned(), format_compact_number),
-        reasoning_tokens_display: record
-            .reasoning_tokens
-            .map_or_else(|| "-".to_owned(), format_number),
-        image_input_tokens_display: record
-            .image_input_tokens
-            .map_or_else(|| "-".to_owned(), format_number),
-        image_output_tokens_display: record
-            .image_output_tokens
-            .map_or_else(|| "-".to_owned(), format_number),
-        total_tokens_display: record
-            .total_tokens
-            .map_or_else(|| "-".to_owned(), format_number),
-    }
+    })
 }
 
-pub(crate) fn format_money(cost: &domain::CurrencyCost) -> String {
-    format_decimal_currency(cost.amount.as_str(), &cost.currency)
-}
-
-pub(crate) fn format_token_price(cost: &domain::CurrencyCost) -> String {
-    if cost.currency != "USD" {
-        return format!("{} {} / 1M Token", cost.currency, cost.amount.as_str());
-    }
-    format!("${} / 1M Token", cost.amount.as_str())
-}
-
-pub(crate) fn format_service_tier(service_tier: Option<&str>) -> String {
-    match service_tier {
-        Some("priority" | "fast") => "Fast".to_owned(),
-        Some("flex") => "Flex".to_owned(),
-        Some("default" | "standard") | None => "Standard".to_owned(),
-        Some(other) => capitalize_first(other),
-    }
-}
-
-fn capitalize_first(value: &str) -> String {
-    let mut chars = value.chars();
-    chars
-        .next()
-        .map(|first| first.to_uppercase().chain(chars).collect())
-        .unwrap_or_default()
-}
-
-pub(crate) fn billing_view(billing: Option<&domain::UsageBilling>) -> Option<BillingView> {
-    match billing? {
-        domain::UsageBilling::Total { source, total } => Some(BillingView {
-            input_amount_display: "—".to_owned(),
-            output_amount_display: "—".to_owned(),
-            cache_read_amount_display: "—".to_owned(),
-            cache_write_amount_display: "—".to_owned(),
-            standard_amount_display: "—".to_owned(),
-            total_amount_display: if source == "calculated" {
-                format!("≈ {}", format_money(total))
-            } else {
-                format_money(total)
-            },
-            input_price_display: "—".to_owned(),
-            output_price_display: "—".to_owned(),
-            cache_read_price_display: "—".to_owned(),
-            cache_write_price_display: "—".to_owned(),
-            service_tier_display: "—".to_owned(),
-            multiplier_display: "—".to_owned(),
-        }),
-        domain::UsageBilling::Calculated(value) => Some(BillingView {
-            input_amount_display: format_money(&value.input_amount),
-            output_amount_display: format_money(&value.output_amount),
-            cache_read_amount_display: format_money(&value.cache_read_amount),
-            cache_write_amount_display: format_money(&value.cache_write_amount),
-            standard_amount_display: format_money(&value.standard_amount),
-            total_amount_display: format_money(&value.total_amount),
-            input_price_display: format_token_price(&value.input_price_per_million),
-            output_price_display: format_token_price(&value.output_price_per_million),
-            cache_read_price_display: format_token_price(&value.cache_read_price_per_million),
-            cache_write_price_display: format_token_price(&value.cache_write_price_per_million),
-            service_tier_display: format_service_tier(value.service_tier.as_deref()),
-            multiplier_display: format!("{:.2}x", f64::from(value.multiplier_percent) / 100.0),
-        }),
-    }
-}
+pub(crate) use crate::usage_presentation::billing_view;
 
 pub(crate) fn usage_list_record_view(record: domain::UsageListRecord) -> UsageListRecordView {
     let token_details = usage_list_token_details(&record);

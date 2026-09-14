@@ -228,10 +228,17 @@ impl AdminServices {
 /// Admin 初始化完成后的封闭能力包。
 pub struct AdminBundle {
     services: AdminServices,
+    billing: Arc<dyn gateway_core::metering::BillingResolver>,
     worker_contributions: Vec<WorkerContribution>,
 }
 
 impl AdminBundle {
+    /// 仅向组合根导出中立计费能力，不开放管理员服务。
+    #[must_use]
+    pub fn billing_resolver(&self) -> Arc<dyn gateway_core::metering::BillingResolver> {
+        self.billing.clone()
+    }
+
     #[must_use]
     pub fn services(&self) -> AdminServices {
         self.services.clone()
@@ -319,7 +326,7 @@ pub async fn initialize(
             store.observability(),
             store.accounts(),
             store.settings(),
-            registry,
+            registry.clone(),
         )),
         settings: Arc::new(DefaultSettingsService::new(
             store.settings(),
@@ -343,6 +350,7 @@ pub async fn initialize(
     let worker_contributions = backup_worker_contribution(backup_task)?;
     Ok(AdminBundle {
         services,
+        billing: Arc::new(registry),
         worker_contributions,
     })
 }

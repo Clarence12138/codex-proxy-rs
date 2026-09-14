@@ -930,6 +930,16 @@ async fn usage_records_are_owner_scoped_and_keep_a_stable_key_reference() {
         .await
         .expect("seed portal usage record");
     }
+    sqlx::query(
+        "update model_requests set provider_kind = 'openai',
+        provider_account_authentication_kind_snapshot = 'oauth', upstream_model_id = 'gpt-5.5',
+        reasoning_effort = 'high', upstream_transport = 'websocket', cached_tokens = 4,
+        reasoning_tokens = 2, first_token_ms = 120, first_event_ms = 80, latency_ms = 200
+        where id = 'req_key_usage_records_one'",
+    )
+    .execute(&database.pool)
+    .await
+    .expect("seed safe observation fields");
 
     let page = store
         .list_records(
@@ -948,6 +958,35 @@ async fn usage_records_are_owner_scoped_and_keep_a_stable_key_reference() {
     assert_eq!(page.items[0].key_id, "key_usage_records_one");
     assert_eq!(page.items[0].key_name.as_deref(), Some("主要密钥"));
     assert_eq!(page.items[0].key_prefix.as_deref(), Some("sk_aaaaaaa"));
+    let record = &page.items[0];
+    assert_eq!(record.provider.as_deref(), Some("openai"));
+    assert_eq!(record.authentication_kind.as_deref(), Some("oauth"));
+    assert_eq!(record.upstream_model.as_deref(), Some("gpt-5.5"));
+    assert_eq!(record.reasoning_effort.as_deref(), Some("high"));
+    assert_eq!(record.client_transport, "http_json");
+    assert_eq!(record.upstream_transport.as_deref(), Some("websocket"));
+    assert_eq!(record.cached_tokens, Some(4));
+    assert_eq!(record.reasoning_tokens, Some(2));
+    assert_eq!(record.first_token_ms, Some(120));
+    assert_eq!(record.first_event_ms, Some(80));
+    assert_eq!(record.latency_ms, Some(200));
+    assert!(record.cache_write_tokens.is_none());
+    let other = store
+        .list_records(
+            &two.id,
+            PortalUsageQuery {
+                start: None,
+                end: None,
+                cursor: None,
+                page_size: 1,
+            },
+        )
+        .await
+        .expect("other owner");
+    assert_eq!(other.items.len(), 1);
+    assert_eq!(other.items[0].id, "req_key_usage_records_two");
+    assert!(other.items[0].provider.is_none());
+    assert!(other.items[0].first_token_ms.is_none());
 
     sqlx::query("delete from client_api_keys where id = 'key_usage_records_one'")
         .execute(&database.pool)

@@ -75,6 +75,7 @@ async fn create_and_update_validate_plan_name_before_store() {
             other,
         ),
         Arc::new(NoopSnapshot),
+        Arc::new(NoopSnapshot),
     )
     .unwrap()
     .services();

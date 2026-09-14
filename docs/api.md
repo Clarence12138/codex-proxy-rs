@@ -265,6 +265,21 @@ Portal 创建用户、管理员重置密码与自助改密统一要求至少 **6
 
 用户用量接口不返回上游账号邮箱、内部 metadata、原始诊断或凭据。`records` 中的密钥信息仅包含稳定的 `keyId`、当前名称 `keyName` 与安全截断的 `keyPrefix`；密钥删除后 ID 仍可用于识别历史记录，名称与前缀为 `null`，不会返回完整密钥。用户 Key 必须绑定套餐分组，空分组不会回退到全部账号。
 
+Portal「使用记录」保留 `/portal/usage` 与上述 API 路径。`records` 新增以下安全字段，所有页面均按当前会话用户的冻结请求归属隔离：
+
+| 字段 | 含义 |
+| --- | --- |
+| `model`、`upstreamModel` | 请求模型与实际上游模型；`model` 保持原有语义 |
+| `provider`、`authenticationKind` | 平台与认证分类，不包含账号身份 |
+| `reasoningEffort`、`reasoningPreset`、`subagentKind` | 推理强度、预设与子代理分类 |
+| `clientTransport`、`upstreamTransport` | 独立的接入/上游传输，不能互相推断 |
+| `cachedTokens`、`cacheWriteTokens`、`reasoningTokens`、`imageInputTokens`、`imageOutputTokens` | 已记录的细分 Token，缺失为 `null` |
+| `tokenDetails` | 与管理端相同的 Token 数值与展示字段；总量取持久事实，不重新相加 |
+| `serviceTier`、`billing` | 服务档位及与管理端相同的计费展示明细；无 USD 总额时 `billing` 为 `null` |
+| `firstTokenLatencyMs`、`firstEventMs`、`firstReasoningMs`、`firstTextMs`、`latencyMs` | 首字、首事件、首个推理、首个正文及总耗时（毫秒） |
+
+计费分解复用 Provider 价格规则，只有计算结果与已存总额一致时提供完整明细；旧价格不匹配或明细不可恢复时保留原总额，其余展示 `—`。不会重算历史费用或修改预算账本。只有首事件而无首字观测时，界面明确标为「首事件」。不返回账号容量、槽位、原始请求响应或完整 metadata。
+
 ## 5. 账号
 
 账号 API 使用统一路由，不存在 Provider Instance 或 Provider 专属账号路由。需要 Provider 的请求只接受

@@ -34,6 +34,7 @@ pub mod admin;
 mod health;
 pub mod openai;
 pub mod portal;
+mod usage_presentation;
 
 /// API-owned HTTP 与静态资源配置。
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]

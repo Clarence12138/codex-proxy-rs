@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { PortalUsageItem } from '@/api/modules/portal'
 import type { BaseTableColumn } from '@/components/base/BaseTable/columns'
-import { Activity, ArrowDown, ArrowUp, CircleDollarSign, FileText } from '@lucide/vue'
+import { Activity, CircleDollarSign, FileText } from '@lucide/vue'
 import { computed, onMounted, shallowRef } from 'vue'
 
 import { getPortalUsageSummary, listPortalUsage } from '@/api/modules/portal'
@@ -11,14 +11,22 @@ import BaseMotionIcon from '@/components/base/BaseMotionIcon.vue'
 import BasePageHeader from '@/components/base/BasePageHeader.vue'
 import { defineTableColumns } from '@/components/base/BaseTable/columns'
 import BaseTable from '@/components/base/BaseTable/index.vue'
+import ProviderIconGroup from '@/components/ProviderIconGroup.vue'
 import { formatDateTime } from '@/utils/date'
 import { formatInteger } from '@/utils/number'
+import UsageBillingCell from '@/views/usage/components/UsageBillingCell.vue'
 import UsageClientKeyCell from '@/views/usage/components/UsageClientKeyCell.vue'
+import UsageLatencyCell from '@/views/usage/components/UsageLatencyCell.vue'
+import UsageModelCell from '@/views/usage/components/UsageModelCell.vue'
+import UsageReasoningEffortCell from '@/views/usage/components/UsageReasoningEffortCell.vue'
+import UsageTokenCell from '@/views/usage/components/UsageTokenCell.vue'
+import UsageTransportBadge from '@/views/usage/components/UsageTransportBadge.vue'
 import { formatUsd } from '@/views/usage/utils/format'
 
 interface PortalUsageRow extends PortalUsageItem {
   clientApiKey: string
-  tokenDetails: number | null
+  requestedModel: string | null
+  latencyDetails: Partial<import('@/api').UsageLatencyDetails>
   startedAtDisplay: string
 }
 
@@ -31,9 +39,14 @@ interface PortalUsageSummary {
 const usageColumns: BaseTableColumn<PortalUsageRow>[] = defineTableColumns<PortalUsageRow>([
   { key: 'clientApiKey', label: '密钥', kind: 'custom', size: 'xl' },
   { key: 'model', label: '模型', kind: 'mono', size: 'xl' },
-  { key: 'outcome', label: '状态', kind: 'status', size: 'md' },
+  { key: 'reasoningEffort', label: '推理强度', kind: 'custom', size: 'lg' },
+  { key: 'provider', label: '平台/类型', kind: 'custom', size: 'lg' },
+  { key: 'clientTransport', label: '请求类型（接入）', kind: 'custom', size: 'xl' },
+  { key: 'upstreamTransport', label: '请求类型（上游）', kind: 'custom', size: 'xl' },
   { key: 'tokenDetails', label: 'TOKEN', kind: 'numeric', size: 'xl' },
   { key: 'costUsd', label: '费用', kind: 'numeric', size: 'lg' },
+  { key: 'latencyMs', label: '延迟', kind: 'custom', size: 'xl' },
+  { key: 'outcome', label: '状态', kind: 'status', size: 'md' },
   { key: 'startedAtDisplay', label: '时间', kind: 'datetime' },
 ])
 
@@ -47,7 +60,13 @@ const error = shallowRef<string | null>(null)
 const rows = computed<PortalUsageRow[]>(() => items.value.map(item => ({
   ...item,
   clientApiKey: item.keyId,
-  tokenDetails: item.totalTokens,
+  requestedModel: item.model,
+  latencyDetails: {
+    firstEventMs: item.firstEventMs ?? undefined,
+    firstReasoningMs: item.firstReasoningMs ?? undefined,
+    firstTextMs: item.firstTextMs ?? undefined,
+    firstTokenMs: item.firstTokenLatencyMs ?? undefined,
+  },
   startedAtDisplay: formatDateTime(item.startedAt),
 })))
 
@@ -94,7 +113,7 @@ async function loadInitial() {
     summary.value = nextSummary
   }
   catch {
-    error.value = '无法加载用量，请稍后重试'
+    error.value = '无法加载使用记录，请稍后重试'
   }
   finally {
     loading.value = false
@@ -142,16 +161,12 @@ function outcomeClass(outcome: string) {
   return 'bg-cp-warning-container text-cp-warning-on-container'
 }
 
-function tokenDisplay(value: number | null) {
-  return value === null ? '—' : formatInteger(value)
-}
-
 onMounted(loadInitial)
 </script>
 
 <template>
   <div class="w-full">
-    <BasePageHeader title="用量" description="只显示你自己的请求，不含上游账号信息">
+    <BasePageHeader title="使用记录">
       <template v-if="error" #actions>
         <BaseButton variant="secondary" :loading="loading" :disabled="loading || loadingMore" @click="loadInitial">
           重新加载
@@ -187,7 +202,7 @@ onMounted(loadInitial)
     <BaseCard
       class="mt-5 flex min-h-112 flex-col"
       title="请求明细"
-      description="查看每次请求使用的密钥、Token 与费用"
+      description="查看每次请求的模型、传输、Token、费用与耗时"
     >
       <template #body>
         <p v-if="error && rows.length" class="mt-0 mb-3 text-cp-sm text-cp-error-text" role="alert">
@@ -210,9 +225,23 @@ onMounted(loadInitial)
             </template>
 
             <template #model="{ row }">
-              <code class="block max-w-full truncate font-mono text-cp-sm font-emphasis text-cp-text" :title="row.model || '—'">
-                {{ row.model || '—' }}
-              </code>
+              <UsageModelCell :record="row" />
+            </template>
+
+            <template #reasoningEffort="{ row }">
+              <UsageReasoningEffortCell :record="row" />
+            </template>
+            <template #provider="{ row }">
+              <ProviderIconGroup :provider="row.provider || ''" :authentication-kind="row.authenticationKind" />
+            </template>
+            <template #clientTransport="{ row }">
+              <UsageTransportBadge :transport="row.clientTransport" />
+            </template>
+            <template #upstreamTransport="{ row }">
+              <UsageTransportBadge :transport="row.upstreamTransport" />
+            </template>
+            <template #latencyMs="{ row }">
+              <UsageLatencyCell :record="row" />
             </template>
 
             <template #outcome="{ row }">
@@ -226,25 +255,11 @@ onMounted(loadInitial)
             </template>
 
             <template #tokenDetails="{ row }">
-              <div class="grid grid-cols-[auto_auto] justify-end gap-x-2 gap-y-1 font-mono text-cp-xs leading-none tabular-nums">
-                <span class="inline-flex items-center gap-1 text-cp-success-text">
-                  <ArrowDown class="size-3" aria-hidden="true" />
-                  {{ tokenDisplay(row.inputTokens) }}
-                </span>
-                <span class="inline-flex items-center gap-1 text-cp-info-text">
-                  <ArrowUp class="size-3" aria-hidden="true" />
-                  {{ tokenDisplay(row.outputTokens) }}
-                </span>
-                <span class="col-span-2 text-right font-bold text-cp-text-secondary">
-                  总计 {{ tokenDisplay(row.totalTokens) }}
-                </span>
-              </div>
+              <UsageTokenCell :record="row" />
             </template>
 
             <template #costUsd="{ row }">
-              <span class="font-mono text-cp-sm font-heavy tabular-nums text-cp-green-text">
-                {{ formatUsd(row.costUsd) }}
-              </span>
+              <UsageBillingCell :record="row" />
             </template>
           </BaseTable>
 

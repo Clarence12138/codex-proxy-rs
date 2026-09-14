@@ -5,7 +5,7 @@ import { Bot, SquareDashedBottomCode } from '@lucide/vue'
 import { usageIsReview, usageIsSubagent, usageReasoningEffort } from '../utils/records'
 
 defineProps<{
-  record: UsageDisplayRecord
+  record: Pick<UsageDisplayRecord, 'reasoningEffort' | 'reasoningPreset' | 'subagentKind'>
 }>()
 </script>
 

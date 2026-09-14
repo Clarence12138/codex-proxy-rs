@@ -128,6 +128,7 @@ pub fn initialize(
     mut config: PortalConfig,
     store: PortalStorePorts,
     snapshot: Arc<dyn SnapshotControl>,
+    billing: Arc<dyn gateway_core::metering::BillingResolver>,
 ) -> Result<PortalBundle, PortalError> {
     config
         .resolve_and_validate(Path::new("."))
@@ -149,7 +150,7 @@ pub fn initialize(
                 snapshot.clone(),
             )),
             keys: Arc::new(DefaultPortalKeyService::new(store.keys(), snapshot)),
-            usage: Arc::new(DefaultPortalUsageService::new(store.usage())),
+            usage: Arc::new(DefaultPortalUsageService::new(store.usage(), billing)),
         },
     })
 }

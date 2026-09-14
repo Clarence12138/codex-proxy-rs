@@ -9,7 +9,7 @@ const auth = usePortalAuthStore()
 const nav = [
   { label: '概览', path: '/portal', icon: LayoutDashboard },
   { label: '我的密钥', path: '/portal/keys', icon: KeyRound },
-  { label: '用量', path: '/portal/usage', icon: ScrollText },
+  { label: '使用记录', path: '/portal/usage', icon: ScrollText },
   { label: '我的', path: '/portal/me', icon: UserRound },
 ]
 

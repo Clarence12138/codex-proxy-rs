@@ -13,26 +13,7 @@ pub struct PageData<T> {
 }
 
 /// Token 详情展示。
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TokenDetailsView {
-    pub input_tokens: Option<u64>,
-    pub output_tokens: Option<u64>,
-    pub cached_tokens: Option<u64>,
-    pub cache_write_tokens: Option<u64>,
-    pub reasoning_tokens: Option<u64>,
-    pub image_input_tokens: Option<u64>,
-    pub image_output_tokens: Option<u64>,
-    pub total_tokens: Option<u64>,
-    pub input_tokens_display: String,
-    pub output_tokens_display: String,
-    pub cached_tokens_display: String,
-    pub cache_write_tokens_display: String,
-    pub reasoning_tokens_display: String,
-    pub image_input_tokens_display: String,
-    pub image_output_tokens_display: String,
-    pub total_tokens_display: String,
-}
+pub use crate::usage_presentation::TokenDetailsView;
 
 /// 按货币展示的成本。
 #[derive(Debug, Serialize)]
@@ -53,22 +34,7 @@ pub struct CostCoverageView {
 }
 
 /// Provider 受控价格规则生成的单次请求费用明细展示。
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BillingView {
-    pub input_amount_display: String,
-    pub output_amount_display: String,
-    pub cache_read_amount_display: String,
-    pub cache_write_amount_display: String,
-    pub standard_amount_display: String,
-    pub total_amount_display: String,
-    pub input_price_display: String,
-    pub output_price_display: String,
-    pub cache_read_price_display: String,
-    pub cache_write_price_display: String,
-    pub service_tier_display: String,
-    pub multiplier_display: String,
-}
+pub use crate::usage_presentation::BillingView;
 
 /// 使用记录表格的窄展示。
 #[derive(Serialize)]

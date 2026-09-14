@@ -134,11 +134,32 @@ export interface PortalUsageItem {
   id: string
   startedAt: string
   model: string | null
+  upstreamModel: string | null
+  provider: string | null
+  authenticationKind: string | null
+  reasoningEffort: string | null
+  reasoningPreset: string | null
+  subagentKind: string | null
+  serviceTier: string | null
+  clientTransport: string
+  upstreamTransport: string | null
+  cachedTokens: number | null
+  cacheWriteTokens: number | null
+  reasoningTokens: number | null
+  imageInputTokens: number | null
+  imageOutputTokens: number | null
+  firstTokenLatencyMs: number | null
+  firstEventMs: number | null
+  firstReasoningMs: number | null
+  firstTextMs: number | null
+  latencyMs: number | null
   outcome: string
   inputTokens: number | null
   outputTokens: number | null
   totalTokens: number | null
   costUsd: string | null
+  billing: import('@/api').UsageBilling | null
+  tokenDetails: import('@/api').UsageTokenDetails
   keyId: string
   keyPrefix: string | null
   keyName: string | null

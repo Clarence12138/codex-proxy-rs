@@ -93,7 +93,12 @@ pub async fn run() -> Result<(), BootstrapError> {
     )
     .await?;
     host.report_startup_ready("Admin");
-    let portal = gateway_portal::initialize(portal, store.portal_ports(), core.snapshot_control())?;
+    let portal = gateway_portal::initialize(
+        portal,
+        store.portal_ports(),
+        core.snapshot_control(),
+        admin.billing_resolver(),
+    )?;
     host.report_startup_ready("Portal");
 
     let mut probes = store.health_probes();

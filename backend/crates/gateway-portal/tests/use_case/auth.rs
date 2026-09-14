@@ -299,6 +299,16 @@ impl PortalUsageStore for MemoryAuth {
 
 pub(super) struct NoopSnapshot;
 
+impl gateway_core::metering::BillingResolver for NoopSnapshot {
+    fn resolve(
+        &self,
+        _: &gateway_core::identity::ProviderKind,
+        _: &gateway_core::metering::ProviderBillingInput,
+    ) -> Option<gateway_core::metering::CalculatedBillingBreakdown> {
+        None
+    }
+}
+
 impl SnapshotControl for NoopSnapshot {
     fn publish_committed(&self, _: ConfigRevision) -> BoxFuture<'_, ()> {
         Box::pin(async {})
@@ -321,9 +331,14 @@ pub(super) fn services(store: MemoryAuth) -> gateway_portal::PortalServices {
         Arc::new(store.clone()),
         Arc::new(store),
     );
-    initialize(PortalConfig::default(), ports, Arc::new(NoopSnapshot))
-        .expect("portal")
-        .services()
+    initialize(
+        PortalConfig::default(),
+        ports,
+        Arc::new(NoopSnapshot),
+        Arc::new(NoopSnapshot),
+    )
+    .expect("portal")
+    .services()
 }
 
 #[test]

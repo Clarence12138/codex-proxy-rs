@@ -235,6 +235,16 @@ impl PortalUsageStore for EmptyStore {
 
 struct NoopSnapshot;
 
+impl gateway_core::metering::BillingResolver for NoopSnapshot {
+    fn resolve(
+        &self,
+        _: &gateway_core::identity::ProviderKind,
+        _: &gateway_core::metering::ProviderBillingInput,
+    ) -> Option<gateway_core::metering::CalculatedBillingBreakdown> {
+        None
+    }
+}
+
 impl SnapshotControl for NoopSnapshot {
     fn publish_committed(&self, _: ConfigRevision) -> BoxFuture<'_, ()> {
         Box::pin(async {})
@@ -255,6 +265,14 @@ pub fn services_with_auth_and_usage(
     auth: Arc<dyn PortalAuthStore>,
     usage: Arc<dyn PortalUsageStore>,
 ) -> PortalServices {
+    services_with_auth_usage_and_billing(auth, usage, Arc::new(NoopSnapshot))
+}
+
+pub fn services_with_auth_usage_and_billing(
+    auth: Arc<dyn PortalAuthStore>,
+    usage: Arc<dyn PortalUsageStore>,
+    billing: Arc<dyn gateway_core::metering::BillingResolver>,
+) -> PortalServices {
     let store = Arc::new(EmptyStore);
     initialize(
         PortalConfig::default(),
@@ -267,6 +285,7 @@ pub fn services_with_auth_and_usage(
             usage,
         ),
         Arc::new(NoopSnapshot),
+        billing,
     )
     .expect("placeholder portal services")
     .services()
