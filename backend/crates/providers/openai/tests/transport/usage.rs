@@ -32,19 +32,26 @@ fn billing_usage(
 
 #[test]
 fn astra_billing_should_preserve_components_across_tiers_and_context_boundary() {
-    // USD per million tokens, in order: input, cache read, cache write, output.
+    // 标准价为原价的 1.8 倍，Fast 按标准价 2.5 倍；单位 USD / 百万 Token，顺序为输入、缓存读、缓存写、输出。
+    // 档位倍率仍相对于调整后的标准价，不把项目调价重复计入倍率。
     for (tier, input, expected, multiplier) in [
-        (None, 272_000, ["10", "1", "12.5", "50"], 100),
-        (None, 272_001, ["20", "2", "25", "75"], 100),
-        (Some("flex"), 272_000, ["5", "0.5", "6.25", "25"], 50),
-        (Some("flex"), 272_001, ["10", "1", "12.5", "37.5"], 50),
-        (Some("fast"), 272_000, ["20", "2", "25", "100"], 200),
-        (Some("fast"), 272_001, ["40", "4", "50", "150"], 200),
-        (Some("priority"), 272_001, ["40", "4", "50", "150"], 200),
+        (None, 272_000, ["18", "1.8", "22.5", "90"], 100),
+        (None, 272_001, ["18", "1.8", "22.5", "90"], 100),
+        (None, 922_000, ["18", "1.8", "22.5", "90"], 100),
+        (Some("flex"), 272_000, ["9", "0.9", "11.25", "45"], 50),
+        (Some("flex"), 272_001, ["9", "0.9", "11.25", "45"], 50),
+        (Some("fast"), 272_000, ["45", "4.5", "56.25", "225"], 250),
+        (Some("fast"), 272_001, ["45", "4.5", "56.25", "225"], 250),
+        (
+            Some("priority"),
+            272_001,
+            ["45", "4.5", "56.25", "225"],
+            250,
+        ),
     ] {
         let breakdown =
             openai_billing_breakdown("gpt-6-astra", billing_usage(input, 5, 20, 10), tier)
-                .expect("published Astra pricing");
+                .expect("project Astra pricing");
         let prices = [
             breakdown.input_price_per_million(),
             breakdown.cache_read_price_per_million(),
@@ -72,7 +79,7 @@ fn astra_billing_should_preserve_components_across_tiers_and_context_boundary() 
             breakdown.cache_write_amount().amount().scaled(),
             breakdown.total_amount().amount().scaled(),
         ),
-        (7_000_000, 2_500_000, 200_000, 1_250_000, 10_950_000),
+        (12_600_000, 4_500_000, 360_000, 2_250_000, 19_710_000),
     );
 }
 
@@ -99,7 +106,7 @@ fn billing_breakdown_should_use_latest_gpt_5_6_and_cached_input_prices() {
     let terra_fast =
         openai_billing_breakdown("gpt-5.6-terra", billing_usage(1, 1, 0, 0), Some("fast"))
             .expect("gpt-5.6-terra fast pricing");
-    assert_eq!(terra_fast.total_amount().amount().scaled(), 280_000);
+    assert_eq!(terra_fast.total_amount().amount().scaled(), 350_000);
 
     let terra_long =
         openai_billing_breakdown("gpt-5.6-terra", billing_usage(272_001, 0, 0, 0), None)
@@ -135,7 +142,7 @@ fn billing_breakdown_should_apply_fast_and_flex_tiers_without_guessing_unknown_m
 }
 
 #[test]
-fn billing_breakdown_should_use_official_fast_long_context_prices() {
+fn billing_breakdown_should_use_sub2api_fast_long_context_prices() {
     let breakdown =
         openai_billing_breakdown("gpt-5.6-sol", billing_usage(272_001, 1, 1, 1), Some("fast"))
             .expect("gpt-5.6-sol fast long-context pricing");
@@ -148,12 +155,46 @@ fn billing_breakdown_should_use_official_fast_long_context_prices() {
             breakdown.output_price_per_million().amount().scaled(),
         ),
         (
-            200_000_000_000,
-            20_000_000_000,
             250_000_000_000,
-            900_000_000_000,
+            25_000_000_000,
+            312_500_000_000,
+            1_125_000_000_000,
         )
     );
+}
+
+#[test]
+fn gpt_56_fast_should_scale_every_component_by_two_and_a_half() {
+    // 同一上下文档比较费用，防止只调整输出或遗漏缓存、长上下文及别名。
+    for model in [
+        "gpt-5.6-sol",
+        "gpt-5.6-terra",
+        "gpt-5.6-luna",
+        "gpt-daybreak-blue-latest",
+    ] {
+        for input in [272_000, 272_001] {
+            let usage = billing_usage(input, 100, 200, 40);
+            let standard = openai_billing_breakdown(model, usage, None).expect("standard pricing");
+            for tier in ["fast", "priority"] {
+                let fast =
+                    openai_billing_breakdown(model, usage, Some(tier)).expect("fast pricing");
+                for (base, actual) in [
+                    (standard.input_amount(), fast.input_amount()),
+                    (standard.output_amount(), fast.output_amount()),
+                    (standard.cache_read_amount(), fast.cache_read_amount()),
+                    (standard.cache_write_amount(), fast.cache_write_amount()),
+                    (standard.total_amount(), fast.total_amount()),
+                ] {
+                    assert_eq!(
+                        actual.amount().scaled() * 2,
+                        base.amount().scaled() * 5,
+                        "{model}/{tier}/{input}"
+                    );
+                }
+                assert_eq!(fast.multiplier_percent(), 250);
+            }
+        }
+    }
 }
 
 #[test]
@@ -314,6 +355,7 @@ fn billing_should_keep_deprecated_models_before_their_shutdown_dates() {
 #[test]
 fn billing_should_not_inherit_prices_for_unknown_models_or_tiers() {
     for model in [
+        "gpt-5.6",
         "gpt-6-astra-future",
         "gpt-6-astra-2099-01-01",
         "gpt-5.6-sol-wm",

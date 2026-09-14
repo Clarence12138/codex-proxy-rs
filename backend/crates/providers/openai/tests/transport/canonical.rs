@@ -977,10 +977,10 @@ fn pricing_response_cost(
 #[test]
 fn billing_should_follow_actual_tier_and_only_fall_back_when_it_is_absent() {
     for (requested, actual, expected) in [
-        (Some("fast"), Some("default"), Some(1_000_000_000)),
-        (Some("auto"), Some("fast"), Some(2_000_000_000)),
-        (Some("default"), Some("flex"), Some(500_000_000)),
-        (Some("fast"), None, Some(2_000_000_000)),
+        (Some("fast"), Some("default"), Some(1_800_000_000)),
+        (Some("auto"), Some("fast"), Some(4_500_000_000)),
+        (Some("default"), Some("flex"), Some(900_000_000)),
+        (Some("fast"), None, Some(4_500_000_000)),
         (Some("auto"), None, None),
         (Some("default"), Some("future"), None),
     ] {
@@ -999,7 +999,8 @@ fn billing_should_add_file_and_web_search_fees_without_tier_markup() {
         {"type": "file_search_call", "id": "fs_2", "status": "completed"},
         {"type": "web_search_call", "id": "ws_1", "status": "completed", "action": {"type": "search"}}
     ]);
-    for (tier, expected) in [("default", 1_150_000_000), ("fast", 2_150_000_000)] {
+    // 基础调价和 Fast 倍率只作用于 Token，工具费仍为两次文件搜索加一次网页搜索的原价。
+    for (tier, expected) in [("default", 1_950_000_000), ("fast", 4_650_000_000)] {
         assert_eq!(
             pricing_response_cost(
                 None,

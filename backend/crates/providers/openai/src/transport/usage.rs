@@ -18,7 +18,7 @@ const WEB_SEARCH_CALL_TICKS: u128 = 100_000_000;
 const WEB_SEARCH_PREVIEW_NON_REASONING_CALL_TICKS: u128 = 250_000_000;
 const FILE_SEARCH_CALL_TICKS: u128 = 25_000_000;
 
-/// OpenAI 公开 Token 价格计算所需的单次用量事实。
+/// OpenAI Provider Token 费用估算所需的单次用量事实。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct OpenAiBillingUsage {
     input_tokens: u64,
@@ -219,63 +219,53 @@ struct PricingRule {
     pricing: ModelPricing,
 }
 
-// 价格来源：https://developers.openai.com/api/docs/pricing，核验日期 2026-09-09。
-// 使用常规价，不采用 Sol 的临时 $4/$20 优惠；缓存、Flex、Fast 和长上下文
-// 档位也统一按常规价计算。
+// 基准价格来源：https://developers.openai.com/api/docs/pricing，核验日期 2026-09-09。
+// 标准价不采用 Sol 的临时 $4/$20 优惠；Astra 的基础价按项目要求上调。
+// Astra、Sol、Terra、Luna 的 Fast/priority 按对应标准档的 2.5 倍计费，包含缓存，
+// 对齐 sub2api 部署提交 223fa56f576c6f2809cd3b252aa71f270740337e 的
+// backend/internal/service/billing_service.go（不采用 API priority 的 2 倍单价）。
 // 已按 https://developers.openai.com/api/docs/deprecations 核验至 2026-09-13，
 // 移除已关闭的型号；仅宣布弃用但尚未到关闭日期的型号继续保留。
 const PRICING_RULES: &[PricingRule] = &[
     // Astra：https://developers.openai.com/api/docs/models/gpt-6-astra
-    // 已于 2026-09-09 对照官方价目表核验。
+    // 普通上下文标准价上调 1.8 倍，Flex 为其 0.5 倍、Fast 为其 2.5 倍，不启用长上下文加价。
+    // 缓存写入仍为输入单价的 125%；独立工具调用费不参与上调。
     PricingRule {
         model: "gpt-6-astra",
-        pricing: ModelPricing::new(100_000, 500_000, 10_000)
+        pricing: ModelPricing::new(180_000, 900_000, 18_000)
             .with_cache_write(125)
-            .with_flex(50_000, 250_000, 5_000)
-            .with_fast(200_000, 1_000_000, 20_000)
-            .with_long(200_000, 750_000, 20_000)
-            .with_long_flex(100_000, 375_000, 10_000)
-            .with_long_fast(400_000, 1_500_000, 40_000),
+            .with_flex(90_000, 450_000, 9_000)
+            .with_fast(450_000, 2_250_000, 45_000),
     },
     PricingRule {
         model: "gpt-5.6-sol",
         pricing: ModelPricing::new(50_000, 300_000, 5_000)
             .with_cache_write(125)
             .with_flex(25_000, 150_000, 2_500)
-            .with_fast(100_000, 600_000, 10_000)
+            .with_fast(125_000, 750_000, 12_500)
             .with_long(100_000, 450_000, 10_000)
             .with_long_flex(50_000, 225_000, 5_000)
-            .with_long_fast(200_000, 900_000, 20_000),
+            .with_long_fast(250_000, 1_125_000, 25_000),
     },
     PricingRule {
         model: "gpt-5.6-terra",
         pricing: ModelPricing::new(20_000, 120_000, 2_000)
             .with_cache_write(125)
             .with_flex(10_000, 60_000, 1_000)
-            .with_fast(40_000, 240_000, 4_000)
+            .with_fast(50_000, 300_000, 5_000)
             .with_long(40_000, 180_000, 4_000)
             .with_long_flex(20_000, 90_000, 2_000)
-            .with_long_fast(80_000, 360_000, 8_000),
+            .with_long_fast(100_000, 450_000, 10_000),
     },
     PricingRule {
         model: "gpt-5.6-luna",
         pricing: ModelPricing::new(2_000, 12_000, 200)
             .with_cache_write(125)
             .with_flex(1_000, 6_000, 100)
-            .with_fast(4_000, 24_000, 400)
+            .with_fast(5_000, 30_000, 500)
             .with_long(4_000, 18_000, 400)
             .with_long_flex(2_000, 9_000, 200)
-            .with_long_fast(8_000, 36_000, 800),
-    },
-    PricingRule {
-        model: "gpt-5.6",
-        pricing: ModelPricing::new(50_000, 300_000, 5_000)
-            .with_cache_write(125)
-            .with_flex(25_000, 150_000, 2_500)
-            .with_fast(100_000, 600_000, 10_000)
-            .with_long(100_000, 450_000, 10_000)
-            .with_long_flex(50_000, 225_000, 5_000)
-            .with_long_fast(200_000, 900_000, 20_000),
+            .with_long_fast(10_000, 45_000, 1_000),
     },
     PricingRule {
         model: "gpt-5.5-pro",
