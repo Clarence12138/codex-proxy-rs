@@ -1,19 +1,18 @@
+import type { RequestOptions } from '@/api/request'
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 
 import { portalAuthStatus, portalLogin, portalLogout } from '@/api/modules/portal'
 import { resetUnauthorizedHandling } from '@/api/request'
-import { errorMessage } from '@/utils/async'
 
 export const usePortalAuthStore = defineStore('portalAuth', () => {
   const isAuthenticated = ref(false)
   const sessionChecked = ref(false)
   const loading = ref(false)
-  const error = ref<string | null>(null)
 
   async function checkAuth() {
     try {
-      const status = await portalAuthStatus()
+      const status = await portalAuthStatus({ silent: true })
       isAuthenticated.value = status.authenticated
       if (status.authenticated)
         resetUnauthorizedHandling()
@@ -28,20 +27,18 @@ export const usePortalAuthStore = defineStore('portalAuth', () => {
     }
   }
 
-  async function login(payload: { username: string, password: string }) {
+  async function login(payload: Parameters<typeof portalLogin>[0], options: RequestOptions = {}) {
     try {
       loading.value = true
-      error.value = null
-      await portalLogin(payload)
+      await portalLogin(payload, options)
       isAuthenticated.value = true
       sessionChecked.value = true
       resetUnauthorizedHandling()
-      return true
+      return { success: true } as const
     }
     catch (cause: unknown) {
-      error.value = errorMessage(cause, '登录失败')
-      isAuthenticated.value = false
-      return false
+      // 登录失败不会撤销服务端已有 Cookie，不在这里使旧会话失效。
+      return { success: false, cause } as const
     }
     finally {
       loading.value = false
@@ -50,7 +47,7 @@ export const usePortalAuthStore = defineStore('portalAuth', () => {
 
   async function logout() {
     try {
-      await portalLogout()
+      await portalLogout({ silent: true })
     }
     catch {
       // 忽略登出错误
@@ -65,14 +62,12 @@ export const usePortalAuthStore = defineStore('portalAuth', () => {
     isAuthenticated.value = false
     sessionChecked.value = true
     loading.value = false
-    error.value = null
   }
 
   return {
     isAuthenticated,
     sessionChecked,
     loading,
-    error,
     checkAuth,
     login,
     logout,

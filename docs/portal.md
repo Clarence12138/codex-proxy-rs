@@ -2,6 +2,9 @@
 
 拼车用户控制面平行于管理员，不改变 `/v1` 协议。HTTP 字段见 [接口文档](api.md#portal-用户面板)。
 
+- 统一登录入口：未登录访问根地址 `/` 时进入 `/login`，管理员和用户共用“账号 / 密码”表单，无需选择身份；旧 `/portal/login` 自动跳转 `/login`
+- 登录先验证管理员凭据，仅明确不匹配时再验证用户凭据；管理员成功进入 `/`，用户成功进入 `/portal`。两种身份的账号和密码完全相同时管理员优先；网络、服务异常或限流不会触发身份回退
+- 有效会话下访问根地址自动进入对应后台，两种会话同时有效时管理员优先；直接访问 `/login` 仍可显示表单。两套权限和 Cookie 保持独立，退出只处理当前权限域；会话失效、退出及用户改密后统一回到 `/login`
 - 用户面：`/portal`、`/api/portal/*`，Cookie `cpr_portal_session`
 - 管理面仍为 `/` 与 `/api/admin/*`；用户/套餐管理在 `/portal-users`、`/portal-plans`
 - 密钥仍是 `client_api_keys`，请求仍是 `model_requests`（冻结 `owner_user_id`）

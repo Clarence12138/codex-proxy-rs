@@ -29,7 +29,7 @@ async function submit() {
     newPassword.value = ''
     auth.invalidateSession()
     toast.success('密码已修改，请重新登录')
-    await router.replace('/portal/login')
+    await router.replace('/login')
   }
   catch (cause: unknown) {
     error.value = errorMessage(cause, '修改密码失败，请重试')

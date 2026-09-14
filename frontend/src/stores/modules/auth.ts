@@ -1,3 +1,4 @@
+import type { RequestOptions } from '@/api/request'
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 
@@ -26,20 +27,20 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  async function login(payload: Parameters<typeof apiLogin>[0]) {
+  async function login(payload: Parameters<typeof apiLogin>[0], options: RequestOptions = {}) {
     try {
       loading.value = true
-      await apiLogin(payload)
+      await apiLogin(payload, options)
 
       isAuthenticated.value = true
       sessionChecked.value = true
       resetUnauthorizedHandling()
 
-      return true
+      return { success: true } as const
     }
-    catch {
-      isAuthenticated.value = false
-      return false
+    catch (cause: unknown) {
+      // 登录失败不会撤销服务端已有 Cookie，不在这里使旧会话失效。
+      return { success: false, cause } as const
     }
     finally {
       loading.value = false

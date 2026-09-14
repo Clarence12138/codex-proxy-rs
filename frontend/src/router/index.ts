@@ -9,37 +9,34 @@ export const router = createRouter({
   routes,
 })
 
-// 路由守卫
+// 登录页允许主动重新登录，不被另一权限域的旧会话立即带走。
 router.beforeEach(async (to) => {
+  if (to.path === '/login')
+    return
+
   const isPortal = to.path === '/portal' || to.path.startsWith('/portal/')
   if (isPortal) {
     const portalAuth = usePortalAuthStore()
-    if (to.path === '/portal/login') {
-      if (portalAuth.isAuthenticated)
-        return '/portal'
-      return
-    }
-    if (!portalAuth.isAuthenticated && !portalAuth.sessionChecked) {
-      const isAuth = await portalAuth.checkAuth()
-      if (!isAuth)
-        return '/portal/login'
-    }
+    if (!portalAuth.isAuthenticated && !portalAuth.sessionChecked)
+      await portalAuth.checkAuth()
     if (!portalAuth.isAuthenticated)
-      return '/portal/login'
+      return '/login'
     return
   }
 
   const authStore = useAuthStore()
-  if (to.path === '/login') {
-    if (authStore.isAuthenticated)
-      return '/'
+  if (!authStore.isAuthenticated && !authStore.sessionChecked)
+    await authStore.checkAuth()
+  if (authStore.isAuthenticated)
     return
+
+  // 仅首页自动分流；其他管理页面不能凭用户会话放行。
+  if (to.path === '/') {
+    const portalAuth = usePortalAuthStore()
+    if (!portalAuth.isAuthenticated && !portalAuth.sessionChecked)
+      await portalAuth.checkAuth()
+    if (portalAuth.isAuthenticated)
+      return '/portal'
   }
-  if (!authStore.isAuthenticated && !authStore.sessionChecked) {
-    const isAuth = await authStore.checkAuth()
-    if (!isAuth)
-      return '/login'
-  }
-  if (!authStore.isAuthenticated)
-    return '/login'
+  return '/login'
 })

@@ -3,14 +3,18 @@ import { storeToRefs } from 'pinia'
 import { computed, shallowRef } from 'vue'
 import { useRouter } from 'vue-router'
 
+import { ApiError } from '@/api/request'
 import { useAuthStore } from '@/stores/modules/auth'
+import { usePortalAuthStore } from '@/stores/modules/portal-auth'
 import { useThemeStore } from '@/stores/modules/theme'
+import { errorMessage } from '@/utils/async'
 
 import LoginBackground from './components/LoginBackground.vue'
 import LoginPanel from './components/LoginPanel.vue'
 
 const router = useRouter()
 const authStore = useAuthStore()
+const portalAuth = usePortalAuthStore()
 const themeStore = useThemeStore()
 const { effectiveTheme } = storeToRefs(themeStore)
 const { toggleTheme } = themeStore
@@ -18,34 +22,47 @@ const { toggleTheme } = themeStore
 const username = shallowRef('')
 const password = shallowRef('')
 const loginPending = shallowRef(false)
-const canSubmit = computed<boolean>(() => !!username.value.trim() && !!password.value.trim())
-const loginLoading = computed<boolean>(() => authStore.loading || loginPending.value)
+const loginError = shallowRef<string | null>(null)
+const canSubmit = computed<boolean>(() => !!username.value.trim() && !!password.value)
+const loginLoading = computed<boolean>(() => authStore.loading || portalAuth.loading || loginPending.value)
 const submitDisabled = computed<boolean>(() => loginLoading.value || !canSubmit.value)
 
+function isInvalidCredentials(cause: unknown): boolean {
+  // 两个认证接口均以 401 / 40102 表示凭据不匹配，不能把网络或服务故障当作身份判断。
+  return cause instanceof ApiError && cause.status === 401 && cause.code === 40102 && cause.kind === 'api'
+}
+
 async function handleSubmit(): Promise<void> {
-  if (!canSubmit.value || loginPending.value) {
+  if (submitDisabled.value)
     return
-  }
 
   loginPending.value = true
-  const success = await authStore.login({
-    username: username.value.trim(),
-    password: password.value,
-  })
-
-  if (!success) {
-    loginPending.value = false
-    return
-  }
-
+  loginError.value = null
+  // 两次认证使用同一份快照；密码保留首尾空格，不写入持久化状态。
+  const payload = { username: username.value.trim(), password: password.value }
   try {
-    await router.push('/')
+    const adminResult = await authStore.login(payload, { silent: true })
+    if (adminResult.success) {
+      await router.replace('/')
+      return
+    }
+    if (!isInvalidCredentials(adminResult.cause))
+      throw adminResult.cause
+
+    const portalResult = await portalAuth.login(payload, { silent: true })
+    if (!portalResult.success) {
+      loginError.value = isInvalidCredentials(portalResult.cause)
+        ? '账号或密码错误'
+        : errorMessage(portalResult.cause, '登录失败')
+      return
+    }
+    await router.replace('/portal')
+  }
+  catch (cause: unknown) {
+    loginError.value = errorMessage(cause, '登录失败，请重试')
   }
   finally {
-    // 成功时登录页会卸载；导航失败并停留当前页时才恢复按钮。
-    if (router.currentRoute.value.path === '/login') {
-      loginPending.value = false
-    }
+    loginPending.value = false
   }
 }
 </script>
@@ -61,6 +78,7 @@ async function handleSubmit(): Promise<void> {
       <LoginPanel
         v-model:username="username"
         v-model:password="password"
+        :error="loginError"
         :loading="loginLoading"
         :submit-disabled="submitDisabled"
         :effective-theme="effectiveTheme"

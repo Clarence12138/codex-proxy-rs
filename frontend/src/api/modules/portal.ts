@@ -1,25 +1,28 @@
 import type { RequestOptions } from '../request'
 import request from '../request'
 
-export function portalLogin(data: { username: string, password: string }) {
+export function portalLogin(data: { username: string, password: string }, options: RequestOptions = {}) {
   return request<{ expiresAt: string }>({
     url: '/api/portal/auth/login',
     method: 'POST',
     data,
+    ...options,
   })
 }
 
-export function portalAuthStatus() {
+export function portalAuthStatus(options: RequestOptions = {}) {
   return request<{ authenticated: boolean }>({
     url: '/api/portal/auth/status',
     method: 'GET',
+    ...options,
   })
 }
 
-export function portalLogout() {
+export function portalLogout(options: RequestOptions = {}) {
   return request({
     url: '/api/portal/auth/logout',
     method: 'POST',
+    ...options,
   })
 }
 

@@ -15,7 +15,7 @@ const nav = [
 
 async function logout() {
   await auth.logout()
-  await router.replace('/portal/login')
+  await router.replace('/login')
 }
 </script>
 

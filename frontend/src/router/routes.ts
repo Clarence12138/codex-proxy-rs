@@ -70,7 +70,7 @@ export const routes: RouteRecordRaw[] = [
   {
     path: '/portal/login',
     name: 'portal-login',
-    component: () => import('@/views/portal/login/index.vue'),
+    redirect: '/login',
   },
   {
     path: '/portal',

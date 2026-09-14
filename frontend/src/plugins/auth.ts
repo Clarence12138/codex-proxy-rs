@@ -13,13 +13,10 @@ export const authPlugin: Plugin = {
 
     setUnauthorizedHandler(async (url) => {
       const isPortalApi = Boolean(url?.includes('/api/portal'))
-      if (isPortalApi) {
+      if (isPortalApi)
         portalAuth.invalidateSession()
-        if (router.currentRoute.value.path !== '/portal/login')
-          await router.replace({ name: 'portal-login' })
-        return
-      }
-      authStore.invalidateSession()
+      else
+        authStore.invalidateSession()
       if (router.currentRoute.value.path !== '/login')
         await router.replace({ name: 'login' })
     })

@@ -19,7 +19,7 @@ const props = withDefaults(defineProps<{
   effectiveTheme: ThemeName
   caption?: string
 }>(), {
-  caption: 'ADMIN REALM',
+  caption: 'CONSOLE',
 })
 
 const emit = defineEmits<{
@@ -103,12 +103,12 @@ function togglePasswordVisible(): void {
       </div>
 
       <div class="grid min-w-0 gap-2">
-        <span class="text-cp leading-[1.1] font-bold text-(--cp-login-label-color)">管理员账号</span>
+        <span class="text-cp leading-[1.1] font-bold text-(--cp-login-label-color)">账号</span>
         <BaseInput
           v-model="username"
           name="username"
-          aria-label="管理员账号"
-          placeholder="输入会话账号"
+          aria-label="账号"
+          placeholder="请输入账号"
           autocomplete="username"
         >
           <template #prefix>
@@ -118,12 +118,12 @@ function togglePasswordVisible(): void {
       </div>
 
       <div class="grid min-w-0 gap-2">
-        <span class="text-cp leading-[1.1] font-bold text-(--cp-login-label-color)">访问密钥</span>
+        <span class="text-cp leading-[1.1] font-bold text-(--cp-login-label-color)">密码</span>
         <BaseInput
           v-model="password"
           name="password"
-          aria-label="访问密钥"
-          placeholder="输入会话密钥"
+          aria-label="密码"
+          placeholder="请输入密码"
           :type="passwordType"
           autocomplete="current-password"
         >
