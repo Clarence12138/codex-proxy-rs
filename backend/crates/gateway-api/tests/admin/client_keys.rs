@@ -332,6 +332,7 @@ fn client_key_responses_should_keep_shape_and_redact_creation_debug() {
         ],
         prefix: "sk_visible12".to_owned(),
         owner_user_id: None,
+        owner_username: None,
         enabled: true,
         limits: gateway_core::policy::RateLimits {
             max_concurrency: 2,
@@ -351,6 +352,30 @@ fn client_key_responses_should_keep_shape_and_redact_creation_debug() {
         serde_json::json!(["openai"])
     );
     assert_eq!(list["items"][0]["routingScope"], "all");
+    assert!(list["items"][0]["ownerUserId"].is_null());
+    assert!(list["items"][0]["ownerUsername"].is_null());
+    let owned = ClientKeyView::from(gateway_admin::model::client_keys::ClientKeyRecord {
+        budget: Default::default(),
+        id: gateway_core::policy::ClientApiKeyId::new("key_owned").expect("Client Key ID"),
+        name: "owned".to_owned(),
+        label: None,
+        groups: Vec::new(),
+        provider_kinds: Vec::new(),
+        prefix: "sk_owned1234".to_owned(),
+        owner_user_id: Some("usr_owner".to_owned()),
+        owner_username: Some("alice".to_owned()),
+        enabled: true,
+        limits: gateway_core::policy::RateLimits {
+            max_concurrency: 0,
+            requests_per_minute: 0,
+        },
+        created_at,
+        updated_at: created_at,
+        last_used_at: None,
+    });
+    let owned = serde_json::to_value(owned).expect("serialize owned key");
+    assert_eq!(owned["ownerUserId"], "usr_owner");
+    assert_eq!(owned["ownerUsername"], "alice");
     assert_eq!(list["items"][0]["maxConcurrency"], 2);
     assert_eq!(list["items"][0]["requestsPerMinute"], 60);
     assert!(list["items"][0].get("tokensPerMinute").is_none());

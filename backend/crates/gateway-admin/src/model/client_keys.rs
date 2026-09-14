@@ -94,6 +94,8 @@ pub struct ClientKeyRecord {
     pub provider_kinds: Vec<ProviderKind>,
     pub prefix: String,
     pub owner_user_id: Option<String>,
+    /// 列表展示用的拼车用户名；管理员 Key 或用户已删除时为空。
+    pub owner_username: Option<String>,
     pub enabled: bool,
     pub limits: RateLimits,
     pub budget: ClientBudgetStatus,

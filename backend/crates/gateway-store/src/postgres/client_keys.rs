@@ -134,6 +134,8 @@ pub struct ClientApiKeyRecord {
     pub provider_kinds: Vec<String>,
     pub prefix: String,
     pub owner_user_id: Option<String>,
+    /// 列表展示用的拼车用户名；管理员 Key 或用户已删除时为空。
+    pub owner_username: Option<String>,
     pub enabled: bool,
     pub max_concurrency: u64,
     pub requests_per_minute: u64,
@@ -392,6 +394,8 @@ impl ClientApiKeyRepository for PgClientApiKeyRepository {
         let mut statement = QueryBuilder::<Postgres>::new(
             "select k.id, k.name, k.label,
                     left(k.key, least(10, length(k.key) / 2)) as prefix, k.enabled, k.owner_user_id,
+                    (select owner_user.username from portal_users owner_user
+                     where owner_user.id = k.owner_user_id) as owner_username,
                     k.max_concurrency, k.requests_per_minute, k.last_used_at, k.created_at,
                     k.updated_at, '[]'::jsonb as groups, '{}'::text[] as provider_kinds
              from client_api_keys k
@@ -457,6 +461,8 @@ impl ClientApiKeyRepository for PgClientApiKeyRepository {
         let record = sqlx::query(
             "select k.id, k.name, k.label,
                     left(k.key, least(10, length(k.key) / 2)) as prefix, k.enabled, k.owner_user_id,
+                    (select owner_user.username from portal_users owner_user
+                     where owner_user.id = k.owner_user_id) as owner_username,
                     k.max_concurrency, k.requests_per_minute, k.last_used_at, k.created_at,
                     k.updated_at, coalesce(groups.groups, '[]'::jsonb) as groups,
                     case
@@ -1005,6 +1011,7 @@ fn admin_client_key_record(record: ClientApiKeyRecord) -> AdminStoreResult<Admin
             .collect::<AdminStoreResult<Vec<_>>>()?,
         prefix: record.prefix,
         owner_user_id: record.owner_user_id,
+        owner_username: record.owner_username,
         enabled: record.enabled,
         limits: RateLimits {
             max_concurrency: record.max_concurrency,
@@ -1282,6 +1289,9 @@ fn client_record_from_row(row: &sqlx::postgres::PgRow) -> StoreResult<ClientApiK
         owner_user_id: row
             .try_get("owner_user_id")
             .map_err(|_| invalid("invalid owner user id"))?,
+        owner_username: row
+            .try_get("owner_username")
+            .map_err(|_| invalid("invalid owner username"))?,
         enabled: row
             .try_get("enabled")
             .map_err(|_| invalid("invalid enabled"))?,

@@ -701,6 +701,10 @@ async fn client_key_list_filters_by_owner_user_id() {
         owned.items[0].owner_user_id.as_deref(),
         Some("usr_owner_filter")
     );
+    assert_eq!(
+        owned.items[0].owner_username.as_deref(),
+        Some("owner-filter")
+    );
     let all = repository
         .list_client_api_keys(ClientApiKeyListQuery {
             cursor: None,
@@ -712,5 +716,18 @@ async fn client_key_list_filters_by_owner_user_id() {
         .await
         .expect("list all keys");
     assert_eq!(all.total, 2);
+    let admin_key = all
+        .items
+        .iter()
+        .find(|item| item.id == "key_admin_filter")
+        .expect("admin key");
+    assert!(admin_key.owner_user_id.is_none());
+    assert!(admin_key.owner_username.is_none());
+    let owned_key = all
+        .items
+        .iter()
+        .find(|item| item.id == "key_owned_filter")
+        .expect("owned key");
+    assert_eq!(owned_key.owner_username.as_deref(), Some("owner-filter"));
     database.close().await;
 }

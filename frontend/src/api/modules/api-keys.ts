@@ -25,6 +25,7 @@ export interface ApiKey {
   groups: AccountGroupRef[]
   providerKinds: string[]
   ownerUserId: string | null
+  ownerUsername: string | null
 }
 
 export interface ApiKeyListResponse {
