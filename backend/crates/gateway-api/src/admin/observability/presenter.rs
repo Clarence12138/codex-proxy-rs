@@ -258,6 +258,10 @@ pub(crate) fn usage_list_record_view(record: domain::UsageListRecord) -> UsageLi
         .or_else(|| record.requested_model_id.clone());
     UsageListRecordView {
         id: record.id,
+        client_api_key_id: record.client_api_key_ref,
+        client_api_key_name: record.client_api_key_name,
+        client_api_key_prefix: record.client_api_key_prefix,
+        owner_username: record.owner_username,
         provider: record.provider_kind,
         authentication_kind: record.provider_account_authentication_kind,
         account_id: record.provider_account_ref,

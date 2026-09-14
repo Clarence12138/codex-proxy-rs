@@ -111,6 +111,10 @@ function previewUsageRecord(options: PreviewUsageRecordOptions): UsageListRecord
 
   return {
     id: options.id,
+    clientApiKeyId: `key_${options.id}`,
+    clientApiKeyName: '管理端密钥',
+    clientApiKeyPrefix: 'sk_preview',
+    ownerUsername: null,
     provider: options.provider,
     authenticationKind: options.authenticationKind,
     accountId: `account_${options.id}`,

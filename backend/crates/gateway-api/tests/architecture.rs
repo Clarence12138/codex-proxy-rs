@@ -132,6 +132,7 @@ fn test_tree_should_match_frozen_rust_mirror() {
         "tests/portal/admin.rs",
         "tests/portal/auth.rs",
         "tests/portal/mod.rs",
+        "tests/portal/usage.rs",
         "tests/support.rs",
     ];
     expected.sort_unstable();

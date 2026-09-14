@@ -953,6 +953,10 @@ async fn usage_route_should_expose_table_facts_without_detail_payload() {
         .expect("usage records")
         .push(UsageListRecord {
             id: "request_endpoint".to_owned(),
+            client_api_key_ref: "key_portal".to_owned(),
+            client_api_key_name: Some("Portal Key".to_owned()),
+            client_api_key_prefix: Some("sk_portal".to_owned()),
+            owner_username: Some("portal-user".to_owned()),
             endpoint: "/v1/responses".to_owned(),
             client_transport: "websocket".to_owned(),
             requested_model_id: Some("grok-4.5".to_owned()),
@@ -1065,6 +1069,10 @@ async fn usage_route_should_expose_table_facts_without_detail_payload() {
 
     assert_eq!(
         serde_json::json!({
+            "clientApiKeyId": value["data"]["items"][0]["clientApiKeyId"],
+            "clientApiKeyName": value["data"]["items"][0]["clientApiKeyName"],
+            "clientApiKeyPrefix": value["data"]["items"][0]["clientApiKeyPrefix"],
+            "ownerUsername": value["data"]["items"][0]["ownerUsername"],
             "route": value["data"]["items"][0]["route"],
             "serviceTier": value["data"]["items"][0]["serviceTier"],
             "accountId": value["data"]["items"][0]["accountId"],
@@ -1088,6 +1096,10 @@ async fn usage_route_should_expose_table_facts_without_detail_payload() {
             "userAgent": value["data"]["items"][0]["userAgent"],
         }),
         serde_json::json!({
+            "clientApiKeyId": "key_portal",
+            "clientApiKeyName": "Portal Key",
+            "clientApiKeyPrefix": "sk_portal",
+            "ownerUsername": "portal-user",
             "route": "/v1/responses",
             "serviceTier": "default",
             "accountId": "acct_snapshot",

@@ -22,7 +22,7 @@ pub struct PortalUsageRecord {
     pub output_tokens: Option<i64>,
     pub total_tokens: Option<i64>,
     pub cost_usd: Option<String>,
-    pub key_id: Option<String>,
+    pub key_id: String,
     pub key_prefix: Option<String>,
     pub key_name: Option<String>,
 }

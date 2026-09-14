@@ -263,7 +263,7 @@ Portal 创建用户、管理员重置密码与自助改密统一要求至少 **6
 
 改密成功返回 200、现有响应信封中的空对象 `{}`，清除 Portal Cookie，并在同一事务撤销该用户所有 Portal 会话。用户需重新登录；API Key 与订阅不变。
 
-用户用量接口不返回上游账号邮箱、内部 metadata、原始诊断或凭据。用户 Key 必须绑定套餐分组，空分组不会回退到全部账号。
+用户用量接口不返回上游账号邮箱、内部 metadata、原始诊断或凭据。`records` 中的密钥信息仅包含稳定的 `keyId`、当前名称 `keyName` 与安全截断的 `keyPrefix`；密钥删除后 ID 仍可用于识别历史记录，名称与前缀为 `null`，不会返回完整密钥。用户 Key 必须绑定套餐分组，空分组不会回退到全部账号。
 
 ## 5. 账号
 
@@ -834,9 +834,11 @@ errorCode, errorMessage, startedAt, completedAt, expiresAt, createdAt, updatedAt
 request/response/upstream ID、outcome 与搜索文本。诊断 `dimension` 可取 `model`、`account`、
 `apiKey`、`provider`、`transport`、`failureClass`、`status`。
 
-请求记录列表的 `search` 使用字面量前缀匹配，支持请求 ID、Client Key ID / 名称、
-账号 ID、账号邮箱与名称、请求 / 上游模型 ID、上游请求 ID。密钥名称不区分大小写，其他字段区分大小写。
-密钥名称按当前密钥记录检索，改名后使用新名称，删除后仍可按 Client Key ID 查询历史记录。
+请求记录列表的 `search` 使用字面量前缀匹配，支持请求 ID、Portal 用户名、Client Key ID / 名称、
+账号 ID、账号邮箱与名称、请求 / 上游模型 ID、上游请求 ID。用户名和密钥名称不区分大小写，其他字段区分大小写。
+列表中的 `ownerUsername` 为空表示管理员自有 Key；`clientApiKeyId` 是请求冻结的稳定 Key 引用，
+`clientApiKeyName` 与 `clientApiKeyPrefix` 是当前 Key 的展示元数据。密钥名称按当前密钥记录检索，
+改名后使用新名称，删除后名称和前缀为 `null`，仍可按 Client Key ID 查询历史记录。接口不返回完整密钥。
 账号邮箱与名称按请求记录的历史快照检索，
 不随当前账号修改或删除而改变；`%`、`_` 和 `\` 均按普通字符处理，不作为搜索通配符。
 

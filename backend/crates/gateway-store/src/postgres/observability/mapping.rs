@@ -429,6 +429,10 @@ pub(crate) fn admin_usage_list_record(
     };
     Ok(admin_observability::UsageListRecord {
         id: record.id,
+        client_api_key_ref: record.client_api_key_ref,
+        client_api_key_name: record.client_api_key_name,
+        client_api_key_prefix: record.client_api_key_prefix,
+        owner_username: record.owner_username,
         endpoint: record.endpoint,
         client_transport: record.client_transport,
         requested_model_id: record.requested_model_id,
@@ -754,6 +758,10 @@ pub(crate) fn usage_list_record_from_row(
 ) -> StoreResult<UsageListRecord> {
     Ok(UsageListRecord {
         id: get(row, "id")?,
+        client_api_key_ref: get(row, "client_api_key_ref")?,
+        client_api_key_name: get(row, "client_api_key_name")?,
+        client_api_key_prefix: get(row, "client_api_key_prefix")?,
+        owner_username: get(row, "owner_username")?,
         endpoint: get(row, "endpoint")?,
         client_transport: get(row, "client_transport")?,
         requested_model_id: get(row, "requested_model_id")?,

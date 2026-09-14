@@ -135,8 +135,11 @@ export interface PortalUsageItem {
   startedAt: string
   model: string | null
   outcome: string
+  inputTokens: number | null
+  outputTokens: number | null
   totalTokens: number | null
   costUsd: string | null
+  keyId: string
   keyPrefix: string | null
   keyName: string | null
 }

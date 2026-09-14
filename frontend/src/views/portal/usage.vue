@@ -1,99 +1,260 @@
 <script setup lang="ts">
-import { onMounted, shallowRef } from 'vue'
+import type { PortalUsageItem } from '@/api/modules/portal'
+import type { BaseTableColumn } from '@/components/base/BaseTable/columns'
+import { Activity, ArrowDown, ArrowUp, CircleDollarSign, FileText } from '@lucide/vue'
+import { computed, onMounted, shallowRef } from 'vue'
 
 import { getPortalUsageSummary, listPortalUsage } from '@/api/modules/portal'
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseCard from '@/components/base/BaseCard.vue'
+import BaseMotionIcon from '@/components/base/BaseMotionIcon.vue'
 import BasePageHeader from '@/components/base/BasePageHeader.vue'
+import { defineTableColumns } from '@/components/base/BaseTable/columns'
+import BaseTable from '@/components/base/BaseTable/index.vue'
+import { formatDateTime } from '@/utils/date'
+import { formatInteger } from '@/utils/number'
+import UsageClientKeyCell from '@/views/usage/components/UsageClientKeyCell.vue'
+import { formatUsd } from '@/views/usage/utils/format'
 
-const items = shallowRef<Array<{
-  id: string
-  startedAt: string
-  model: string | null
-  outcome: string
-  totalTokens: number | null
-  costUsd: string | null
-  keyName: string | null
-}>>([])
-const summary = shallowRef<{ requestCount: number, totalTokens: number, totalUsd: string } | null>(null)
+interface PortalUsageRow extends PortalUsageItem {
+  clientApiKey: string
+  tokenDetails: number | null
+  startedAtDisplay: string
+}
+
+interface PortalUsageSummary {
+  requestCount: number
+  totalTokens: number
+  totalUsd: string
+}
+
+const usageColumns: BaseTableColumn<PortalUsageRow>[] = defineTableColumns<PortalUsageRow>([
+  { key: 'clientApiKey', label: '密钥', kind: 'custom', size: 'xl' },
+  { key: 'model', label: '模型', kind: 'mono', size: 'xl' },
+  { key: 'outcome', label: '状态', kind: 'status', size: 'md' },
+  { key: 'tokenDetails', label: 'TOKEN', kind: 'numeric', size: 'xl' },
+  { key: 'costUsd', label: '费用', kind: 'numeric', size: 'lg' },
+  { key: 'startedAtDisplay', label: '时间', kind: 'datetime' },
+])
+
+const items = shallowRef<PortalUsageItem[]>([])
+const summary = shallowRef<PortalUsageSummary | null>(null)
 const nextCursor = shallowRef<string | null>(null)
+const loading = shallowRef(false)
 const loadingMore = shallowRef(false)
 const error = shallowRef<string | null>(null)
 
-async function load(cursor?: string) {
-  const page = await listPortalUsage({ pageSize: 50, cursor })
-  items.value = cursor ? [...items.value, ...page.items] : page.items
-  nextCursor.value = page.nextCursor
-}
+const rows = computed<PortalUsageRow[]>(() => items.value.map(item => ({
+  ...item,
+  clientApiKey: item.keyId,
+  tokenDetails: item.totalTokens,
+  startedAtDisplay: formatDateTime(item.startedAt),
+})))
 
-onMounted(async () => {
+const summaryItems = computed(() => [
+  {
+    key: 'requests',
+    label: '累计成功请求',
+    value: summary.value ? formatInteger(summary.value.requestCount) : '—',
+    detail: '完整交付的请求',
+    icon: Activity,
+    tone: 'bg-cp-blue-container text-cp-blue-on-container',
+  },
+  {
+    key: 'tokens',
+    label: '总 Token',
+    value: summary.value ? formatInteger(summary.value.totalTokens) : '—',
+    detail: '成功请求合计',
+    icon: FileText,
+    tone: 'bg-cp-green-container text-cp-green-on-container',
+  },
+  {
+    key: 'cost',
+    label: '累计费用',
+    value: summary.value ? formatUsd(summary.value.totalUsd) : '—',
+    detail: '已记录 USD 费用',
+    icon: CircleDollarSign,
+    tone: 'bg-cp-orange-container text-cp-orange-on-container',
+  },
+])
+
+async function loadInitial() {
+  if (loading.value || loadingMore.value)
+    return
+
+  loading.value = true
+  error.value = null
   try {
-    const [usage] = await Promise.all([
+    const [page, nextSummary] = await Promise.all([
       listPortalUsage({ pageSize: 50 }),
-      getPortalUsageSummary().then((value) => {
-        summary.value = value
-      }),
+      getPortalUsageSummary(),
     ])
-    items.value = usage.items
-    nextCursor.value = usage.nextCursor
+    items.value = page.items
+    nextCursor.value = page.nextCursor
+    summary.value = nextSummary
   }
   catch {
-    error.value = '无法加载用量'
+    error.value = '无法加载用量，请稍后重试'
   }
-})
+  finally {
+    loading.value = false
+  }
+}
 
 async function loadMore() {
-  if (!nextCursor.value)
+  const cursor = nextCursor.value
+  if (!cursor || loading.value || loadingMore.value)
     return
+
   loadingMore.value = true
+  error.value = null
   try {
-    await load(nextCursor.value)
+    const page = await listPortalUsage({ pageSize: 50, cursor })
+    items.value = [...items.value, ...page.items]
+    nextCursor.value = page.nextCursor
+  }
+  catch {
+    error.value = '无法加载更多记录，请稍后重试'
   }
   finally {
     loadingMore.value = false
   }
 }
+
+function outcomeText(outcome: string) {
+  const labels: Record<string, string> = {
+    succeeded: '成功',
+    failed: '失败',
+    cancelled: '已取消',
+    incomplete: '未完成',
+    running: '进行中',
+  }
+  return labels[outcome] ?? '未知状态'
+}
+
+function outcomeClass(outcome: string) {
+  if (outcome === 'succeeded')
+    return 'bg-cp-success-container text-cp-success-on-container'
+  if (outcome === 'failed')
+    return 'bg-cp-error-container text-cp-error-on-container'
+  if (outcome === 'running')
+    return 'bg-cp-info-container text-cp-info-on-container'
+  return 'bg-cp-warning-container text-cp-warning-on-container'
+}
+
+function tokenDisplay(value: number | null) {
+  return value === null ? '—' : formatInteger(value)
+}
+
+onMounted(loadInitial)
 </script>
 
 <template>
-  <div class="grid gap-4">
-    <BasePageHeader title="用量" description="只显示你自己的请求，不含上游账号信息" />
-    <p v-if="error" class="text-cp-error">
-      {{ error }}
-    </p>
-    <p v-else-if="summary" class="text-cp-text-secondary">
-      成功请求 {{ summary.requestCount }} · Token {{ summary.totalTokens }} · USD {{ summary.totalUsd }}
-    </p>
-    <p v-else-if="!items.length" class="text-cp-text-tertiary">
-      暂无请求
-    </p>
-    <table v-if="items.length" class="w-full text-left text-cp-sm">
-      <thead>
-        <tr>
-          <th class="py-2">
-            时间
-          </th>
-          <th>模型</th>
-          <th>状态</th>
-          <th>Token</th>
-          <th>USD</th>
-          <th>密钥</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr v-for="item in items" :key="item.id">
-          <td class="py-2">
-            {{ item.startedAt }}
-          </td>
-          <td>{{ item.model }}</td>
-          <td>{{ item.outcome }}</td>
-          <td>{{ item.totalTokens }}</td>
-          <td>{{ item.costUsd }}</td>
-          <td>{{ item.keyName }}</td>
-        </tr>
-      </tbody>
-    </table>
-    <BaseButton v-if="nextCursor" :disabled="loadingMore" @click="loadMore">
-      {{ loadingMore ? '加载中…' : '加载更多' }}
-    </BaseButton>
+  <div class="w-full">
+    <BasePageHeader title="用量" description="只显示你自己的请求，不含上游账号信息">
+      <template v-if="error" #actions>
+        <BaseButton variant="secondary" :loading="loading" :disabled="loading || loadingMore" @click="loadInitial">
+          重新加载
+        </BaseButton>
+      </template>
+    </BasePageHeader>
+
+    <section class="mt-5 grid grid-cols-1 gap-3 md:grid-cols-3" aria-label="用量概览">
+      <BaseCard
+        v-for="item in summaryItems"
+        :key="item.key"
+        as="article"
+        padding="compact"
+        class="grid min-h-23 grid-cols-[36px_minmax(0,1fr)] items-stretch gap-3"
+      >
+        <BaseMotionIcon class="inline-flex size-9 shrink-0 items-center justify-center rounded-cp" :class="item.tone">
+          <component :is="item.icon" class="size-4.5" />
+        </BaseMotionIcon>
+        <div class="flex min-w-0 flex-col justify-between py-0.5">
+          <span class="block text-cp-sm leading-none font-bold text-cp-text-quaternary">
+            {{ item.label }}
+          </span>
+          <strong class="block truncate text-[22px] leading-none font-extrabold text-cp-text">
+            {{ item.value }}
+          </strong>
+          <span class="block truncate text-cp-sm leading-none font-emphasis text-cp-text-secondary">
+            {{ item.detail }}
+          </span>
+        </div>
+      </BaseCard>
+    </section>
+
+    <BaseCard
+      class="mt-5 flex min-h-112 flex-col"
+      title="请求明细"
+      description="查看每次请求使用的密钥、Token 与费用"
+    >
+      <template #body>
+        <p v-if="error && rows.length" class="mt-0 mb-3 text-cp-sm text-cp-error-text" role="alert">
+          {{ error }}
+        </p>
+        <div class="flex min-h-80 min-w-0 flex-1 flex-col">
+          <BaseTable
+            class="min-h-0 flex-1"
+            :columns="usageColumns"
+            :rows="rows"
+            :loading="loading"
+            :empty-text="error ? '无法加载使用记录' : '暂无使用记录'"
+          >
+            <template #clientApiKey="{ row }">
+              <UsageClientKeyCell
+                :key-id="row.keyId"
+                :key-name="row.keyName"
+                :key-prefix="row.keyPrefix"
+              />
+            </template>
+
+            <template #model="{ row }">
+              <code class="block max-w-full truncate font-mono text-cp-sm font-emphasis text-cp-text" :title="row.model || '—'">
+                {{ row.model || '—' }}
+              </code>
+            </template>
+
+            <template #outcome="{ row }">
+              <span
+                class="inline-flex h-6 items-center rounded-cp px-2 text-cp-xs font-bold"
+                :class="outcomeClass(row.outcome)"
+                :title="outcomeText(row.outcome)"
+              >
+                {{ outcomeText(row.outcome) }}
+              </span>
+            </template>
+
+            <template #tokenDetails="{ row }">
+              <div class="grid grid-cols-[auto_auto] justify-end gap-x-2 gap-y-1 font-mono text-cp-xs leading-none tabular-nums">
+                <span class="inline-flex items-center gap-1 text-cp-success-text">
+                  <ArrowDown class="size-3" aria-hidden="true" />
+                  {{ tokenDisplay(row.inputTokens) }}
+                </span>
+                <span class="inline-flex items-center gap-1 text-cp-info-text">
+                  <ArrowUp class="size-3" aria-hidden="true" />
+                  {{ tokenDisplay(row.outputTokens) }}
+                </span>
+                <span class="col-span-2 text-right font-bold text-cp-text-secondary">
+                  总计 {{ tokenDisplay(row.totalTokens) }}
+                </span>
+              </div>
+            </template>
+
+            <template #costUsd="{ row }">
+              <span class="font-mono text-cp-sm font-heavy tabular-nums text-cp-green-text">
+                {{ formatUsd(row.costUsd) }}
+              </span>
+            </template>
+          </BaseTable>
+
+          <div v-if="nextCursor" class="flex shrink-0 justify-center pt-4">
+            <BaseButton variant="secondary" :loading="loadingMore" :disabled="loading || loadingMore" @click="loadMore">
+              加载更多
+            </BaseButton>
+          </div>
+        </div>
+      </template>
+    </BaseCard>
   </div>
 </template>

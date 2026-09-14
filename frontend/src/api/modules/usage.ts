@@ -69,6 +69,10 @@ export interface UsageRecordMetadata {
 
 export interface UsageListRecord {
   id: string
+  clientApiKeyId: string
+  clientApiKeyName: string | null
+  clientApiKeyPrefix: string | null
+  ownerUsername: string | null
   provider: string | null
   authenticationKind: string | null
   accountId: string | null

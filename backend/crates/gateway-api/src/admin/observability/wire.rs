@@ -75,6 +75,10 @@ pub struct BillingView {
 #[serde(rename_all = "camelCase")]
 pub struct UsageListRecordView {
     pub id: String,
+    pub client_api_key_id: String,
+    pub client_api_key_name: Option<String>,
+    pub client_api_key_prefix: Option<String>,
+    pub owner_username: Option<String>,
     pub provider: Option<String>,
     pub authentication_kind: Option<String>,
     pub account_id: Option<String>,

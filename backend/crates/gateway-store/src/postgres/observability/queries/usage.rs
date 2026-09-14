@@ -95,7 +95,12 @@ pub(crate) fn push_usage_filter(
             query.push_bind(pattern.clone());
         }
         query.push(" escape '\\'");
-        push_client_key_name_search(query, &format!("{alias}.client_api_key_ref"), pattern);
+        push_client_key_name_search(
+            query,
+            &format!("{alias}.client_api_key_ref"),
+            pattern.clone(),
+        );
+        push_owner_username_search(query, &format!("{alias}.owner_user_id"), pattern);
         query.push(")");
     }
 }
@@ -113,6 +118,19 @@ pub(crate) fn push_client_key_name_search(
     query.push(" escape '\\')");
 }
 
+fn push_owner_username_search(
+    query: &mut QueryBuilder<Postgres>,
+    owner_ref: &str,
+    pattern: String,
+) {
+    query.push(format!(
+        " or exists (select 1 from portal_users searched_owner
+         where searched_owner.id = {owner_ref} and searched_owner.username ilike "
+    ));
+    query.push_bind(pattern);
+    query.push(" escape '\\')");
+}
+
 pub(crate) fn literal_prefix_pattern(value: &str) -> String {
     format!(
         "{}%",
@@ -123,8 +141,12 @@ pub(crate) fn literal_prefix_pattern(value: &str) -> String {
     )
 }
 
-pub(crate) const USAGE_LIST_RECORD_SELECT: &str =
-    "select mr.id, mr.endpoint, mr.client_transport, mr.requested_model_id,
+pub(crate) const USAGE_LIST_RECORD_SELECT: &str = "select mr.id, mr.client_api_key_ref,
+            client_key.name as client_api_key_name,
+            left(client_key.key, least(10, length(client_key.key) / 2))
+              as client_api_key_prefix,
+            owner_user.username as owner_username,
+            mr.endpoint, mr.client_transport, mr.requested_model_id,
             mr.provider_kind, mr.provider_account_ref,
             mr.provider_account_name_snapshot as provider_account_name,
             mr.provider_account_email_snapshot as provider_account_email,
@@ -141,7 +163,9 @@ pub(crate) const USAGE_LIST_RECORD_SELECT: &str =
             host(mr.client_ip) as client_ip, mr.user_agent,
             mr.reasoning_effort, mr.reasoning_preset, mr.subagent_kind, mr.compact,
             mr.started_at
-     from model_requests mr";
+     from model_requests mr
+     left join client_api_keys client_key on client_key.id = mr.client_api_key_id
+     left join portal_users owner_user on owner_user.id = mr.owner_user_id";
 
 pub(crate) const USAGE_RECORD_DETAIL_SELECT: &str =
     "select mr.id, mr.client_api_key_ref, mr.config_revision,

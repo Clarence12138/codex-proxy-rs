@@ -44,6 +44,7 @@ struct RecordView {
     output_tokens: Option<i64>,
     total_tokens: Option<i64>,
     cost_usd: Option<String>,
+    key_id: String,
     key_prefix: Option<String>,
     key_name: Option<String>,
 }
@@ -92,6 +93,7 @@ where
             output_tokens: record.output_tokens,
             total_tokens: record.total_tokens,
             cost_usd: record.cost_usd,
+            key_id: record.key_id,
             key_prefix: record.key_prefix,
             key_name: record.key_name,
         })

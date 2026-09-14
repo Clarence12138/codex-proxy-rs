@@ -480,6 +480,10 @@ pub struct DashboardObservation {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UsageListRecord {
     pub id: String,
+    pub client_api_key_ref: String,
+    pub client_api_key_name: Option<String>,
+    pub client_api_key_prefix: Option<String>,
+    pub owner_username: Option<String>,
     pub endpoint: String,
     pub client_transport: String,
     pub requested_model_id: Option<String>,

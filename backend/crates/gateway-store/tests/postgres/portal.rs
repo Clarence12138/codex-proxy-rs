@@ -21,6 +21,7 @@ use gateway_portal::{
         keys::CreatePortalKey,
         plans::CreatePlan,
         subscriptions::AssignSubscription,
+        usage::PortalUsageQuery,
         users::{CreatePortalUser, ResetPortalPassword, SetPortalUserEnabled},
     },
     ports::store::{
@@ -852,6 +853,122 @@ async fn usage_summary_is_owner_scoped() {
             .request_count,
         0
     );
+    database.close().await;
+}
+
+#[tokio::test]
+async fn usage_records_are_owner_scoped_and_keep_a_stable_key_reference() {
+    let Some(database) = TestDatabase::create("portal_usage_records").await else {
+        return;
+    };
+    let store = PgPortalStore::new(database.pool.clone());
+    let one = store
+        .create_user(
+            CreatePortalUser {
+                username: "records-one".to_owned(),
+                password: "unused-password".to_owned(),
+            },
+            "hash",
+            &context(),
+        )
+        .await
+        .expect("user one");
+    let two = store
+        .create_user(
+            CreatePortalUser {
+                username: "records-two".to_owned(),
+                password: "unused-password".to_owned(),
+            },
+            "hash",
+            &context(),
+        )
+        .await
+        .expect("user two");
+
+    for (key_id, key_name, owner, plaintext) in [
+        (
+            "key_usage_records_one",
+            "主要密钥",
+            one.id.as_str(),
+            format!("sk_{}", "a".repeat(43)),
+        ),
+        (
+            "key_usage_records_two",
+            "其他密钥",
+            two.id.as_str(),
+            format!("sk_{}", "b".repeat(43)),
+        ),
+    ] {
+        sqlx::query(
+            "insert into client_api_keys
+               (id, name, key, enabled, owner_user_id, created_at, updated_at)
+             values ($1, $2, $3, true, $4, now(), now())",
+        )
+        .bind(key_id)
+        .bind(key_name)
+        .bind(plaintext)
+        .bind(owner)
+        .execute(&database.pool)
+        .await
+        .expect("seed portal usage key");
+        sqlx::query(
+            "insert into model_requests (
+                id, client_api_key_id, client_api_key_ref, config_revision, protocol, operation,
+                endpoint, client_transport, requested_model_id, outcome, input_tokens,
+                output_tokens, total_tokens, cost_source, cost_amount, cost_currency, started_at,
+                deadline_at, completed_at, routing_scope, owner_user_id
+             ) values (
+                $1, $2, $2, 1, 'openai', 'responses', '/v1/responses', 'http_json',
+                'gpt-5.5', 'succeeded', 10, 5, 15, 'calculated', 0.25, 'USD', now(),
+                now() + interval '1 minute', now(), 'empty', $3
+             )",
+        )
+        .bind(format!("req_{key_id}"))
+        .bind(key_id)
+        .bind(owner)
+        .execute(&database.pool)
+        .await
+        .expect("seed portal usage record");
+    }
+
+    let page = store
+        .list_records(
+            &one.id,
+            PortalUsageQuery {
+                start: None,
+                end: None,
+                cursor: None,
+                page_size: 50,
+            },
+        )
+        .await
+        .expect("list owner usage records");
+    assert_eq!(page.items.len(), 1);
+    assert_eq!(page.items[0].id, "req_key_usage_records_one");
+    assert_eq!(page.items[0].key_id, "key_usage_records_one");
+    assert_eq!(page.items[0].key_name.as_deref(), Some("主要密钥"));
+    assert_eq!(page.items[0].key_prefix.as_deref(), Some("sk_aaaaaaa"));
+
+    sqlx::query("delete from client_api_keys where id = 'key_usage_records_one'")
+        .execute(&database.pool)
+        .await
+        .expect("delete portal usage key");
+    let deleted = store
+        .list_records(
+            &one.id,
+            PortalUsageQuery {
+                start: None,
+                end: None,
+                cursor: None,
+                page_size: 50,
+            },
+        )
+        .await
+        .expect("list usage records after key deletion");
+    assert_eq!(deleted.items[0].key_id, "key_usage_records_one");
+    assert!(deleted.items[0].key_name.is_none());
+    assert!(deleted.items[0].key_prefix.is_none());
+
     database.close().await;
 }
 

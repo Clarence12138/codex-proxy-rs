@@ -7,6 +7,18 @@ type OpsErrorRow = OpsError
 
 export const usageRecordColumns = defineTableColumns<UsageDisplayRecord>([
   {
+    key: 'ownerUsername',
+    label: '用户',
+    kind: 'identity',
+    size: 'lg',
+  },
+  {
+    key: 'clientApiKey',
+    label: '密钥',
+    kind: 'custom',
+    size: 'xl',
+  },
+  {
     key: 'accountEmail',
     label: '账号',
     kind: 'identity',

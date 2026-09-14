@@ -11,7 +11,8 @@ defineProps<{
   rows: DashboardSnapshot['usageRecords']
 }>()
 
-const dashboardUsageRecordColumns = usageRecordColumns.filter(column => column.key !== 'actions')
+const dashboardHiddenColumns = new Set(['ownerUsername', 'clientApiKey', 'actions'])
+const dashboardUsageRecordColumns = usageRecordColumns.filter(column => !dashboardHiddenColumns.has(column.key))
 </script>
 
 <template>

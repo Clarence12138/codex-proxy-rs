@@ -248,6 +248,13 @@ pub fn services() -> PortalServices {
 }
 
 pub fn services_with_auth(auth: Arc<dyn PortalAuthStore>) -> PortalServices {
+    services_with_auth_and_usage(auth, Arc::new(EmptyStore))
+}
+
+pub fn services_with_auth_and_usage(
+    auth: Arc<dyn PortalAuthStore>,
+    usage: Arc<dyn PortalUsageStore>,
+) -> PortalServices {
     let store = Arc::new(EmptyStore);
     initialize(
         PortalConfig::default(),
@@ -256,8 +263,8 @@ pub fn services_with_auth(auth: Arc<dyn PortalAuthStore>) -> PortalServices {
             store.clone(),
             store.clone(),
             store.clone(),
-            store.clone(),
             store,
+            usage,
         ),
         Arc::new(NoopSnapshot),
     )

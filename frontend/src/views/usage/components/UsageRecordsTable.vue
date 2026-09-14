@@ -12,6 +12,7 @@ import {
 } from '../utils/records'
 import UsageBillingCell from './UsageBillingCell.vue'
 import UsageClientIpCell from './UsageClientIpCell.vue'
+import UsageClientKeyCell from './UsageClientKeyCell.vue'
 import UsageLatencyCell from './UsageLatencyCell.vue'
 import UsageModelCell from './UsageModelCell.vue'
 import UsageReasoningEffortCell from './UsageReasoningEffortCell.vue'
@@ -40,6 +41,20 @@ withDefaults(
     :loading="loading"
     :empty-text="emptyText"
   >
+    <template #ownerUsername="{ row }">
+      <span class="block max-w-full truncate text-cp-sm font-bold text-cp-text" :title="row.ownerUsername || '管理员'">
+        {{ row.ownerUsername || '管理员' }}
+      </span>
+    </template>
+
+    <template #clientApiKey="{ row }">
+      <UsageClientKeyCell
+        :key-id="row.clientApiKeyId"
+        :key-name="row.clientApiKeyName"
+        :key-prefix="row.clientApiKeyPrefix"
+      />
+    </template>
+
     <template #provider="{ row }">
       <ProviderIconGroup
         :provider="String(row.provider || '')"

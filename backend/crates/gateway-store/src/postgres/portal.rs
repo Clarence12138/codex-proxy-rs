@@ -1414,8 +1414,8 @@ impl PortalUsageStore for PgPortalStore {
             "select mr.id, mr.started_at, mr.requested_model_id, mr.outcome, mr.input_tokens,
                     mr.output_tokens, mr.total_tokens,
                     case when mr.cost_currency = 'USD' then mr.cost_amount::text end as cost_usd,
-                    mr.client_api_key_id,
-                    left(k.key, 10) as key_prefix, k.name as key_name
+                    mr.client_api_key_ref,
+                    left(k.key, least(10, length(k.key) / 2)) as key_prefix, k.name as key_name
              from model_requests mr
              left join client_api_keys k on k.id = mr.client_api_key_id
              where mr.owner_user_id = $1
@@ -1449,7 +1449,7 @@ impl PortalUsageStore for PgPortalStore {
                 output_tokens: row.get("output_tokens"),
                 total_tokens: row.get("total_tokens"),
                 cost_usd: row.get("cost_usd"),
-                key_id: row.get("client_api_key_id"),
+                key_id: row.get("client_api_key_ref"),
                 key_prefix: row.get("key_prefix"),
                 key_name: row.get("key_name"),
             })

@@ -155,6 +155,8 @@ async fn usage_page_should_always_return_total() {
     assert_eq!(page.total, 1);
     assert_eq!(page.current_page, 1);
     assert_eq!(page.page_size, 10);
+    assert!(page.items[0].owner_username.is_none());
+    assert_eq!(page.items[0].client_api_key_ref, "key_observe");
     database.close().await;
 }
 
@@ -341,14 +343,30 @@ async fn usage_and_error_search_match_key_names_instead_of_credentials() {
         .expect("seed observability facts");
     let plaintext_key = format!("sk_{}", "K".repeat(43));
     sqlx::query(
-        "insert into client_api_keys (id, name, key, enabled, created_at, updated_at)
-         values ('key_observe', 'Production_%专用', $1, true, $2, $2)",
+        "insert into portal_users (id, username, password_hash, status, created_at, updated_at)
+         values ('usr_usage_search', 'portal-search-user', 'hash', 'active', $1, $1)",
+    )
+    .bind(now)
+    .execute(&database.pool)
+    .await
+    .expect("seed searchable portal user");
+    sqlx::query(
+        "insert into client_api_keys
+           (id, name, key, enabled, owner_user_id, created_at, updated_at)
+         values ('key_observe', 'Production_%专用', $1, true, 'usr_usage_search', $2, $2)",
     )
     .bind(&plaintext_key)
     .bind(now)
     .execute(&database.pool)
     .await
     .expect("seed searchable client API key");
+    sqlx::query(
+        "update model_requests
+         set client_api_key_id = 'key_observe', owner_user_id = 'usr_usage_search'",
+    )
+    .execute(&database.pool)
+    .await
+    .expect("associate usage records with portal user and key");
     let range = ObservabilityRange::new(now - TimeDelta::hours(1), now + TimeDelta::hours(1))
         .expect("observability range");
 
@@ -400,6 +418,59 @@ async fn usage_and_error_search_match_key_names_instead_of_credentials() {
             assert_eq!(errors.items.len() as u64, expected * 2);
         }
     }
+
+    assert_usage_search_ids(
+        &database.pool,
+        range,
+        "portal-search",
+        &["req_observe_success"],
+    )
+    .await;
+    let projected = repository
+        .list_usage_records(UsageRecordQuery {
+            range,
+            filter: UsageRecordFilter::default(),
+            current_page: 1,
+            page_size: ObservabilityPageSize::new(10).expect("page size"),
+        })
+        .await
+        .expect("project portal owner and key metadata");
+    assert_eq!(projected.items[0].client_api_key_ref, "key_observe");
+    assert_eq!(
+        projected.items[0].client_api_key_name.as_deref(),
+        Some("Production_%专用")
+    );
+    assert_eq!(
+        projected.items[0].owner_username.as_deref(),
+        Some("portal-search-user")
+    );
+    assert!(
+        !projected.items[0]
+            .client_api_key_prefix
+            .as_deref()
+            .is_some_and(|prefix| prefix == plaintext_key)
+    );
+
+    sqlx::query("delete from client_api_keys where id = 'key_observe'")
+        .execute(&database.pool)
+        .await
+        .expect("delete projected client API key");
+    let after_delete = repository
+        .list_usage_records(UsageRecordQuery {
+            range,
+            filter: UsageRecordFilter::default(),
+            current_page: 1,
+            page_size: ObservabilityPageSize::new(10).expect("page size"),
+        })
+        .await
+        .expect("project stable key reference after deletion");
+    assert_eq!(after_delete.items[0].client_api_key_ref, "key_observe");
+    assert!(after_delete.items[0].client_api_key_name.is_none());
+    assert!(after_delete.items[0].client_api_key_prefix.is_none());
+    assert_eq!(
+        after_delete.items[0].owner_username.as_deref(),
+        Some("portal-search-user")
+    );
     database.close().await;
 }
 
