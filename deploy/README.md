@@ -361,6 +361,12 @@ OpenAI 主动额度重置卡及其消费结果由上游持有，不写入 Postgr
 > 以下命令只适用于同一大版本内的升级，不支持跨大版本在线升级。跨大版本请使用全新的
 > `.runtime/` 数据目录重新部署，并重新导入或重新授权 Provider 账号与客户端 Key。
 
+本 fork 的 custom 镜像入口为 `ghcr.io/clarence12138/codex-proxy-rs`，自动构建、首次公开和验证要求见 [二开镜像交付](../docs/fork.md#镜像交付)。生产无需源码编译，使用成功工作流摘要中的 `ghcr.io/clarence12138/codex-proxy-rs@sha256:<manifest digest>` 固定部署版本；SHA tag 用于定位源码，不保证重建后的产物不变。
+
+部署前记录前一镜像引用，确认备份及数据库迁移兼容性；仅更新应用，不顺带重启数据库、Redis 或共享反代。已有 Compose 覆盖文件必须同时使用：若覆盖文件写死 `image`，应更新实际生效的字段，不能仅设置 `CPR_IMAGE` 就假定已覆盖。以 `config --quiet` 校验配置，避免输出含凭据的完整配置；拉取已验证镜像后使用 `up -d --no-build --no-deps --wait codex-proxy-rs` 仅重建应用，再验证健康及受影响业务。`--no-deps` 不启动依赖，执行前须确认数据库和 Redis 已正常运行。
+
+下面保留通用基础 Compose 示例（没有环境专用覆盖文件时适用）；未指定 `CPR_IMAGE` 时仍使用上游默认镜像，不是 custom 的部署入口。管理端的上游在线更新也不是 custom 镜像更新入口，不应借此覆盖二开产物。
+
 Docker 安装从安装目录拉取发布镜像并重建应用容器：
 
 ```bash

@@ -1,47 +1,36 @@
-# 项目协作约定
+# 二开开发约定
 
-开发和审查先阅读 [CONTRIBUTING.md](CONTRIBUTING.md)，使用其中的协作流程和审查标准。
-模块职责以 [系统架构](docs/architecture.md) 为准，界面约定以 [管理端主题](docs/theme.md) 为准；
-没有明确约定时保持与相邻实现一致，不把单次页面反馈扩展成全仓规则。
-
-<!-- CODEGRAPH_START -->
-## CodeGraph
-
-In repositories indexed by CodeGraph (a `.codegraph/` directory exists at the repo root), reach for it BEFORE grep/find or reading files when you need to understand or locate code:
-
-- **MCP tools** (when available): `codegraph_explore` answers most code questions in one call — the relevant symbols' verbatim source plus the call paths between them. `codegraph_node` returns one symbol's source + callers, or reads a whole file with line numbers. If the tools are listed but deferred, load them by name via tool search.
-- **Shell** (always works): `codegraph explore "<symbol names or question>"` and `codegraph node <symbol-or-file>` print the same output.
-
-If there is no `.codegraph/` directory, skip CodeGraph entirely — indexing is the user's decision.
-<!-- CODEGRAPH_END -->
+本仓库在上游基础上扩展拼车能力；`main` 专用于同步上游，`custom` 是本 fork 的主要开发与贡献分支。目标与同步边界见 [二开说明](docs/fork.md)。
 
 ## 工作方式
 
-- 开发和审查按 [问题与方案依据](CONTRIBUTING.md#问题与方案依据) 先核实问题，以官方源码为首要参考确定或评估方案。
-- 先定位变更所属模块、同类实现和上下游调用关系，再选择最小合理改动。复用已有能力，也避免为尚不存在的需求增加抽象。
-- 代码注释使用中文，解释原因与边界；提交信息使用英文，沿用历史中的 Conventional Commits 格式。
-- 按变更范围执行验证，记录命令、结果和缺口。跳过的测试不算通过；界面与集成行为需要对应运行证据，构建通过不能替代实际验收。
-- 审查请求默认只读。修复、提交、推送和合并按用户当前授权执行；“本地验证通过”不等于用户已经审阅批准。
-- 不读取或输出无关凭据，不把真实密钥、代理认证、账号令牌或请求转储放入提交、截图及审查报告。
+- 中文沟通；新增代码注释使用中文，解释原因与边界。提交使用英文 Conventional Commits，不添加 AI 署名，不改写历史署名。
+- 先定位所属模块、同类实现和上下游调用关系，选择最小合理改动，复用已有能力，尊重架构与数据合同，不夹带无关重构。
+- 没有明确约定时遵循相邻实现，不把单次偏好扩展成全仓限制。
+- 内部变更依据本项目代码、合同与测试；涉及上游协议、原生客户端行为和兼容性时，优先核对对应版本官方源码，说明证据缺口。
+- 保留用户已有改动。个人开发允许直接在 `custom` 工作，不强制功能分支或 PR；外部贡献默认向本 fork 的 `custom` 提 PR。
+- 修改授权不自动包含提交、推送、创建 PR、合并或发版。明确要求提交或推送时无需绕行 PR，但不能把“允许直接推 custom”当作每次修改后自动推送的授权。
+- 审查默认只读；生产部署、重启、迁移、恢复等变更需明确授权。本地验证通过不等于维护者批准或线上验收通过。
+- 按影响范围验证，如实报告命令、结果、失败、跳过及验证缺口；构建通过不能替代界面或集成行为的运行证据。
+- 不读取或输出无关凭据，不把密钥、代理认证、账号令牌或完整请求转储放入提交、截图及报告。
+- `.local/` 和真实配置不属于默认阅读范围；只在相关任务且确有必要时读取，说明中只记录凭据存放位置，不记录原文。
 
-## Code Review Rules
+## 按任务读取
 
-### 审查范围
+已提供的规则无需重复读取；只读取当前任务相关章节，不要求全文加载贡献指南或递归读取全部链接。
 
-- 确认目标分支与当前变更范围，结合调用方、被调用方及已有测试审查；结论对应实际审查的提交或工作区状态。
-- 按 CONTRIBUTING.md 的维度检查设计、正确性、安全、复杂度、性能、可读性、验证、界面和文档，深度与变更风险相称。
-- 重点核对现有架构和数据合同：共享业务事实是否重复解释，异步与并发操作是否破坏状态，权限和敏感数据是否越界，协议适配是否影响兼容性。
-- 修改既有特殊分支时先查场景和历史；放宽检查、修改测试或新增例外需要业务依据，不能仅以让检查通过为理由。
+| 任务 | 入口 |
+| --- | --- |
+| 二开行为、设计取舍、上游同步 | [二开说明](docs/fork.md) |
+| 模块职责、状态归属、架构边界 | [系统架构](docs/architecture.md) |
+| 路由、请求响应、协议合同 | [API 文档](docs/api.md) |
+| 管理端组件、交互与视觉 | [管理端主题](docs/theme.md) |
+| 部署、备份与恢复 | [部署说明](deploy/README.md) |
+| 验证命令与提交规范 | [验证](CONTRIBUTING.md#验证)、[项目约定](CONTRIBUTING.md#项目约定) |
+| 创建或审查 PR | [PR 流程](CONTRIBUTING.md#pr-流程)、[问题与方案依据](CONTRIBUTING.md#问题与方案依据)、[审查标准](CONTRIBUTING.md#审查标准) |
 
-### 代码与界面一致性
+## 代码定位
 
-- 对重复逻辑、冗余状态和多余抽象给出具体位置及影响；建议复用时指出已有实现，不能仅凭行数或语法相似判定质量。
-- UI 变更对照项目基础组件、主题和同类页面，检查交互、状态、响应式与可访问性。局部问题是否应在共用组件修复，按职责判断，不一律禁止局部样式。
-- 核对截图、预览和实际交互证据；未检查的状态明确列为验证缺口，不推断视觉验收已经通过。
-
-### 审查输出
-
-- 用中文先回答原问题是否成立、解决方向是否合理，依据与判断标准见 [贡献与审查](CONTRIBUTING.md#审查标准)，再报告实现问题和验证缺口。
-- 实现问题聚焦本次变更新引入或加重的、可定位的问题，包含文件位置、触发场景或规范依据、影响和最小修复方向。
-- 区分必须修复的问题、可选建议和验证缺口。个人偏好标为建议，不作为必须修复项；没有问题时不要凑数。
-- 严重程度按实际影响判断，不为绕过工具的优先级过滤而升级普通规范问题。说明审查和验证的实际覆盖范围，AI 未报告问题不等于维护者批准。
+仓库存在 `.codegraph/`、工具可用且索引内容适用时，优先用 CodeGraph 定位符号与调用链。
+可使用可用的 MCP 工具或 `codegraph explore` / `codegraph node`；索引缺失、失效或不能回答问题时回退到普通搜索和文件阅读。
+不自动安装工具或创建索引。

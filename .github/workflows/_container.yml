@@ -7,6 +7,33 @@ on:
         description: Exact commit SHA to build and validate
         required: true
         type: string
+      publish:
+        description: Publish the verified custom image (trusted custom push or dispatch only)
+        required: false
+        default: false
+        type: boolean
+    outputs:
+      commit:
+        description: Exact source commit
+        value: ${{ jobs.container.outputs.commit }}
+      platform:
+        description: Validated image platform
+        value: ${{ jobs.container.outputs.platform }}
+      tag:
+        description: Published tag (empty unless registry verification succeeded)
+        value: ${{ jobs.container.outputs.tag }}
+      image:
+        description: Verified registry digest reference (empty for check-only runs)
+        value: ${{ jobs.container.outputs.image }}
+      verification:
+        description: Container validation step outcome
+        value: ${{ jobs.container.outputs.verification }}
+      visibility:
+        description: Package visibility verification status
+        value: ${{ jobs.container.outputs.visibility }}
+      anonymous_pull:
+        description: Anonymous pull verification status
+        value: ${{ jobs.container.outputs.anonymous_pull }}
 
 permissions:
   contents: read
@@ -16,7 +43,24 @@ jobs:
   container:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    permissions:
+      contents: read
+      security-events: write
+      packages: write
+    outputs:
+      commit: ${{ steps.metadata.outputs.commit }}
+      platform: linux/amd64
+      tag: ${{ steps.registry.outputs.tag }}
+      image: ${{ steps.registry.outputs.image }}
+      verification: ${{ steps.verify.outcome }}
+      visibility: not_verified
+      anonymous_pull: not_verified
     env:
+      IMAGE_REPOSITORY: ghcr.io/clarence12138/codex-proxy-rs
+      PUBLISH: >-
+        ${{ inputs.publish && github.repository == 'Clarence12138/codex-proxy-rs' &&
+            github.ref == 'refs/heads/custom' &&
+            (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
       CPR_IMAGE: codex-proxy-rs:ci-${{ inputs.ref }}
       TRIVY_QUIET: 'true'
       TRIVY_SKIP_VERSION_CHECK: 'true'
@@ -25,6 +69,32 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - name: Read and verify build metadata
+        id: metadata
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ inputs.ref }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_SHA" =~ ^[a-f0-9]{40}$ ]]
+          commit="$(git rev-parse HEAD)"
+          test "$commit" = "$EXPECTED_SHA"
+          # 发布必须对应当前事件提交，不能借 custom 事件发布其他 ref。
+          if [ "$PUBLISH" = true ]; then
+            test "$commit" = "$GITHUB_SHA"
+          fi
+          version="$(ruby -ryaml -e '
+            value = YAML.load_file("release/version.yaml").fetch("version")
+            abort "invalid release version" unless value.is_a?(String) && value.match?(/\Av?[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)*\z/)
+            puts value.delete_prefix("v")
+          ')"
+          {
+            echo "commit=$commit"
+            echo "version=$version"
+            echo "created=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Setup Docker Buildx
         id: buildx
@@ -61,8 +131,19 @@ jobs:
           context: .
           file: deploy/Dockerfile
           target: runtime
+          platforms: linux/amd64
           load: true
           tags: ${{ env.CPR_IMAGE }}
+          build-args: |
+            CPR_VERSION=${{ steps.metadata.outputs.version }}
+            CPR_GIT_SHA=${{ steps.metadata.outputs.commit }}
+            CPR_BUILD_TIME=${{ steps.metadata.outputs.created }}
+            CPR_BUILD_TYPE=release
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ steps.metadata.outputs.commit }}
+            org.opencontainers.image.version=${{ steps.metadata.outputs.version }}
+            org.opencontainers.image.created=${{ steps.metadata.outputs.created }}
           no-cache-filters: |
             runtime-base
             runtime
@@ -70,8 +151,91 @@ jobs:
           cache-to: type=gha,mode=max,scope=runtime-ci
 
       - name: Verify runtime image
+        id: verify
         uses: ./.github/actions/verify-container
         with:
           image: ${{ env.CPR_IMAGE }}
           platform: linux/amd64
           artifact-name: container-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}-amd64
+
+      - name: Login to GHCR after validation
+        if: env.PUBLISH == 'true'
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push the validated local image
+        if: env.PUBLISH == 'true'
+        id: push
+        shell: bash
+        env:
+          COMMIT: ${{ steps.metadata.outputs.commit }}
+        run: |
+          set -euo pipefail
+          tag="${IMAGE_REPOSITORY}:custom-${COMMIT}"
+          image_id="$(docker image inspect "$CPR_IMAGE" --format '{{.Id}}')"
+          test "$(docker image inspect "$CPR_IMAGE" --format '{{.Os}}/{{.Architecture}}')" = linux/amd64
+          # 只标记已验证的本地镜像，不重新构建；以 push 回执锁定本次产物。
+          docker tag "$image_id" "$tag"
+          push_log="$(mktemp)"
+          docker push "$tag" | tee "$push_log"
+          digest="$(awk '/digest: sha256:/ { for (i=1; i<NF; i++) if ($i == "digest:") print $(i+1) }' "$push_log")"
+          rm -f "$push_log"
+          [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
+          {
+            echo "tag=$tag"
+            echo "digest=$digest"
+            echo "image_id=$image_id"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Verify registry reference matches the validated image
+        if: env.PUBLISH == 'true'
+        id: registry
+        shell: bash
+        env:
+          TAG: ${{ steps.push.outputs.tag }}
+          DIGEST: ${{ steps.push.outputs.digest }}
+          IMAGE_ID: ${{ steps.push.outputs.image_id }}
+        run: |
+          set -euo pipefail
+          image="${IMAGE_REPOSITORY}@${DIGEST}"
+          test "$(docker buildx imagetools inspect "$TAG" --format '{{.Manifest.Digest}}')" = "$DIGEST"
+          test "$(docker buildx imagetools inspect "$image" --format '{{.Manifest.Digest}}')" = "$DIGEST"
+          # 单平台本地镜像的 config digest 必须与验证时的 image ID 完全一致。
+          remote_id="$(docker buildx imagetools inspect "$image" --raw | jq -er '.config.digest')"
+          test "$remote_id" = "$IMAGE_ID"
+          {
+            echo "tag=$TAG"
+            echo "image=$image"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Summarize container delivery
+        if: always()
+        shell: bash
+        env:
+          COMMIT: ${{ steps.metadata.outputs.commit }}
+          VERIFICATION: ${{ steps.verify.outcome }}
+          PUSH_RESULT: ${{ steps.push.outcome }}
+          REGISTRY_RESULT: ${{ steps.registry.outcome }}
+          PUBLISHED_TAG: ${{ steps.registry.outputs.tag }}
+          PUBLISHED_IMAGE: ${{ steps.registry.outputs.image }}
+        run: |
+          {
+            echo '## Container delivery'
+            echo "- Commit: ${COMMIT:-unavailable}"
+            echo '- Platform: linux/amd64'
+            echo "- Container validation: $VERIFICATION"
+            echo "- Publication eligible: $PUBLISH"
+            echo "- Push: $PUSH_RESULT; registry verification: $REGISTRY_RESULT"
+            if [ "$REGISTRY_RESULT" = success ]; then
+              echo "- Tag: $PUBLISHED_TAG"
+              echo "- Deployment reference: $PUBLISHED_IMAGE"
+            else
+              echo '- No verified deployment reference produced by this run.'
+            fi
+            echo '- Package visibility: not verified. First publication defaults to private; configure Public separately.'
+            echo '- Anonymous digest pull: not verified; authenticated publication is not anonymous-pull evidence.'
+            echo '- No production deployment was performed.'
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -4,11 +4,12 @@ on:
   push:
     branches:
       - main
-    paths-ignore:
-      - 'release/version.yaml'
+      - custom
   pull_request:
     branches:
       - main
+      - custom
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -21,7 +22,15 @@ jobs:
   changes:
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
+      publish: >-
+        ${{ github.repository == 'Clarence12138/codex-proxy-rs' &&
+            github.ref == 'refs/heads/custom' &&
+            (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+            (github.event_name == 'workflow_dispatch' || steps.filter.outputs.container == 'true') }}
       backend: ${{ steps.filter.outputs.backend }}
       frontend: ${{ steps.filter.outputs.frontend }}
       container: ${{ steps.filter.outputs.container }}
@@ -33,9 +42,12 @@ jobs:
           fetch-depth: 0
 
       - name: Detect affected checks
+        if: github.event_name != 'workflow_dispatch'
         id: filter
         uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         with:
+          # push 比较本分支推送前后的差异，不能默认与 main 比较全部二开改动。
+          base: ${{ github.ref }}
           filters: |
             backend:
               - 'backend/**'
@@ -52,6 +64,7 @@ jobs:
               - 'release/version.yaml'
               - '.github/actions/**'
               - '.github/workflows/_container.yml'
+              - '.github/workflows/_quality.yml'
               - '.github/workflows/ci.yml'
 
   quality:
@@ -59,15 +72,17 @@ jobs:
     uses: ./.github/workflows/_quality.yml
     with:
       ref: ${{ github.event.pull_request.head.sha || github.sha }}
-      run_backend: ${{ needs.changes.outputs.backend == 'true' }}
-      run_frontend: ${{ needs.changes.outputs.frontend == 'true' }}
+      run_backend: ${{ github.event_name == 'workflow_dispatch' || needs.changes.outputs.publish == 'true' || needs.changes.outputs.backend == 'true' }}
+      run_frontend: ${{ github.event_name == 'workflow_dispatch' || needs.changes.outputs.publish == 'true' || needs.changes.outputs.frontend == 'true' }}
 
   container:
-    needs: changes
-    if: needs.changes.outputs.container == 'true'
+    needs: [changes, quality]
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.container == 'true'
     permissions:
       contents: read
+      packages: write
       security-events: write
     uses: ./.github/workflows/_container.yml
     with:
       ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      publish: ${{ needs.changes.outputs.publish == 'true' }}

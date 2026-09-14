@@ -16,6 +16,7 @@ deploy/logs/
 *.log
 
 # Local configuration.
+.local/
 local.yaml
 local.yml
 .env
