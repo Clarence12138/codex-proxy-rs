@@ -249,23 +249,25 @@ const PRICING_RULES: &[PricingRule] = &[
     },
     PricingRule {
         model: "gpt-5.6-terra",
-        pricing: ModelPricing::new(20_000, 120_000, 2_000)
+        // 按项目结算要求恢复非优惠基准价，缓存及各档位保留原有比例。
+        pricing: ModelPricing::new(25_000, 150_000, 2_500)
             .with_cache_write(125)
-            .with_flex(10_000, 60_000, 1_000)
-            .with_fast(50_000, 300_000, 5_000)
-            .with_long(40_000, 180_000, 4_000)
-            .with_long_flex(20_000, 90_000, 2_000)
-            .with_long_fast(100_000, 450_000, 10_000),
+            .with_flex(12_500, 75_000, 1_250)
+            .with_fast(62_500, 375_000, 6_250)
+            .with_long(50_000, 225_000, 5_000)
+            .with_long_flex(25_000, 112_500, 2_500)
+            .with_long_fast(125_000, 562_500, 12_500),
     },
     PricingRule {
         model: "gpt-5.6-luna",
-        pricing: ModelPricing::new(2_000, 12_000, 200)
+        // 不采用临时折扣，避免订阅额度估算沿用优惠基准价。
+        pricing: ModelPricing::new(10_000, 60_000, 1_000)
             .with_cache_write(125)
-            .with_flex(1_000, 6_000, 100)
-            .with_fast(5_000, 30_000, 500)
-            .with_long(4_000, 18_000, 400)
-            .with_long_flex(2_000, 9_000, 200)
-            .with_long_fast(10_000, 45_000, 1_000),
+            .with_flex(5_000, 30_000, 500)
+            .with_fast(25_000, 150_000, 2_500)
+            .with_long(20_000, 90_000, 2_000)
+            .with_long_flex(10_000, 45_000, 1_000)
+            .with_long_fast(50_000, 225_000, 5_000),
     },
     PricingRule {
         model: "gpt-5.5-pro",

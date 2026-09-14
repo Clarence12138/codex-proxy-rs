@@ -101,21 +101,21 @@ fn billing_breakdown_should_preserve_input_output_and_cache_components() {
 fn billing_breakdown_should_use_latest_gpt_5_6_and_cached_input_prices() {
     let terra = openai_billing_breakdown("gpt-5.6-terra", billing_usage(1, 1, 0, 0), None)
         .expect("gpt-5.6-terra standard pricing");
-    assert_eq!(terra.total_amount().amount().scaled(), 140_000);
+    assert_eq!(terra.total_amount().amount().scaled(), 175_000);
 
     let terra_fast =
         openai_billing_breakdown("gpt-5.6-terra", billing_usage(1, 1, 0, 0), Some("fast"))
             .expect("gpt-5.6-terra fast pricing");
-    assert_eq!(terra_fast.total_amount().amount().scaled(), 350_000);
+    assert_eq!(terra_fast.total_amount().amount().scaled(), 437_500);
 
     let terra_long =
         openai_billing_breakdown("gpt-5.6-terra", billing_usage(272_001, 0, 0, 0), None)
             .expect("gpt-5.6-terra long-context pricing");
-    assert_eq!(terra_long.total_amount().amount().scaled(), 10_880_040_000);
+    assert_eq!(terra_long.total_amount().amount().scaled(), 13_600_050_000);
 
     let luna = openai_billing_breakdown("gpt-5.6-luna", billing_usage(1, 1, 0, 0), None)
         .expect("gpt-5.6-luna standard pricing");
-    assert_eq!(luna.total_amount().amount().scaled(), 14_000);
+    assert_eq!(luna.total_amount().amount().scaled(), 70_000);
 
     let gpt_4o = openai_billing_breakdown("gpt-4o", billing_usage(1, 1, 1, 0), None)
         .expect("gpt-4o cached-input pricing");
@@ -161,6 +161,51 @@ fn billing_breakdown_should_use_sub2api_fast_long_context_prices() {
             1_125_000_000_000,
         )
     );
+}
+
+#[test]
+fn terra_and_luna_should_use_undiscounted_prices_across_tiers_and_contexts() {
+    // 固定非优惠基准价，同时验证缓存拆分、阈值和档位，避免只恢复普通输入输出价。
+    for (model, input_rate, output_rate, cache_rate) in [
+        ("gpt-5.6-terra", 25_000_u128, 150_000_u128, 2_500_u128),
+        ("gpt-5.6-luna", 10_000, 60_000, 1_000),
+    ] {
+        for input in [272_000_u64, 272_001] {
+            let long = input > 272_000;
+            let input_rate = input_rate * if long { 2 } else { 1 };
+            let output_rate = output_rate * if long { 3 } else { 2 } / 2;
+            let cache_rate = cache_rate * if long { 2 } else { 1 };
+            for (tier, numerator, denominator, multiplier) in [
+                (None, 1, 1, 100),
+                (Some("flex"), 1, 2, 50),
+                (Some("fast"), 5, 2, 250),
+                (Some("priority"), 5, 2, 250),
+            ] {
+                let breakdown =
+                    openai_billing_breakdown(model, billing_usage(input, 100, 200, 40), tier)
+                        .expect("undiscounted pricing");
+                let rates = [input_rate, output_rate, cache_rate, input_rate * 125 / 100]
+                    .map(|rate| rate * numerator / denominator);
+                assert_eq!(
+                    [
+                        breakdown.input_price_per_million(),
+                        breakdown.output_price_per_million(),
+                        breakdown.cache_read_price_per_million(),
+                        breakdown.cache_write_price_per_million(),
+                    ]
+                    .map(|price| price.amount().scaled()),
+                    rates.map(|rate| rate * 1_000_000),
+                    "{model}/{tier:?}/{input}",
+                );
+                let expected = u128::from(input - 240) * rates[0]
+                    + 100 * rates[1]
+                    + 200 * rates[2]
+                    + 40 * rates[3];
+                assert_eq!(breakdown.total_amount().amount().scaled(), expected);
+                assert_eq!(breakdown.multiplier_percent(), multiplier);
+            }
+        }
+    }
 }
 
 #[test]
