@@ -11,8 +11,8 @@ pub(in crate::transport) fn is_non_codex_request_header(name: &str) -> bool {
     name.starts_with("cf-")
         // 反代记录的是客户端到网关这一段地址、协议和路由。
         || name.starts_with("x-forwarded-")
-        // OpenAI 官方 Python/Node SDK 也发送 X-Stainless-*；它描述 SDK 的
-        // 环境、版本和重试等信息，不作为 Codex Core/Desktop 的上游请求画像继承。
+        // OpenAI 官方 Python/Node SDK 也发送 X-Stainless-*；Pi 的普通 Responses
+        // 适配通过该 SDK 发送这些环境、版本和重试信息，不作为 Codex 上游画像继承。
         || name.starts_with("x-stainless-")
         // UA Client Hints 与 Fetch Metadata 是浏览器标准，描述下游浏览器
         // 和页面请求上下文，不能当作网关连接上游时的环境。
@@ -35,5 +35,8 @@ pub(in crate::transport) fn is_non_codex_request_header(name: &str) -> bool {
                 // 页面来源与引用地址属于下游请求，不继承到上游。
                 | "origin"
                 | "referer"
+                // Pi 普通 Responses 适配使用的会话头别名；协议层已提取其
+                // 会话语义，上游按 session-id 输出，这里仅过滤原始 HTTP 头。
+                | "session_id"
         )
 }

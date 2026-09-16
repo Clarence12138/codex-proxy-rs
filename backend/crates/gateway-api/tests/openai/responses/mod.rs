@@ -233,6 +233,14 @@ fn decoder_should_preserve_connection_metadata_outside_the_openai_wire_body() {
 #[test]
 fn decoder_should_preserve_ordinary_request_headers_as_opaque_multivalues() {
     let mut headers = HeaderMap::new();
+    for name in [
+        "chatgpt-organization-id",
+        "chatgpt-org-id",
+        "x-openai-organization",
+        "x-openai-project",
+    ] {
+        headers.insert(name, HeaderValue::from_static("unclassified-extension"));
+    }
     headers.append(
         "x-openai-future-mode",
         HeaderValue::from_static("future-ascii"),
@@ -338,6 +346,18 @@ fn decoder_should_preserve_ordinary_request_headers_as_opaque_multivalues() {
         values("openai-beta"),
         vec![b"future_responses=v2".to_vec(), b"future_tools=v3".to_vec()]
     );
+    for name in [
+        "chatgpt-organization-id",
+        "chatgpt-org-id",
+        "x-openai-organization",
+        "x-openai-project",
+    ] {
+        assert_eq!(values(name), vec![b"unclassified-extension".to_vec()]);
+    }
+    assert_eq!(
+        values("x-codex-installation-id"),
+        vec![b"client-installation".to_vec()]
+    );
     for preserved in [
         "accept",
         "content-type",
@@ -357,7 +377,6 @@ fn decoder_should_preserve_ordinary_request_headers_as_opaque_multivalues() {
         "cookie",
         "chatgpt-account-id",
         "chatgpt-project-id",
-        "x-codex-installation-id",
         // 上游指纹由运行时画像统一生成，客户端不得覆盖。
         "user-agent",
         "originator",

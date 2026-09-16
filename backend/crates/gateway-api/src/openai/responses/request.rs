@@ -549,15 +549,9 @@ fn passthrough_header_name(name: &str, connection_headers: &[String]) -> bool {
             | "cookie"
             | "cookie2"
             | "chatgpt-account-id"
-            | "chatgpt-organization-id"
-            | "chatgpt-org-id"
             | "chatgpt-project-id"
             | "openai-organization"
             | "openai-project"
-            | "x-openai-organization"
-            | "x-openai-project"
-            // installation ID 始终由当前 lease 重建。
-            | "x-codex-installation-id"
             // 上游指纹必须由运行时画像统一生成，客户端 originator/User-Agent/version
             // 不能作为不透明头透传覆盖，避免不同下游客户端暴露不一致的设备指纹。
             | "originator"

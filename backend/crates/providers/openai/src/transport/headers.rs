@@ -16,7 +16,8 @@ use super::protocol::responses::CodexResponsesRequest;
 
 const CODEX_RESIDENCY_HEADER: &str = "x-openai-internal-codex-residency";
 
-/// 下游身份不能覆盖网关所选账号；此分类用于透传边界，不是官方头清单。
+/// 不透传下游携带的认证、账号及相关身份字段，避免影响网关选定的上游身份。
+/// 上游需要的官方身份头由网关构造；这里也包含通用认证和 Cookie 字段。
 pub(super) fn is_managed_identity_header(name: &str) -> bool {
     matches!(
         name,
@@ -29,15 +30,6 @@ pub(super) fn is_managed_identity_header(name: &str) -> bool {
             | "chatgpt-project-id"
             | "openai-organization"
             | "openai-project"
-            // 安装实例身份也不能由下游替换；官方远程控制链路使用此头，
-            // 不代表 Codex Responses 请求需要发送它。
-            | "x-codex-installation-id"
-            // 以下是既有身份隔离的防护项，尚未在已核对的 Core/Desktop
-            // 中找到对应字段；保留保护不等于认定它们是官方协议。
-            | "chatgpt-organization-id"
-            | "chatgpt-org-id"
-            | "x-openai-organization"
-            | "x-openai-project"
     )
 }
 
@@ -256,7 +248,6 @@ fn append_passthrough_headers(
                     | "content-type"
                     | "content-encoding"
                     | "x-codex-routing-hint"
-                    | "x-codex-installation-id"
                     | "x-codex-turn-id"
                     | "x-oai-attestation"
                     | "x-oai-is"

@@ -79,6 +79,16 @@ fn request_with_opaque_headers(use_websocket: bool) -> CodexResponsesRequest {
                 ["x-cf-business-field", STANDARD.encode(b"keep")],
                 ["sec-ch-business", STANDARD.encode(b"keep")],
                 ["x-stainlessbusiness", STANDARD.encode(b"keep")],
+                [
+                    "chatgpt-organization-id",
+                    STANDARD.encode(b"unclassified-org")
+                ],
+                ["chatgpt-org-id", STANDARD.encode(b"unclassified-org")],
+                [
+                    "x-openai-organization",
+                    STANDARD.encode(b"unclassified-org")
+                ],
+                ["x-openai-project", STANDARD.encode(b"unclassified-project")],
                 ["authorization", STANDARD.encode(b"Bearer client-secret")],
                 [
                     "X-OpenAI-Actor-Authorization",
@@ -240,6 +250,11 @@ async fn backend_http_should_preserve_business_headers_without_downstream_transp
         ("session-id", b"synthetic-alias".as_slice()),
         ("authorization", b"Bearer lease-token".as_slice()),
         ("chatgpt-account-id", b"lease-account".as_slice()),
+        ("chatgpt-organization-id", b"unclassified-org".as_slice()),
+        ("chatgpt-org-id", b"unclassified-org".as_slice()),
+        ("x-openai-organization", b"unclassified-org".as_slice()),
+        ("x-openai-project", b"unclassified-project".as_slice()),
+        ("x-codex-installation-id", b"client-installation".as_slice()),
     ] {
         assert_eq!(raw_header_values(&raw, name), vec![value.to_vec()]);
     }
@@ -277,11 +292,7 @@ async fn backend_http_should_preserve_business_headers_without_downstream_transp
     ] {
         assert_eq!(raw_header_values(&raw, name).len(), 1, "missing {name}");
     }
-    for secret in [
-        b"client-secret".as_slice(),
-        b"client-account",
-        b"client-installation",
-    ] {
+    for secret in [b"client-secret".as_slice(), b"client-account"] {
         assert!(!raw.windows(secret.len()).any(|window| window == secret));
     }
     for omitted in ["bad header name", "x-invalid-base64"] {
@@ -417,7 +428,15 @@ async fn backend_websocket_should_preserve_business_headers_without_downstream_t
     ] {
         assert_eq!(values(name).len(), 1, "missing {name}");
     }
-    assert!(values("x-codex-installation-id").is_empty());
+    for (name, value) in [
+        ("chatgpt-organization-id", b"unclassified-org".as_slice()),
+        ("chatgpt-org-id", b"unclassified-org".as_slice()),
+        ("x-openai-organization", b"unclassified-org".as_slice()),
+        ("x-openai-project", b"unclassified-project".as_slice()),
+        ("x-codex-installation-id", b"client-installation".as_slice()),
+    ] {
+        assert_eq!(values(name), vec![value.to_vec()], "missing {name}");
+    }
     assert_eq!(values("session-id"), vec![b"synthetic-alias".to_vec()]);
     assert_eq!(values("x-codex-turn-state"), vec![b"turn-ascii".to_vec()]);
 }
