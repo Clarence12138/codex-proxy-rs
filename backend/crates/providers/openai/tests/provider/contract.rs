@@ -65,6 +65,56 @@ use crate::support::{
 };
 use crate::transport::accept_codex_test_websocket;
 
+#[tokio::test]
+async fn selected_proxy_location_overrides_global_and_reloads_without_mutating_client_payload() {
+    use gateway_core::account::{OutboundProxy, RequestLocation};
+    let store = Arc::new(MemoryAccountStore::default());
+    let account_id = "acct_provider_contract";
+    create_account(&store, account_id).await;
+    let first_proxy = MockServer::start().await;
+    let second_proxy = MockServer::start().await;
+    for proxy in [&first_proxy, &second_proxy] {
+        Mock::given(method("POST"))
+            .and(path("/codex/responses"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(CAPTURE_COMPLETED_SSE),
+            )
+            .mount(proxy)
+            .await;
+    }
+    // 目标不可解析；收到请求证明使用的是账号代理，而非测试机默认出口。
+    let provider = provider_with_base_url(&store, "http://upstream.invalid".to_owned());
+    let original = json!({"model":"gpt-5.4", "input":[
+        {"role":"user", "content":[{"type":"input_text", "text":"<environment_context><timezone>UTC</timezone></environment_context>"}], "internal_chat_message_metadata_passthrough":{"content_item_kinds":["environments.environment_context"], "create_time":1789293131.822}},
+        {"role":"user", "content":[{"type":"input_text", "text":"<environment_context><timezone>UTC</timezone></environment_context>"}], "internal_chat_message_metadata_passthrough":{"content_item_kinds":["user.text"]}}
+    ], "tools":[{"type":"web_search"}]});
+    let operation = Operation::Generate(GenerateRequest::from_protocol_payload(
+        ProtocolPayload::json_object("openai", original.as_object().unwrap().clone())
+            .unwrap()
+            .with_context(Map::from_iter([("use_websocket".to_owned(), json!(false))])),
+    ));
+    for (index, (proxy, location, expected)) in [
+        (&first_proxy, Some(json!({"country":"JP", "region":"Tokyo", "city":"Tokyo", "timezone":"Asia/Tokyo"})), "Asia/Tokyo"),
+        (&second_proxy, Some(json!({"country":"US", "region":"New York", "city":"New York", "timezone":"America/New_York"})), "America/New_York"),
+        (&second_proxy, None, "Pacific/Auckland"),
+    ].into_iter().enumerate() {
+        let location = location.map(|value| serde_json::from_value::<RequestLocation>(value).unwrap());
+        store.set_egress(account_id, Some(OutboundProxy::parse(&proxy.uri()).unwrap()), location);
+        let mut stream = provider.execute(planned_request("openai", operation.clone()), context_with_state_owner(&format!("req_proxy_location_{index}"), account_id)).await.expect("prepare");
+        while let Some(event) = stream.next().await { event.expect("proxy response"); }
+        let requests = proxy.received_requests().await.unwrap();
+        let body = captured_request_body(requests.last().expect("request reached selected proxy"));
+        assert_eq!(body.pointer("/tools/0/user_location/timezone"), Some(&json!(expected)));
+        assert_eq!(body.pointer("/input/0/content/0/text"), Some(&json!(format!("<environment_context><timezone>{expected}</timezone></environment_context>"))));
+        assert_eq!(body.pointer("/input/1/content/0/text"), original.pointer("/input/1/content/0/text"));
+        assert_eq!(body.pointer("/input/0/internal_chat_message_metadata_passthrough/create_time"), Some(&json!(1789293131.822)));
+    }
+    assert_eq!(first_proxy.received_requests().await.unwrap().len(), 1);
+    assert_eq!(second_proxy.received_requests().await.unwrap().len(), 2);
+}
+
 const OFFICIAL_FIXTURE: &[u8] =
     include_bytes!("../transport/fixtures/official_models_snapshot.json");
 const CAPTURE_COMPLETED_SSE: &str = concat!(

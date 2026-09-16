@@ -116,7 +116,7 @@ pub(crate) async fn load_admin_account_page(
              from runtime_settings
             where id = 1
          )
-         select a.outbound_proxy_url, a.id, a.provider_kind, a.name, a.notes, a.email, a.upstream_user_id,
+         select p.location_country, p.location_region, p.location_city, p.location_timezone, a.outbound_proxy_url, a.id, a.provider_kind, a.name, a.notes, a.email, a.upstream_user_id,
                 a.upstream_account_id, a.plan_type, a.authentication_kind,
                 a.credential_revision, a.has_refresh_token, a.access_token_expires_at,
                 a.next_refresh_at, a.enabled, a.concurrency_limit, a.weight, a.model_access_json,
@@ -143,6 +143,7 @@ pub(crate) async fn load_admin_account_page(
                ) ordered
            ) page on true
            left join provider_accounts a on a.id = page.id
+           left join outbound_proxies p on p.id = a.outbound_proxy_id
           order by page.page_position"
     );
     // 动态片段只来自上面的封闭排序枚举与固定 usage predicate；所有请求值仍使用 bind。

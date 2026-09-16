@@ -326,27 +326,14 @@ impl CodexWireProfileConfig {
             }
         }
         if let Some(location) = &self.location {
-            for (field, value) in [
-                (
-                    "openai.wire_profile.location.region",
-                    location.region.as_str(),
-                ),
-                ("openai.wire_profile.location.city", location.city.as_str()),
-            ] {
-                if value.trim().is_empty() {
-                    return Err(OpenAiConfigError::InvalidField(field));
-                }
-            }
-            if location.country.len() != 2
-                || !location
-                    .country
-                    .bytes()
-                    .all(|byte| byte.is_ascii_uppercase())
-            {
-                return Err(OpenAiConfigError::InvalidField(
-                    "openai.wire_profile.location.country",
-                ));
-            }
+            location.validate().map_err(|error| {
+                use gateway_core::account::InvalidRequestLocation;
+                OpenAiConfigError::InvalidField(match error {
+                    InvalidRequestLocation::Country => "openai.wire_profile.location.country",
+                    InvalidRequestLocation::Region => "openai.wire_profile.location.region",
+                    InvalidRequestLocation::City => "openai.wire_profile.location.city",
+                })
+            })?;
         }
         if semver::Version::parse(&self.codex_version).is_err() {
             return Err(OpenAiConfigError::InvalidField(

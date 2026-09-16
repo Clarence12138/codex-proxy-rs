@@ -129,6 +129,22 @@ impl MemoryAccountStore {
             .with_scheduling(concurrency_limit, weight);
     }
 
+    pub(crate) fn set_egress(
+        &self,
+        id: &str,
+        proxy: Option<gateway_core::account::OutboundProxy>,
+        location: Option<gateway_core::account::RequestLocation>,
+    ) {
+        let id = ProviderAccountId::new(id).expect("account ID");
+        let mut accounts = self.accounts.lock().expect("account store lock");
+        let stored = accounts.get_mut(&id).expect("seeded account");
+        stored.account = stored
+            .account
+            .clone()
+            .with_outbound_proxy(proxy)
+            .with_request_location(location);
+    }
+
     pub(crate) fn quota_reads(&self) -> usize {
         self.quota_reads.load(Ordering::SeqCst)
     }

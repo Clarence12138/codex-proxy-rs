@@ -9,7 +9,15 @@ export interface OutboundProxyTest {
   message: string
 }
 
+export interface ProxyRequestLocation {
+  country: string
+  region: string
+  city: string
+  timezone: string
+}
+
 export interface OutboundProxyRecord {
+  location: ProxyRequestLocation | null
   id: string
   name: string
   endpoint: string
@@ -75,7 +83,7 @@ export function getProxies(data: { page: number, pageSize: number, search?: stri
   })
 }
 
-export function createProxy(data: { name: string, proxyUrl: string }) {
+export function createProxy(data: { name: string, proxyUrl: string, location?: ProxyRequestLocation | null }) {
   return request<ProxyMutation>({
     url: '/api/admin/proxies/create',
     method: 'POST',
@@ -83,7 +91,7 @@ export function createProxy(data: { name: string, proxyUrl: string }) {
   })
 }
 
-export function updateProxy(data: { id: string, revision: number, name: string, proxyUrl?: string }) {
+export function updateProxy(data: { id: string, revision: number, name: string, proxyUrl?: string, location?: ProxyRequestLocation | null }) {
   return request<ProxyMutation>({
     url: '/api/admin/proxies/update',
     method: 'POST',

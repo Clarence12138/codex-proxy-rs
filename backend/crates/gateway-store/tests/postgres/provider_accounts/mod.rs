@@ -1866,6 +1866,7 @@ async fn authorization_import_rejects_a_saved_proxy_changed_during_oauth() {
     let saved = proxies
         .create(
             NewProxy {
+                location: None,
                 name: "OAuth".to_owned(),
                 proxy: original.clone(),
             },
@@ -1888,6 +1889,7 @@ async fn authorization_import_rejects_a_saved_proxy_changed_during_oauth() {
     let edited = proxies
         .update(
             UpdateProxy {
+                location: None,
                 id: saved.id.clone(),
                 revision: saved.revision,
                 name: saved.name,

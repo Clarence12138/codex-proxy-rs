@@ -127,7 +127,7 @@ fn adapt_codex_responses_body(
     }
 }
 
-fn align_structured_location_fields(
+pub(crate) fn align_structured_location_fields(
     body: &mut Map<String, Value>,
     now: DateTime<Utc>,
     location: &CodexRequestLocation,

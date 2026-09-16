@@ -181,6 +181,11 @@ impl ProxiesService for DefaultProxiesService {
         context: &MutationContext,
     ) -> Result<ProxyMutation, AdminError> {
         command.name = validate_name(&command.name)?;
+        command.location = command
+            .location
+            .map(|location| location.normalized())
+            .transpose()
+            .map_err(|_| AdminError::invalid("代理位置不合法"))?;
         let result = self
             .store
             .create(command, context)
@@ -196,6 +201,11 @@ impl ProxiesService for DefaultProxiesService {
         context: &MutationContext,
     ) -> Result<ProxyMutation, AdminError> {
         command.name = validate_name(&command.name)?;
+        command.location = command
+            .location
+            .map(|location| location.map(|value| value.normalized()).transpose())
+            .transpose()
+            .map_err(|_| AdminError::invalid("代理位置不合法"))?;
         let result = self
             .store
             .update(command, context)

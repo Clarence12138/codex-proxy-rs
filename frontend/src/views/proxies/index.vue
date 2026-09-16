@@ -37,7 +37,7 @@ const columns = defineTableColumns<OutboundProxyRecord>([
 ])
 const showForm = shallowRef(false)
 const editing = shallowRef<OutboundProxyRecord | null>(null)
-const form = reactive({ name: '', proxyUrl: '' })
+const form = reactive({ name: '', proxyUrl: '', customLocation: false, location: { country: '', region: '', city: '', timezone: '' } })
 const saveAction = useAsyncAction()
 const { loading: saving } = saveAction
 const deleteAction = useAsyncAction()
@@ -54,6 +54,8 @@ function openForm(proxy: OutboundProxyRecord | null = null) {
   editing.value = proxy
   form.name = proxy?.name ?? ''
   form.proxyUrl = ''
+  form.customLocation = proxy?.location != null
+  form.location = proxy?.location ? { ...proxy.location } : { country: '', region: '', city: '', timezone: '' }
   showForm.value = true
 }
 
@@ -106,11 +108,18 @@ async function save() {
     toast.warning('请填写代理名称和连接地址')
     return
   }
+  const location = form.customLocation
+    ? { country: form.location.country.trim().toUpperCase(), region: form.location.region.trim(), city: form.location.city.trim(), timezone: form.location.timezone.trim() }
+    : null
+  if (location && (!/^[A-Z]{2}$/.test(location.country) || !location.region || !location.city || !location.timezone)) {
+    toast.warning('请填写两位国家代码、地区、城市和 IANA 时区')
+    return
+  }
   await saveAction.run(async () => {
     // 编辑时留空保留已保存的地址和认证，不能用脱敏地址覆盖原连接。
     await (editing.value
-      ? updateProxy({ id: editing.value.id, revision: editing.value.revision, name, proxyUrl: proxyUrl || undefined })
-      : createProxy({ name, proxyUrl }))
+      ? updateProxy({ id: editing.value.id, revision: editing.value.revision, name, proxyUrl: proxyUrl || undefined, location })
+      : createProxy({ name, proxyUrl, location }))
     showForm.value = false
     form.proxyUrl = ''
     toast.success('代理已保存')
@@ -191,6 +200,9 @@ onMounted(() => void query.execute())
                   <LockKeyhole v-if="row.hasAuthentication" class="size-3 shrink-0" aria-label="已保存代理认证" />
                   <span class="truncate font-mono" :title="row.endpoint">{{ row.endpoint }}</span>
                 </span>
+                <span class="truncate text-cp-xs text-cp-text-secondary" :title="row.location ? `${row.location.country} / ${row.location.region} / ${row.location.city} · ${row.location.timezone}` : '位置：继承全局'">
+                  {{ row.location ? `${row.location.city} · ${row.location.timezone}` : '位置：继承全局' }}
+                </span>
               </div>
             </template>
             <template #exitIp="{ row }">
@@ -236,6 +248,8 @@ onMounted(() => void query.execute())
       v-model="showForm"
       v-model:name="form.name"
       v-model:proxy-url="form.proxyUrl"
+      v-model:custom-location="form.customLocation"
+      v-model:location="form.location"
       :proxy="editing"
       :saving="saving"
       :testing="testingForm"

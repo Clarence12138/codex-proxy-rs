@@ -50,12 +50,15 @@ Linux 上应用容器以 `10001:10001` 运行。上述命令将应用数据和�
 模板不重复列出这些默认项。运行后，Provider 检查官方版本并更新运行时请求画像，
 不回写 `config.yaml`；检查失败时继续使用上一份有效画像。版本检查不等于重新核验 TLS。
 
-`openai.wire_profile.location` 可选覆盖请求地区。省略、留空（`location:`）或设为 `null` 时，
-透传客户端原有的 Web Search `user_location`、环境日期和时区；客户端未提供的字段也不会补写。
+`openai.wire_profile.location` 是可选的全局请求地区默认值。管理端「代理管理」可以为每个代理配置
+优先级更高的位置覆盖，关联账号在配置刷新后的新请求中自动应用，无需重启；关闭自定义后恢复全局继承。
+代理未配置覆盖且全局省略、留空（`location:`）或设为 `null` 时，透传客户端原有的 Web Search
+`user_location`、环境日期和时区；客户端未提供的字段也不会补写。
 模板显式填写 `US / Ohio / Piketon / America/New_York`，需要透传时清空或删除该配置项。
 自定义时完整填写 `country`（两位大写国家代码）、`region`、`city` 和 `timezone`（IANA 时区）；修改后重启生效。
 它统一 Responses 的 Web Search 地区与带环境标记的日期、时区，不修改普通聊天内容或 epoch 时间戳，
-也不替代 `residency` 约束或随官方版本检查变化。
+也不替代 `residency` 约束或随官方版本检查变化。代理位置的字段约束、继承和生效范围见
+[独立代理管理](../docs/api.md#独立代理管理--managed-proxies)。
 
 ## 启动
 

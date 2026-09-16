@@ -16,6 +16,139 @@ use gateway_store::postgres::{
 
 use super::{TestDatabase, admin_account_store, provider_accounts::account};
 
+#[tokio::test]
+async fn proxy_location_is_shared_preserved_cleared_and_removed_with_binding() {
+    use gateway_core::account::{ProviderAccountStore, RequestLocation};
+    let Some(database) = TestDatabase::create("proxy_location").await else {
+        return;
+    };
+    let proxies = PgProxyRepository::new(database.pool.clone());
+    let accounts = PgProviderAccountRepository::new(database.pool.clone());
+    let location: RequestLocation = serde_json::from_value(serde_json::json!({"country":"JP", "region":"Tokyo", "city":"Tokyo", "timezone":"Asia/Tokyo"})).unwrap();
+    let mut saved = proxies
+        .create(
+            NewProxy {
+                name: "Tokyo".to_owned(),
+                proxy: OutboundProxy::parse("http://127.0.0.1:18080").unwrap(),
+                location: Some(location.clone()),
+            },
+            &context(),
+        )
+        .await
+        .unwrap()
+        .record;
+    assert_eq!(saved.location.as_ref(), Some(&location));
+    proxies
+        .record_test(&saved.id, saved.revision, success(), &context())
+        .await
+        .unwrap();
+    for id in ["acct_location_a", "acct_location_b"] {
+        let mut input = account(id, id);
+        input.outbound_proxy = Some(saved.proxy.clone());
+        accounts.insert_provider_account(input).await.unwrap();
+        let projected = accounts
+            .get_account(&ProviderAccountId::new(id).unwrap())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(projected.request_location(), Some(&location));
+    }
+    let directory = accounts.list_accounts().await.unwrap();
+    assert_eq!(directory.len(), 2);
+    assert!(
+        directory
+            .iter()
+            .all(|account| account.request_location() == Some(&location))
+    );
+    let original_revision = directory[0].revision();
+    saved = proxies
+        .update(
+            UpdateProxy {
+                id: saved.id.clone(),
+                revision: saved.revision,
+                name: "Renamed".to_owned(),
+                proxy: None,
+                location: None,
+            },
+            &context(),
+        )
+        .await
+        .unwrap()
+        .record;
+    assert_eq!(saved.location.as_ref(), Some(&location));
+    assert!(saved.last_test.as_ref().unwrap().success);
+    let stale_revision = saved.revision;
+    saved = proxies
+        .update(
+            UpdateProxy {
+                id: saved.id.clone(),
+                revision: saved.revision,
+                name: saved.name.clone(),
+                proxy: None,
+                location: Some(None),
+            },
+            &context(),
+        )
+        .await
+        .unwrap()
+        .record;
+    assert!(saved.location.is_none());
+    assert!(saved.last_test.as_ref().unwrap().success);
+    assert!(
+        accounts
+            .list_accounts()
+            .await
+            .unwrap()
+            .iter()
+            .all(|account| account.request_location().is_none()
+                && account.revision() == original_revision)
+    );
+    assert!(
+        proxies
+            .update(
+                UpdateProxy {
+                    id: saved.id.clone(),
+                    revision: stale_revision,
+                    name: saved.name.clone(),
+                    proxy: None,
+                    location: Some(Some(location.clone()))
+                },
+                &context()
+            )
+            .await
+            .is_err()
+    );
+    assert!(proxies.get(&saved.id).await.unwrap().location.is_none());
+    proxies
+        .update(
+            UpdateProxy {
+                id: saved.id.clone(),
+                revision: saved.revision,
+                name: saved.name.clone(),
+                proxy: None,
+                location: Some(Some(location.clone())),
+            },
+            &context(),
+        )
+        .await
+        .unwrap();
+    let id = ProviderAccountId::new("acct_location_a").unwrap();
+    proxies
+        .remove_account(&saved.id, &id, &context())
+        .await
+        .unwrap();
+    let removed = accounts.get_account(&id).await.unwrap().unwrap();
+    assert!(removed.outbound_proxy().is_none());
+    assert!(removed.request_location().is_none());
+    let other = accounts
+        .get_account(&ProviderAccountId::new("acct_location_b").unwrap())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(other.request_location(), Some(&location));
+    database.close().await;
+}
+
 fn context() -> MutationContext {
     MutationContext {
         actor: MutationActor::System,
@@ -55,6 +188,7 @@ async fn proxy_account_removal_preserves_settings_and_rejects_changed_bindings()
     let saved = store
         .create(
             NewProxy {
+                location: None,
                 name: "解绑测试".to_owned(),
                 proxy: OutboundProxy::parse("http://user:secret@127.0.0.1:17890").unwrap(),
             },
@@ -199,6 +333,7 @@ async fn proxy_accounts_paginate_thousands_of_accounts_and_search_without_loadin
     let saved = store
         .create(
             NewProxy {
+                location: None,
                 name: "分页测试".to_owned(),
                 proxy: OutboundProxy::parse("http://127.0.0.1:17890").unwrap(),
             },
@@ -210,6 +345,7 @@ async fn proxy_accounts_paginate_thousands_of_accounts_and_search_without_loadin
     let empty = store
         .create(
             NewProxy {
+                location: None,
                 name: "无关联账号".to_owned(),
                 proxy: OutboundProxy::parse("http://127.0.0.1:17891").unwrap(),
             },
@@ -351,6 +487,7 @@ async fn import_reservation_blocks_proxy_mutations_until_rotated_credentials_are
     let saved = store
         .create(
             NewProxy {
+                location: None,
                 name: "导入出口".to_owned(),
                 proxy: OutboundProxy::parse("http://127.0.0.1:8080").unwrap(),
             },
@@ -366,6 +503,7 @@ async fn import_reservation_blocks_proxy_mutations_until_rotated_credentials_are
         .unwrap();
     let reservation = store.reserve_import(&saved.id).await.unwrap();
     let replacement = UpdateProxy {
+        location: None,
         id: saved.id.clone(),
         revision: saved.revision,
         name: saved.name,
@@ -463,6 +601,7 @@ async fn managed_proxies_persist_bind_update_all_accounts_and_protect_stale_test
     let created = store
         .create(
             NewProxy {
+                location: None,
                 name: "Office".to_owned(),
                 proxy: old_proxy.clone(),
             },
@@ -476,6 +615,7 @@ async fn managed_proxies_persist_bind_update_all_accounts_and_protect_stale_test
         store
             .create(
                 NewProxy {
+                    location: None,
                     name: "Duplicate".to_owned(),
                     proxy: old_proxy.clone()
                 },
@@ -535,6 +675,7 @@ async fn managed_proxies_persist_bind_update_all_accounts_and_protect_stale_test
             UpdateProxy {
                 id: created.id.clone(),
                 revision: created.revision,
+                location: None,
                 name: "Renamed".to_owned(),
                 proxy: None,
             },
@@ -552,6 +693,7 @@ async fn managed_proxies_persist_bind_update_all_accounts_and_protect_stale_test
             UpdateProxy {
                 id: created.id.clone(),
                 revision: renamed.revision,
+                location: None,
                 name: renamed.name,
                 proxy: Some(new_proxy.clone()),
             },
@@ -689,6 +831,21 @@ async fn migration_backfills_shared_proxies_without_changing_credentials() {
     .execute(&database.pool)
     .await
     .unwrap();
+    sqlx::raw_sql(include_str!(
+        "../../../../migrations/0010_proxy_request_location.sql"
+    ))
+    .execute(&database.pool)
+    .await
+    .unwrap();
+    let inherited = gateway_core::account::ProviderAccountStore::list_accounts(&accounts)
+        .await
+        .unwrap();
+    assert_eq!(inherited.len(), 3);
+    assert!(
+        inherited
+            .iter()
+            .all(|account| account.request_location().is_none())
+    );
     assert_eq!(
         sqlx::query_scalar::<_, i64>("select count(*) from outbound_proxies")
             .fetch_one(&database.pool)
