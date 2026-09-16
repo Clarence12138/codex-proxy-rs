@@ -6,7 +6,8 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 use chrono::{DateTime, Utc};
 use gateway_core::operation::GenerateRequest;
 use gateway_protocol::openai::{
-    WS_REQUEST_HEADER_RESPONSES_LITE_CLIENT_METADATA_KEY, is_transport_managed_request_header,
+    WS_REQUEST_HEADER_RESPONSES_LITE_CLIENT_METADATA_KEY, is_downstream_only_request_header,
+    is_transport_managed_request_header,
 };
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use roxmltree::Document;
@@ -757,6 +758,7 @@ fn decode_passthrough_headers(context: &Map<String, Value>) -> HeaderMap {
 
 fn provider_managed_header(name: &str) -> bool {
     is_transport_managed_request_header(name)
+        || is_downstream_only_request_header(name)
         || name.starts_with("x-grok-")
         || name.starts_with("x-xai-")
         || matches!(

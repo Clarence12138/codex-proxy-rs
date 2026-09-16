@@ -663,6 +663,18 @@ async fn request_context_should_resolve_forwarded_precedence_and_peer_fallback()
 }
 
 #[tokio::test]
+async fn client_header_filter_should_not_change_local_client_observation() {
+    let mut headers = HeaderMap::new();
+    headers.insert("user-agent", "pi/synthetic".parse().unwrap());
+    headers.insert("x-stainless-runtime", "node".parse().unwrap());
+    headers.insert("origin", "https://synthetic.invalid".parse().unwrap());
+    let captured = captured_client_context(headers, "192.0.2.10:443".parse().unwrap()).await;
+    assert_eq!(captured.user_agent.as_deref(), Some("pi/synthetic"));
+    assert_eq!(captured.client_ip, Some("192.0.2.10".parse().unwrap()));
+    assert!(captured.protocol_context.is_none());
+}
+
+#[tokio::test]
 async fn stale_model_catalog_should_not_block_a_new_model_request() {
     let model = "  gpt-future-codex  ";
     let captured = captured_http_request(
