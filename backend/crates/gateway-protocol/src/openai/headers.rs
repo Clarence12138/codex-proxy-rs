@@ -1,16 +1,4 @@
-//! OpenAI 请求头的业务协议与传输边界。
-
-/// 下游专属信息不属于上游请求事实；调用方须传入 HeaderName 规范化后的小写名称。
-///
-/// 会话别名 `session_id` 先由入站提取语义，再通过规范 `session-id` 输出，
-/// 不能作为不透明头产生第二份会话身份。此规则不涉及正文中的同名字段。
-#[must_use]
-pub fn is_downstream_only_request_header(name: &str) -> bool {
-    name.starts_with("x-stainless-")
-        || name.starts_with("sec-ch-ua")
-        || name.starts_with("sec-fetch-")
-        || matches!(name, "origin" | "referer" | "session_id")
-}
+//! OpenAI 请求头的 HTTP 传输边界。
 
 /// 判断小写请求头是否属于传输层管理的字段，不得作为业务扩展头透传。
 ///
@@ -18,10 +6,7 @@ pub fn is_downstream_only_request_header(name: &str) -> bool {
 /// 只用于请求方向，不影响上游响应中的代理诊断信息。
 #[must_use]
 pub fn is_transport_managed_request_header(name: &str) -> bool {
-    // 代理命名空间描述的是下游链路；包括未知扩展也不能冒充上游连接事实。
-    name.starts_with("cf-")
-        || name.starts_with("x-forwarded-")
-        || name.starts_with("sec-websocket-")
+    name.starts_with("sec-websocket-")
         || matches!(
             name,
             "connection"
@@ -38,11 +23,7 @@ pub fn is_transport_managed_request_header(name: &str) -> bool {
                 // 请求实体与响应压缩能力属于各段 transport，不能继承下游协商。
                 | "content-encoding"
                 | "accept-encoding"
-                | "forwarded"
-                | "via"
-                | "cdn-loop"
-                | "x-real-ip"
-                | "true-client-ip"
+                // 网关中间件也会生成该链路诊断 ID，不作为业务上下文转发。
                 | "x-request-id"
         )
 }

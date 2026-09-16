@@ -2,25 +2,20 @@
 
 use std::io;
 
-use base64::{Engine as _, engine::general_purpose::STANDARD};
 use chrono::{DateTime, Utc};
 use gateway_core::operation::GenerateRequest;
-use gateway_protocol::openai::{
-    WS_REQUEST_HEADER_RESPONSES_LITE_CLIENT_METADATA_KEY, is_downstream_only_request_header,
-    is_transport_managed_request_header,
-};
-use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+use gateway_protocol::openai::WS_REQUEST_HEADER_RESPONSES_LITE_CLIENT_METADATA_KEY;
 use roxmltree::Document;
 use serde::Serialize as _;
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
+use crate::transport::downstream::decode_passthrough_headers;
 use crate::transport::profile::CodexRequestLocation;
 use crate::transport::protocol::responses::{
     CodexResponsesRequest, X_CODEX_TURN_STATE_CLIENT_METADATA_KEY,
 };
 
-const PASSTHROUGH_HEADERS_CONTEXT_KEY: &str = "opaque_request_headers";
 const TURN_ID_CLIENT_METADATA_KEY: &str = "turn_id";
 const THREAD_SPAWN_SUBAGENT_KIND: &str = "thread_spawn";
 const THREAD_SPAWN_CONVERSATION_PREFIX: &str = "thread-spawn:";
@@ -718,66 +713,6 @@ fn apply_protocol_context(request: &mut CodexResponsesRequest, context: &Map<Str
         }
         None => {}
     }
-}
-
-fn decode_passthrough_headers(context: &Map<String, Value>) -> HeaderMap {
-    let mut headers = HeaderMap::new();
-    let Some(entries) = context
-        .get(PASSTHROUGH_HEADERS_CONTEXT_KEY)
-        .and_then(Value::as_array)
-    else {
-        return headers;
-    };
-
-    for entry in entries {
-        let Some(entry) = entry.as_array().filter(|entry| entry.len() == 2) else {
-            continue;
-        };
-        let Some(name) = entry.first().and_then(Value::as_str) else {
-            continue;
-        };
-        let Ok(name) = HeaderName::from_bytes(name.as_bytes()) else {
-            continue;
-        };
-        if provider_managed_header(name.as_str()) {
-            continue;
-        }
-        let Some(encoded) = entry.get(1).and_then(Value::as_str) else {
-            continue;
-        };
-        let Ok(bytes) = STANDARD.decode(encoded) else {
-            continue;
-        };
-        let Ok(value) = HeaderValue::from_bytes(&bytes) else {
-            continue;
-        };
-        headers.append(name, value);
-    }
-    headers
-}
-
-fn provider_managed_header(name: &str) -> bool {
-    is_transport_managed_request_header(name)
-        || is_downstream_only_request_header(name)
-        || name.starts_with("x-grok-")
-        || name.starts_with("x-xai-")
-        || matches!(
-            name,
-            "authorization"
-                | "x-api-key"
-                | "x-openai-actor-authorization"
-                | "cookie"
-                | "cookie2"
-                | "chatgpt-account-id"
-                | "chatgpt-organization-id"
-                | "chatgpt-org-id"
-                | "chatgpt-project-id"
-                | "openai-organization"
-                | "openai-project"
-                | "x-openai-organization"
-                | "x-openai-project"
-                | "x-codex-installation-id"
-        )
 }
 
 fn context_string(context: &Map<String, Value>, field: &str) -> Option<String> {

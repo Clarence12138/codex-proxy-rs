@@ -722,6 +722,54 @@ async fn openai_admin_provider_projects_cached_quota_models_and_canonical_export
 }
 
 #[tokio::test]
+async fn openai_admin_quota_refresh_updates_the_account_plan() {
+    let store = Arc::new(MemoryAccountStore::default());
+    let mut verified_account = profile("chatgpt-upgraded-plan");
+    verified_account.plan_type = Some("plus".to_owned());
+    store
+        .seed_oauth_credential(ImportCodexOAuthCredential {
+            account_id: "acct_upgraded_plan".to_owned(),
+            name: "upgraded plan".to_owned(),
+            secret: secret("upgraded-plan-test-token"),
+            verified_account,
+            next_refresh_at: None,
+            enabled: true,
+        })
+        .await;
+    let account = store.account("acct_upgraded_plan").unwrap();
+    let server = MockServer::start().await;
+    Mock::given(method("GET")).and(path("/api/codex/usage"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "plan_type": "pro", "rate_limit": {"allowed": true, "primary_window": {"used_percent": 1}}
+        })))
+        .expect(1).mount(&server).await;
+    let mut config = valid_config();
+    config.config.api.base_url = server.uri();
+    let bundle = provider_openai::initialize(
+        config.config,
+        provider_ports_with(store.clone(), Arc::new(TestOAuthPending::default())),
+    )
+    .await
+    .unwrap();
+    for refresh in [true, false] {
+        let quota = bundle
+            .admin_provider()
+            .quota(ProviderQuotaRequest {
+                account_id: account.id().clone(),
+                refresh,
+                rolling_usage: None,
+            })
+            .await
+            .unwrap();
+        assert_eq!(quota.plan_type.as_deref(), Some("pro"));
+        assert_eq!(
+            store.account("acct_upgraded_plan").unwrap().plan_type(),
+            Some("pro")
+        );
+    }
+}
+
+#[tokio::test]
 async fn openai_admin_projects_free_plan_from_cached_quota_when_account_claims_omit_it() {
     let store = Arc::new(MemoryAccountStore::default());
     let mut verified_account = profile("chatgpt-free-plan");
@@ -740,6 +788,7 @@ async fn openai_admin_projects_free_plan_from_cached_quota_when_account_claims_o
     let observed_at = SystemTime::now();
     store
         .compare_and_swap_quota(QuotaObservation {
+            plan_type: None,
             account_id: account.id().clone(),
             expected_revision: account.revision(),
             quota: OpaqueProviderData::new(
@@ -853,6 +902,7 @@ async fn openai_admin_provider_projects_official_codex_quota_and_independent_buc
     let observed_at = SystemTime::now();
     store
         .compare_and_swap_quota(QuotaObservation {
+            plan_type: None,
             account_id: account.id().clone(),
             expected_revision: account.revision(),
             quota: OpaqueProviderData::new(raw.as_object().expect("quota object").clone()),
@@ -953,6 +1003,7 @@ async fn openai_admin_keeps_confirmed_exhaustion_separate_from_raw_usage_display
     let observed_at = SystemTime::now();
     store
         .compare_and_swap_quota(QuotaObservation {
+            plan_type: None,
             account_id: account.id().clone(),
             expected_revision: account.revision(),
             quota: OpaqueProviderData::new(
@@ -1911,6 +1962,29 @@ mod errors {
         assert_eq!(store.account("acct_refresh_error").unwrap(), before);
     }
 
+    #[tokio::test]
+    async fn manual_token_refresh_prepares_to_preserve_concurrent_profile_changes() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/oauth/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "access_token": "new-access-token", "expires_in": 3600
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let (bundle, store, _config) = refresh_fixture(&server, false, true).await;
+        let before = store.account("acct_refresh_error").unwrap();
+        let prepared = bundle
+            .admin_provider()
+            .prepare_refresh(PrepareCredentialRefresh {
+                account: account_record(&before),
+            })
+            .await
+            .unwrap();
+        assert!(prepared.facts().preserve_profile);
+    }
+
     async fn refresh_fixture(
         server: &MockServer,
         busy: bool,
@@ -1990,4 +2064,79 @@ mod errors {
             })
         }
     }
+}
+
+#[tokio::test]
+async fn api_key_admin_exposes_only_configuration_and_preserves_key_when_rotating_address() {
+    let store = Arc::new(MemoryAccountStore::default());
+    store
+        .seed_api_key(
+            "acct_api_admin",
+            "https://first.example/v1".to_owned(),
+            provider_openai::credential::ApiKeyTransport::Http,
+        )
+        .await;
+    let account = store.account("acct_api_admin").unwrap();
+    let config = valid_config();
+    let bundle = provider_openai::initialize(
+        config.config.clone(),
+        provider_ports_with(Arc::clone(&store), Arc::new(TestOAuthPending::default())),
+    )
+    .await
+    .unwrap();
+    let admin = bundle.admin_provider();
+    let configuration = admin
+        .account_configuration(account.id())
+        .await
+        .unwrap()
+        .unwrap();
+    let configuration = configuration.expose_to_provider().expose_to_provider();
+    assert_eq!(configuration.len(), 2);
+    assert_eq!(
+        configuration.get("base_url"),
+        Some(&json!("https://first.example/v1"))
+    );
+    assert!(!configuration.contains_key("api_key"));
+    let prepared = admin
+        .prepare_rotation(PrepareCredentialRotation {
+            account: account_record(&account),
+            provider_material: ProviderDocument::new(OpaqueProviderData::new(
+                json!({"base_url":"https://second.example/root", "transport":"prefer_websocket"})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            )),
+        })
+        .await
+        .unwrap();
+    let material = prepared
+        .facts()
+        .provider_material
+        .expose_to_provider()
+        .expose_to_provider();
+    assert_eq!(material.get("api_key"), Some(&json!("sk-api-test-only")));
+    assert_eq!(
+        material.get("base_url"),
+        Some(&json!("https://second.example/root"))
+    );
+    assert!(!prepared.facts().has_refresh_token);
+    assert_eq!(prepared.facts().account_id, *account.id());
+    assert_eq!(
+        admin
+            .prepare_refresh(PrepareCredentialRefresh {
+                account: account_record(&account)
+            })
+            .await
+            .unwrap_err()
+            .kind(),
+        ProviderAdminErrorKind::Unsupported
+    );
+    assert_eq!(
+        admin.subscription(account.id()).await.unwrap_err().kind(),
+        ProviderAdminErrorKind::Unsupported
+    );
+    assert_eq!(
+        admin.reset_credits(account.id()).await.unwrap_err().kind(),
+        ProviderAdminErrorKind::Unsupported
+    );
 }

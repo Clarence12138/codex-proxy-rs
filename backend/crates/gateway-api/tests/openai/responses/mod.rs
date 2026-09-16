@@ -371,7 +371,7 @@ fn decoder_should_preserve_ordinary_request_headers_as_opaque_multivalues() {
 }
 
 #[test]
-fn decoder_should_exclude_downstream_transport_headers_from_opaque_context() {
+fn decoder_should_strip_http_transport_but_leave_source_headers_for_provider() {
     let mut headers = HeaderMap::new();
     for name in [
         "cf-visitor",
@@ -407,12 +407,21 @@ fn decoder_should_exclude_downstream_transport_headers_from_opaque_context() {
 
     assert_eq!(
         openai_protocol_context(&decoded).get("opaque_request_headers"),
-        Some(&json!([["x-openai-future-mode", STANDARD.encode(b"keep")]])),
+        Some(&Value::Array(
+            headers
+                .iter()
+                .filter(|(name, _)| !matches!(
+                    name.as_str(),
+                    "accept-encoding" | "content-encoding"
+                ))
+                .map(|(name, value)| json!([name.as_str(), STANDARD.encode(value.as_bytes())]))
+                .collect()
+        )),
     );
 }
 
 #[test]
-fn downstream_client_headers_should_be_removed_without_losing_session_semantics() {
+fn downstream_client_headers_should_remain_opaque_without_losing_session_semantics() {
     for canonical in [None, Some("canonical-session")] {
         let mut headers = HeaderMap::new();
         for name in [
@@ -472,9 +481,18 @@ fn downstream_client_headers_should_be_removed_without_losing_session_semantics(
                 "sec-fetch-site",
                 "session_id",
             ] {
-                assert!(
-                    !entries.iter().any(|entry| entry[0] == name),
-                    "leaked {name}"
+                let values: Vec<_> = entries
+                    .iter()
+                    .filter(|entry| entry[0] == name)
+                    .cloned()
+                    .collect();
+                assert_eq!(
+                    values,
+                    vec![
+                        json!([name, STANDARD.encode(b"alias-session")]),
+                        json!([name, STANDARD.encode(b"duplicate")]),
+                    ],
+                    "source header {name} belongs to the Provider"
                 );
             }
             for name in [
@@ -502,7 +520,7 @@ fn downstream_client_headers_should_be_removed_without_losing_session_semantics(
                 ]
             );
         }
-        // 只过滤向上游投影的副本，CORS、鉴权和观测仍可读取原始请求。
+        // 解码不修改原始请求，CORS、鉴权和本地观测仍可读取原值。
         assert_eq!(headers, original_headers);
     }
 }

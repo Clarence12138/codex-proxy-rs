@@ -301,6 +301,29 @@ export interface AccountImportResponse {
   accountIds: string[]
 }
 
+export type ImportItemStatus = 'pending' | 'running' | 'succeeded' | 'failed' | 'unknown' | 'skipped'
+
+export interface AccountImportTask {
+  taskId: string
+  createdAt: string
+  finishedAt: string | null
+  stopRequested: boolean
+  total: number
+  counts: Record<ImportItemStatus, number> & { importedAccounts: number }
+}
+
+export interface AccountImportTaskItem {
+  index: number
+  provider: string
+  status: ImportItemStatus
+  accountIds: string[]
+  message: string | null
+}
+
+export interface AccountImportTaskDetail extends AccountImportTask {
+  items: AccountImportTaskItem[]
+}
+
 export interface AccountOAuthCompleteResponse {
   accountId: string
 }
@@ -389,6 +412,15 @@ interface AccountImportParam {
   settings?: AccountImportSettings
   provider: string
   data: unknown
+}
+
+interface AccountImportTaskIdParam {
+  taskId: string
+}
+
+interface CreateAccountImportTaskParam {
+  submissionId: string
+  items: AccountImportParam[]
 }
 
 interface AccountOAuthStartParam {
@@ -531,6 +563,39 @@ export function importAccounts(data: AccountImportParam, options: RequestOptions
   })
 }
 
+export function createAccountImportTask(data: CreateAccountImportTaskParam) {
+  return request<AccountImportTask>({
+    url: '/api/admin/accounts/import-tasks',
+    method: 'POST',
+    data,
+  })
+}
+
+export function getAccountImportTasks(options: RequestOptions = {}) {
+  return request<{ items: AccountImportTask[] }>({
+    url: '/api/admin/accounts/import-tasks',
+    method: 'GET',
+    ...options,
+  })
+}
+
+export function getAccountImportTask(data: AccountImportTaskIdParam, options: RequestOptions = {}) {
+  return request<AccountImportTaskDetail>({
+    url: '/api/admin/accounts/import-tasks/detail',
+    method: 'GET',
+    params: data,
+    ...options,
+  })
+}
+
+export function stopAccountImportTask(data: AccountImportTaskIdParam) {
+  return request<AccountImportTaskDetail>({
+    url: '/api/admin/accounts/import-tasks/stop',
+    method: 'POST',
+    data,
+  })
+}
+
 export function updateAccount(data: AccountUpdateParam) {
   return request<AccountUpdateResponse>({
     url: '/api/admin/accounts/update',
@@ -569,5 +634,27 @@ export function completeAccountOAuth(data: AccountOAuthCompleteParam) {
     url: '/api/admin/accounts/oauth/complete',
     method: 'POST',
     data,
+  })
+}
+
+export interface ApiKeyConfiguration {
+  base_url: string
+  transport: 'http' | 'prefer_websocket'
+}
+
+export function getAccountDetail(data: AccountIdParam, options: RequestOptions = {}) {
+  return request<{ account: Account, credentialConfiguration?: ApiKeyConfiguration }>({
+    url: '/api/admin/accounts/detail',
+    method: 'GET',
+    params: data,
+    ...options,
+  })
+}
+
+export function updateAccountApiKey(data: { accountId: string, baseUrl: string, transport: ApiKeyConfiguration['transport'], apiKey?: string, settings?: AccountUpdateParam }) {
+  return request<{ accountId: string }>({
+    url: '/api/admin/accounts/rotate',
+    method: 'POST',
+    data: { provider: 'openai', ...data },
   })
 }

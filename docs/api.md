@@ -166,6 +166,8 @@ Responses 不透传下游的逐跳头、反代元数据（如 `cf-*`、`x-forwar
 `cdn-loop`）以及 `Accept-Encoding` / `Content-Encoding`。链路元数据和编解码能力
 由各段传输层独立管理；其余业务扩展头继续透传，不使用固定业务头白名单。
 此规则同时适用于上游 HTTP 和 WebSocket，不影响上游响应的 `cf-ray` 等诊断信息。
+API Key 上游还会移除 Cookie、ChatGPT 账号身份、`x-codex-*`、`x-openai-internal-*`、会话/线程身份头及
+`X-OpenAI-Actor-Authorization`，避免把 OAuth 或网关托管身份传给第三方 API。
 
 Responses 也不透传下游专属的 `x-stainless-*`、`Origin`、`Referer`、`sec-ch-ua*` 和
 `sec-fetch-*` 请求头，避免将 SDK/浏览器环境或页面来源冒充上游请求事实。规则不依赖下游
@@ -183,7 +185,8 @@ Responses WebSocket 仅接受文本 `response.create`，同一连接串行执行
 留在有界接收队列中，待当前响应完成终结和写出后再逐条校验、准入与执行，不因请求提前到达而断开。
 接收队列容量为 32 个事件，超载仍关闭连接；Ping/Pong、客户端关闭和服务关闭不等待队列中的请求执行。
 
-客户端使用 HTTP/SSE 时，OpenAI Provider 仍可能选择上游 WebSocket。
+OAuth 账号在客户端使用 HTTP/SSE 时仍可能选择上游 WebSocket。API Key 账号默认使用 HTTP/SSE，
+可在账号上配置 `prefer_websocket`；必须依赖 WS 的预热、非持久化新链和连接内续接不使用 HTTP-only 账号。
 客户端配置的 `supports_websockets` 只控制第一段连接，不是服务端传输策略开关。
 上游在响应终态前发送 Close 1000 仍属于失败，不能按“正常关闭”计为成功。
 
@@ -328,9 +331,13 @@ Token 明细、费用明细、用时/首字与状态。Token 和费用复用现�
 | `GET` | `/api/admin/accounts/detail` | `accountId` | 查询账号详情、额度和本地用量 |
 | `GET` | `/api/admin/accounts/export` | `accountIds`、`confirm=export_sensitive_accounts` | 显式导出最多 200 个账号的敏感 Provider 文档 |
 | `POST` | `/api/admin/accounts/import` | `{ provider, data, settings?, outboundProxyId? }` | 导入或按上游身份更新账号，可同时应用调度、分组设置与默认代理 |
+| `POST` | `/api/admin/accounts/import-tasks` | `{ submissionId, items: [{ provider, data, settings?, outboundProxyId? }] }` | 接受后台导入，返回 HTTP 202 和任务摘要 |
+| `GET` | `/api/admin/accounts/import-tasks` | 无 | 当前管理员仍保留的任务，按创建时间倒序 |
+| `GET` | `/api/admin/accounts/import-tasks/detail` | `taskId` | 任务摘要和逐条结果，不含原始凭据 |
+| `POST` | `/api/admin/accounts/import-tasks/stop` | `{ taskId }` | 跳过未开始的条目，已开始的条目继续完成 |
 | `POST` | `/api/admin/accounts/refresh` | `{ accountId }` | 手工刷新 OAuth credential（`idToken` / `accessToken` / `refreshToken`），不刷新额度 |
 | `POST` | `/api/admin/accounts/recover` | `{ accountId }` | 管理员显式清除该账号的本地错误/额度/cooldown 事实并重新启用，不访问上游 |
-| `POST` | `/api/admin/accounts/rotate` | OpenAI rotation 字段 | 手工替换 OpenAI OAuth token |
+| `POST` | `/api/admin/accounts/rotate` | OpenAI rotation 字段 | 更新指定 OpenAI 账号的 OAuth token 或 API Key 上游设置 |
 | `POST` | `/api/admin/accounts/update` | `{ accountId, enabled, concurrencyLimit, weight, groupIds, notes?, modelAccess?, outboundProxyId?, outboundProxyUrl? }` | 一次更新账号备注、调度状态、并发上限（`null` 表示继承运行参数）、权重（1–100）、所属分组与出站代理 |
 | `POST` | `/api/admin/accounts/batch-update` | `{ accountIds, enabled?, concurrencyLimit?, weight?, groupIds?, modelAccess?, outboundProxyId?, outboundProxyUrl? }` | 一次事务更新所选账号；仅修改提供的字段，至少提供一项修改 |
 | `POST` | `/api/admin/accounts/delete` | `{ provider, accountIds }` | 批量删除 1–200 个账号 |
@@ -361,6 +368,8 @@ Token 明细、费用明细、用时/首字与状态。Token 和费用复用现�
 账号视图和 Dashboard 账号概览中的 `planType` 保留原始套餐值；`planTypeDisplay` 由后端先按 Provider 解析名称，
 再统一为大驼峰格式，前端直接展示该字段，例如 `Free`、`SuperGrokPro`、`EduPlus`。
 OpenAI 的 `self_serve_business_prolite` 等 Team 套餐显示为 `Business`；新套餐也使用相同格式。
+OpenAI 主动额度刷新和正常响应携带的明确套餐会同步到账号，支持升级与降级；
+空值或 `unknown` 不覆盖已有套餐，同族泛化值（如 `team`）保留已知的具体套餐子类型。
 账号套餐为空或 `unknown` 时，后端优先用已保存的上游额度响应
 中的明确套餐值补全 `planType` 和 `planTypeDisplay`；两处均无套餐信息时才显示“未知套餐”。
 
@@ -426,7 +435,8 @@ Images、独立 Search 及管理员连接测试不受该文本模型限制；连
 更新省略 `proxyUrl` 保留认证；连接配置改变时清除测试结果并更新所有绑定账号。
 测试结果只在请求中的版本仍匹配时保存。
 
-测试固定经代理访问 `https://api.ipify.org?format=json`，超时 15 秒，每进程最多同时测试 4 条。
+测试固定经代理访问双栈端点 `https://api64.ipify.org?format=json`，返回本次连接实际使用的 IPv4 或 IPv6 出口地址，
+不分别验证两种地址族的连通性。超时 15 秒，每进程最多同时测试 4 条。
 探测器复用 OpenAI 的证书信任配置：优先读取非空的 `CODEX_CA_CERTIFICATE`，
 其次读取 `SSL_CERT_FILE`，并保留系统根证书；证书配置错误不会回退为不验证证书。
 出口测试通过不表示 Provider 账号权限或额度可用；账号可用性使用账号连接测试。
@@ -462,12 +472,33 @@ OAuth 等待回调期间不持有保护；提交仍拒绝已删除、连接配�
 - `error`、`providerErrorCode`、`providerErrorType`、`upstreamStatus`、`upstreamContentType` 和
   `upstreamBody` 是实际捕获的原始诊断字段；缺失时为 `null`，不会由本地猜测或翻译。
 
+### 后台导入任务
+
+管理端通过后台任务导入账号，关闭页面不会取消执行。`submissionId` 为客户端生成的 UUID；同一管理员在任务记录
+保留期间使用相同标识和相同输入重新提交，会返回已有任务，内容改变则返回 409。修改输入须使用新标识。
+
+每个任务接受 1–200 个 `items`，请求体上限为 4 MiB。每个条目沿用下节的 Provider 文档与设置合同，独立调用
+凭据准备、校验、事务提交与快照发布流程。批量 AT / RT 由前端按非空输入顺序拆成单账号条目，因此可逐条统计；
+JSON 文件按 Provider 文档分项，不拆解内部代理引用或改变 Provider 对文档的原子性与部分成功语义。
+一个文档可导入多个账号，条目成功数与入库账号数可能不同。
+
+摘要字段为 `taskId`、`createdAt`、`finishedAt`（未结束为 null）、`stopRequested`、`total`、`counts`。
+`counts` 包含 `pending`、`running`、`succeeded`、`failed`、`unknown`、`skipped` 和 `importedAccounts`。
+详情追加 `items: [{ index, provider, status, accountIds, message }]`，`index` 从 1 开始；`status` 对应上述前六类状态。
+列表返回 `{ items: [摘要] }`。结果未知时保留 `unknown`，先核对账号目录再决定是否重新导入；服务端不自动重试凭据交换。
+停止请求可重复调用，已结束的任务保持原结果；未知、已过期或其他管理员的任务 ID 返回 404。
+
+任务仅保存在单实例进程内，不新增数据库表，也不使用 Redis 保存任务。所有后台导入共享 3 个执行槽位；
+最多接受 8 个未结束任务、保留 100 个任务，达到上限返回 429。成功、失败或跳过后立即释放对应输入，
+终态结果保留 1 小时后自动清理。服务重启会丢失任务与未执行输入，已提交的账号不受影响；
+重新打开页面从服务端恢复当前管理员的任务列表，前端不持久化任务 ID 或凭据。
+
 ### 账号导入与 OAuth
 
 导入的 `data` 必须是 JSON object，Admin API 请求上限为 64 MiB；Provider 可以收紧限制，
 当前 xAI 导入上限为 16 MiB。内部 schema 由目标 Provider 独占解释：
 
-- OpenAI 接受单账号 OAuth 文档、`accounts` 数组（最多 200 项）、CPR 账号 bundle 和含代理引用的 sub2api 导出；
+- OpenAI 接受单账号 OAuth 或 API Key 文档、`accounts` 数组（最多 200 项）、CPR 账号 bundle 和含代理引用的 sub2api 导出；
 - OpenAI OAuth token 字段接受 `accessToken`、`refreshToken`、`idToken`，以及官方
   `auth.json` 中的 `access_token`、`refresh_token`、`id_token`，可以嵌套在 `tokens` 等账号 object 内；
   每项至少包含 AT 或 RT。仅含 `OPENAI_API_KEY` 的客户端代理配置不是 OAuth 账号导入材料；
@@ -477,7 +508,38 @@ OAuth 等待回调期间不持有保护；提交仍拒绝已删除、连接配�
 - xAI 从单账号 object 或 `accounts` 数组中提取 OAuth token；并发、优先级等字段不参与认证；
 - xAI 批量导入逐条独立校验：失败条目跳过并记录日志，不中断其余条目，仅当没有任何条目成功时整个导入才报错；
 - xAI API Key 不是受支持的账号 credential；
-- 导入不会只凭文件外形写入账号；目标 Provider 使用认证材料完成必要的 token exchange 或已认证账号资料补全。
+- OAuth 导入由目标 Provider 完成必要的 token exchange 或身份投影。API Key 导入校验凭据格式与地址，不调用 OAuth 或 ChatGPT 身份接口；可用性由模型目录和连接测试验证。
+
+API Key 账号使用以下独立凭据形态：
+
+```json
+{
+  "provider": "openai",
+  "data": {
+    "authentication_kind": "api_key",
+    "name": "团队上游",
+    "base_url": "https://api.example.com/v1",
+    "api_key": "<upstream-api-key>",
+    "transport": "http"
+  }
+}
+```
+
+`base_url` 是 API 前缀，追加 `responses` 和 `models`，不会自动补 `/v1`；支持根路径和自定义前缀。
+地址仅允许 HTTPS，HTTP 只允许本机回环；拒绝 URL 中的认证信息、查询串和 fragment。
+`transport` 可省略（默认 `http`）或设为 `prefer_websocket`。API Key 使用 Bearer 认证与普通 JSON，
+不携带 OAuth Cookie 或 ChatGPT 身份。上游须提供标准 `/models` 列表，模型目录按账号和凭据版本隔离。
+API Key 每次导入创建独立账号；更新已有账号使用 `rotate`。导出会显式包含密钥，沿用敏感导出的确认合同。
+
+sub2api 的 `platform=openai`、`type=apikey` 使用 `credentials.base_url` / `credentials.api_key`；
+导入时按其端点规则将服务根、版本前缀或完整 `/responses` 地址转换为 API 前缀，缺省地址为官方 `/v1`。
+非空模型映射、请求头覆盖、其他协议和启用的 `extra.openai_*` 设置尚未适配，返回输入错误，需先移除并在本项目重新配置。
+
+API Key 账号支持 Responses、模型目录、连接测试和使用统计中的本地用量。OAuth 刷新/重新授权、ChatGPT 额度、个人资料、订阅、重置卡
+及 Images、standalone Search、Responses Lite / compact 专用入口不对这类账号开放。
+客户端的 `image_generation` 和 `X-OpenAI-Actor-Authorization` 声明不改变账号的实际能力。
+账号列表和详情的 API Key `usage` 汇总该账号创建后仍保留的本地请求记录，`windowLabelDisplay` 为 `通用额度`；
+日志清理会影响累计范围，不代表上游余额。OAuth 账号仍按实际周/月额度窗口统计。
 
 批量导入 AT / RT 使用 `accounts` JSON 数组，最多 200 项，不接受纯文本 token 列表。例如：
 
@@ -500,7 +562,7 @@ RT-only 使用同一形状，只提交 `refreshToken`。不得把真实 token �
 `weight` 为 1–100，`groupIds` 为完整分组集合。设置应用于本次导入的全部账号，包括匹配到的已有账号，
 与凭据在同一事务内提交；分组不存在时整次回滚。省略 `settings` 时新账号使用默认设置并保持未分组，
 已有账号保留原有分组、权重与并发设置。可选 `notes` 与编辑备注使用相同的校验和清空语义，省略或 `null` 保留已有备注；
-管理端新建表单留空时省略 `notes`。重新授权不接受 `settings`，普通 credential refresh/rotation 也保留账号设置。
+管理端新建表单留空时省略 `notes`。重新授权不接受 `settings`，credential refresh 和未携带 `settings` 的 rotation 保留账号设置。
 
 账号列表的每个 item 返回轻量 `groups: [{ id, name, enabled }]`。
 
@@ -520,6 +582,13 @@ OpenAI rotation 请求字段为：
   "refreshToken": "..."
 }
 ```
+
+API Key rotation 使用 `{ provider: "openai", accountId, baseUrl, transport, apiKey?, settings? }`。
+省略 `apiKey` 保留当前密钥，空字符串无效；账号 ID 和认证类型不能通过轮换转换。
+rotation 可选携带 `settings`，字段与 `POST /api/admin/accounts/update` 相同，其中 `accountId` 必须与外层一致。
+凭据与设置在同一事务中保存，任一校验或持久化失败均不落库；省略 `settings` 保留现有分组、调度等设置。
+`GET /api/admin/accounts/detail` 对 API Key 账号额外返回 `credentialConfiguration: { base_url, transport }`，不回显密钥。
+更新会推进凭据 revision 并失效目录与连接；旧版本会话不可静默续接到新上游。
 
 OAuth start 使用：
 
@@ -556,7 +625,7 @@ OAuth start 使用：
   `refreshToken`。刷新响应中的三个 token 字段均按官方语义独立轮换：返回新值时替换，省略时分别保留
   现值。重新授权也保留这些回调保护，但只轮换目标账号的 token。回调地址只承载 `code`/`state`，
   不以 host/path 形式作为拒绝条件。
-- 账号文件导入和 OAuth complete（包括重新授权）在 credential 提交后后台尝试一次额度观测，不等待
+- OAuth 账号文件导入和 OAuth complete（包括重新授权）在 credential 提交后后台尝试一次额度观测，不等待
   观测完成才返回成功。观测失败只记录告警，不回滚已提交的账号；手工或后台 RT 刷新只更新 token，
   不隐式等同于手工额度刷新，也不更新既有账号资料或 OAuth principal。xAI 导入与 OAuth complete
   使用相同的提交后观察流程。

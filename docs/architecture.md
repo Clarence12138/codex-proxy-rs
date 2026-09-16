@@ -186,12 +186,20 @@ Images 与 standalone Search 是 OpenAI Provider 自有端点：两者都不参�
 Core 只理解 `Operation`、能力要求、Provider 候选、稳定错误和 canonical event，不读取 Provider SDK
 类型。Provider 独占 credential schema、OAuth、账号选择、模型目录、额度投影和上游 transport。
 
+OpenAI 的 OAuth 与 API Key 共用现有账号和事务。API Key 的 Base URL、密钥和传输策略属于 Provider 凭据 JSON，
+随 credential revision 更新；普通详情只投影非敏感连接设置。API Key 目录按账号和凭据版本隔离，标准 API 模型列表
+通过通用画像输出客户端目录，OAuth 原生对象保留。通用账号层按 Provider 提交的 credential state 调度，不以是否存在
+上游用户 ID 推断可用性；OAuth 未完成身份投影时由 Provider 保持 `unknown`。状态恢复和未补齐身份的凭据轮换保留 `unknown`。
+API Key 默认 HTTP/SSE，可选 WS 优先；选号先验证传输资格，WS pool 与 continuation 按凭据版本隔离。
+
+
 - OpenAI 是透明边界。Responses 请求保留未知字段和字段顺序；SSE、WebSocket、Images 与 standalone
   Search 的业务正文按原始字节转发。canonical facts 从同一数据旁路提取，只用于路由、观测和计费。
-- Responses 的业务扩展头保留原始多值字节；`gateway-protocol` 分别定义传输/反代头和下游专属头
-  的分类。API 先提取会话语义，再过滤向上游投影的副本；OpenAI Provider 编码与最终 HTTP/WS
-  组装同样过滤下游 SDK/浏览器环境头，不能只依赖某个 HTTP 入口或客户端 UA。
-  下游链路元数据和压缩协商不跨越该边界，上游认证、请求画像与传输字段仍由 Provider 生成。
+- Responses 的业务扩展头保留原始多值字节。API 负责剥离鉴权、账号身份和 HTTP 传输字段，
+  并提取会话语义；`gateway-protocol` 共享 HTTP 传输与网关链路字段分类。来源相关的透传规则集中在
+  `providers/openai/src/transport/downstream/headers.rs`，Provider 从不透明上下文解码时统一过滤
+  反代、SDK、浏览器及其他 Provider 的私有头，HTTP/SSE 与 WebSocket 共用这一边界。
+  官方上游认证、请求画像与传输字段仍由 `transport/headers.rs` 生成。
   会话别名只规范化请求头，不清除正文身份字段；未知业务扩展与响应诊断头不受影响，字段见
   [Responses 合同](api.md#3-openai-数据面与模型目录)。提示词、工具及业务正文不做客户端品牌清洗。
 - xAI 是翻译边界。Provider 把 Grok wire 转换为 Responses wire；上游结构化错误的 message/code/type
@@ -203,6 +211,16 @@ Core 只理解 `Operation`、能力要求、Provider 候选、稳定错误和 ca
 xAI Provider 负责 Codex custom 工具与 Grok function 工具的双向转换，保持工具类型、item ID 与
 `call_id` 配对；超限或转换失败终止流。默认 `store: false` 的续接由现有会话 owner 重放完整历史；
 原生续接按上游约束处理 `instructions` 与 `previous_response_id`，不把协议差异交给 Core。
+
+### 后台账号导入
+
+Admin 拥有进程内导入任务、管理员归属、条目状态与有界队列，以 `account_import` Daemon 贡献给 Host。
+API 只校验任务信封、生成完整输入摘要并投影安全结果，不解释 Provider 文档；每个执行条目复用已有
+OpenAI / xAI 导入用例。并发槽位由单个 Worker 统一管理，条目状态是进度统计的唯一来源。
+停止只跳过待执行输入；Host 关闭时停止接收新任务并在关闭预算内等待已开始条目完成。
+完成或跳过即释放原始输入，终态记录有时限和数量上限，不写 PostgreSQL 或 Redis。
+前端通过当前管理员的任务列表恢复视图，轮询与任务执行互不拥有生命周期。接口、限额与重启语义见
+[后台导入任务](api.md#后台导入任务)。
 
 ### 账号出站代理
 
@@ -419,6 +437,8 @@ credential 与 quota 是两组独立事实：credential refresh 不等于 quota 
   手工和后台 credential refresh 仍不隐式刷新 quota。
 - quota refresh、正常推理返回的 rate-limit headers 和后台健康任务汇入同一额度事实；套餐只用于展示与
   目录 cache 隔离，不创建套餐专属状态机。
+  OpenAI Provider 将其中明确的套餐变更与额度原子提交，共用凭据版本和观察时间保护；
+  空值及 `unknown` 不覆盖套餐，同族泛化值保留具体子类型。Token 刷新保留提交时的账号资料。
 
 OpenAI 订阅周期属于按需个人信息，不是额度事实。Admin 账号用例通过现有 Provider 管理端口并发读取
 个人资料统计与订阅，汇聚为一次只读响应；Provider 继续拥有各自的认证、出站代理与上游协议处理。

@@ -62,6 +62,49 @@ impl MemoryAccountStore {
             .expect("seed test OAuth credential");
     }
 
+    pub(crate) async fn seed_api_key(
+        &self,
+        id: &str,
+        base_url: String,
+        transport: provider_openai::credential::ApiKeyTransport,
+    ) {
+        let credential = provider_openai::credential::CodexCredentialCodec::encode_complete(
+            provider_openai::credential::CodexCredentialData::ApiKey(
+                provider_openai::credential::ApiKeyCredentialData {
+                    schema_version: 1,
+                    installation_id: uuid::Uuid::new_v4().to_string(),
+                    base_url,
+                    api_key: "sk-api-test-only".to_owned(),
+                    transport,
+                },
+            ),
+        )
+        .expect("API Key schema");
+        let account = ProviderAccount::new(
+            ProviderAccountId::new(id).expect("id"),
+            ProviderKind::new("openai").expect("kind"),
+            id.to_owned(),
+            None,
+            "api_key".to_owned(),
+            CredentialRevision::new(1).expect("revision"),
+            None,
+        )
+        .with_account_facts(
+            true,
+            CredentialState::Ready,
+            QuotaState::unknown(),
+            None,
+            None,
+        );
+        self.create_account(NewProviderAccount {
+            account,
+            credential,
+            model_access: None,
+        })
+        .await
+        .expect("seed API account");
+    }
+
     pub(crate) fn account(&self, id: &str) -> Option<ProviderAccount> {
         let id = ProviderAccountId::new(id).ok()?;
         self.accounts
@@ -166,12 +209,13 @@ impl ProviderAccountStore for MemoryAccountStore {
         if self.fail_provider_listing.load(Ordering::SeqCst) {
             return Err(store_error(StoreErrorKind::Unavailable));
         }
+        // 与 Postgres 实现的调度列表语义一致：停用账号不进入常规候选。
         Ok(self
             .accounts
             .lock()
             .expect("account store lock")
             .values()
-            .filter(|stored| stored.account.provider() == provider)
+            .filter(|stored| stored.account.provider() == provider && stored.account.enabled())
             .map(|stored| stored.account.clone())
             .collect())
     }
@@ -235,6 +279,7 @@ impl ProviderAccountStore for MemoryAccountStore {
             account_id,
             expected_revision,
             profile,
+            preserve_profile,
             credential,
             has_refresh_token,
             access_token_expires_at,
@@ -277,7 +322,11 @@ impl ProviderAccountStore for MemoryAccountStore {
                 access_token_expires_at,
                 has_refresh_token,
                 next_refresh_at,
-                profile: Some((profile.name, profile.email, profile.plan_type)),
+                profile: (!preserve_profile).then_some((
+                    profile.name,
+                    profile.email,
+                    profile.plan_type,
+                )),
             },
         );
         stored.credential = credential;
@@ -319,11 +368,16 @@ impl ProviderAccountStore for MemoryAccountStore {
             return Ok(QuotaWriteOutcome::Conflict);
         }
         let quota = observation.state;
+        let mut replacement = AccountRebuild::preserving(&stored.account).with_quota(quota);
+        if let Some(plan_type) = &observation.plan_type {
+            replacement.profile = Some((
+                stored.account.name().to_owned(),
+                stored.account.email().map(str::to_owned),
+                Some(plan_type.clone()),
+            ));
+        }
         stored.quota = Some(observation);
-        stored.account = rebuild_account(
-            &stored.account,
-            AccountRebuild::preserving(&stored.account).with_quota(quota),
-        );
+        stored.account = rebuild_account(&stored.account, replacement);
         Ok(QuotaWriteOutcome::Updated)
     }
 

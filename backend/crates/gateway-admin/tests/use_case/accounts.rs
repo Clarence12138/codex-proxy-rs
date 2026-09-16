@@ -67,6 +67,7 @@ pub(super) struct FakeProviderAdmin {
     kind: ProviderKind,
     events: EventLog,
     failure: Mutex<Option<ProviderAdminError>>,
+    import_gate: Mutex<Option<Arc<tokio::sync::Semaphore>>>,
     quota_failure: Mutex<Option<ProviderAdminErrorKind>>,
     pending: Arc<Mutex<Option<PendingAuthorizationMutation>>>,
     retry_authorization_after_abort: Mutex<bool>,
@@ -90,6 +91,7 @@ impl FakeProviderAdmin {
             kind: ProviderKind::new(kind).expect("provider kind"),
             events,
             failure: Mutex::new(None),
+            import_gate: Mutex::new(None),
             quota_failure: Mutex::new(None),
             pending: Arc::new(Mutex::new(None)),
             retry_authorization_after_abort: Mutex::new(false),
@@ -106,6 +108,12 @@ impl FakeProviderAdmin {
             subscription_result: Mutex::new(Ok(None)),
             personal_info_barrier: Mutex::new(None),
         })
+    }
+
+    pub(super) fn block_imports(&self) -> Arc<tokio::sync::Semaphore> {
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        *self.import_gate.lock().expect("import gate") = Some(gate.clone());
+        gate
     }
 
     pub(super) fn fail_next(&self, kind: ProviderAdminErrorKind) {
@@ -235,6 +243,7 @@ impl FakeProviderAdmin {
                 name: account.name.clone(),
                 email: account.email.clone(),
                 plan_type: account.plan_type.clone(),
+                preserve_profile: false,
                 provider_material: document(),
                 has_refresh_token: account.has_refresh_token,
                 access_token_expires_at: account
@@ -332,6 +341,10 @@ impl ProviderAdmin for FakeProviderAdmin {
         _command: PrepareCredentialImport,
     ) -> Result<PreparedCredentialImport, ProviderAdminError> {
         self.record("provider.prepare_import");
+        let gate = self.import_gate.lock().expect("import gate").clone();
+        if let Some(gate) = gate {
+            gate.acquire().await.expect("import permit").forget();
+        }
         self.require_available()?;
         let account_ids = self
             .import_account_ids
@@ -1954,6 +1967,52 @@ async fn quota_forecast_mid_cycle_sampling_accepts_small_reset_jitter_but_not_a_
             .unwrap()
             .contains("不连续")
     );
+}
+
+#[tokio::test]
+async fn api_key_list_and_detail_should_accumulate_local_usage_without_subscription_windows() {
+    let provider = FakeProviderAdmin::new("openai", events());
+    let mut account = account_record("openai");
+    account.authentication_kind = "api_key".to_owned();
+    account.created_at = Utc::now() - TimeDelta::days(60);
+    let added_at = account.created_at;
+    let store = FakeAccountStore::with_account(account, events());
+    store.set_quota_window_usage(vec![AccountUsageWindowResult {
+        account_id: "acct_test".to_owned(),
+        key: "account-lifetime".to_owned(),
+        usage: quota_local_usage("acct_test", 4_330_000),
+    }]);
+    let services = accounts_service(provider, store.clone()).await;
+    let page = services
+        .accounts()
+        .list(AccountListQuery {
+            page: 1,
+            page_size: gateway_admin::model::PageSize::new(20).unwrap(),
+            provider_kind: None,
+            group_filter: None,
+            search: None,
+            status: None,
+            sort: None,
+        })
+        .await
+        .unwrap();
+    assert!(page.items[0].quota.windows.is_empty());
+    assert_eq!(
+        page.items[0].usage.as_ref().unwrap().total_tokens,
+        Some(4_330_000)
+    );
+    let queries = store.quota_window_queries();
+    assert_eq!(queries.len(), 1);
+    assert_eq!(queries[0].range.start, added_at);
+    assert!(queries[0].range.end > added_at + TimeDelta::days(59));
+    let detail = services
+        .accounts()
+        .quota(&ProviderAccountId::new("acct_test").unwrap(), false)
+        .await
+        .unwrap();
+    assert_eq!(detail.usage, page.items[0].usage);
+    assert!(detail.quota.windows.is_empty());
+    assert_eq!(store.quota_window_queries()[0].range.start, added_at);
 }
 
 #[tokio::test]
