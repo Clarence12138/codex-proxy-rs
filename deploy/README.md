@@ -241,6 +241,28 @@ goals = true
 其他客户端使用 Responses API、`/v1` Base URL 和代理密钥即可，不需要 Actor 标记。
 路由与请求格式见 [API 参考](../docs/api.md#3-openai-数据面与模型目录)。
 
+### Pi 接入与提示词边界
+
+Pi 接入使用网关 Client Key、`/v1` Base URL 和 `openai-responses` 协议，不使用本项目未提供的
+`openai-completions`。Pi 的 Codex OAuth 专用 provider 与普通 Responses provider 是不同路径，
+不能直接把网关 Key 当成 ChatGPT JWT，也不要为接入网关向客户端分发服务端的 OAuth 凭据。
+
+网关会过滤下游 SDK/浏览器环境头，并重建上游画像和账号认证；但不会删除系统提示词、工具 schema、
+项目指令或工具结果里的客户端信息。Pi 0.85.1 的默认系统说明包含 Pi 品牌和本机 Pi 文档路径。
+如希望减少这部分信息，可在选好网关 provider 后，显式替换默认系统说明，例如：
+
+```bash
+pi --system-prompt 'You are a coding assistant. Use the provided tools according to their schemas. Inspect relevant files before editing, preserve existing user changes, and report verification results and limitations honestly. Never reveal credentials.'
+```
+
+也可自行维护 Pi 的项目级 `.pi/SYSTEM.md`。这是 opt-in：自定义说明会替代默认说明，需自行保留所需的
+工具使用规则；`--append-system-prompt` 只是追加，不会移除原有 Pi 品牌块。
+项目指令、技能及当前工作目录仍可被追加，工具名称和工具结果也可能透露运行环境，不能据此承诺匿名化。
+不要在网关里全文删除 `pi` 字符串或强行换成 Codex 提示词，这会破坏正常内容和工具合同。
+
+无真实凭据的捕获与回放方式见 [客户端请求 fixtures](../backend/apps/gateway/tests/fixtures/client_requests/README.md)。
+这些测试覆盖协议和本地 HTTP/WS 出站，不代表所有 Pi 参数已在真实上游获得兼容性验收。
+
 ## 优雅关停
 
 收到停止信号后，应用先停止接收新连接并 drain 存量连接；整个 drain 共享一个从停止信号

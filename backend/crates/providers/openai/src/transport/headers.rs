@@ -2,6 +2,7 @@
 
 use gateway_protocol::openai::{
     X_OPENAI_INTERNAL_CODEX_RESPONSES_LITE_HEADER, X_OPENAI_MEMGEN_REQUEST_HEADER,
+    is_downstream_only_request_header,
 };
 use reqwest::header::{
     ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue, USER_AGENT,
@@ -182,6 +183,10 @@ impl CodexBackendClient {
         };
         insert_optional_protocol_header(&mut headers, "x-codex-routing-hint", Some(&routing_hint));
         for name in request.passthrough_headers.keys() {
+            // 最终出站也约束内部直接构造的 passthrough_headers，不只信任编码入口。
+            if is_downstream_only_request_header(name.as_str()) {
+                continue;
+            }
             // 身份与传输字段只由画像/正文生成；其余协议头保留原始多值字节。
             if matches!(
                 name.as_str(),

@@ -26,6 +26,17 @@ const DOWNSTREAM_TRANSPORT_HEADERS: &[(&str, &str)] = &[
     ("content-encoding", "downstream-encoding"),
 ];
 
+const DOWNSTREAM_CLIENT_HEADERS: &[(&str, &str)] = &[
+    ("X-Stainless-Runtime", "node"),
+    ("x-stainless-future-field", "sdk-detail"),
+    ("Origin", "https://client.invalid"),
+    ("Referer", "https://client.invalid/workspace"),
+    ("Sec-Ch-Ua", "synthetic-browser"),
+    ("sec-ch-ua-platform", "synthetic-platform"),
+    ("Sec-Fetch-Site", "same-origin"),
+    ("session_id", "synthetic-alias"),
+];
+
 fn request_with_opaque_headers(use_websocket: bool) -> CodexResponsesRequest {
     let mut context = Map::from_iter([
         (
@@ -80,6 +91,7 @@ fn request_with_opaque_headers(use_websocket: bool) -> CodexResponsesRequest {
         .extend(
             DOWNSTREAM_TRANSPORT_HEADERS
                 .iter()
+                .chain(DOWNSTREAM_CLIENT_HEADERS)
                 .map(|(name, value)| json!([name, STANDARD.encode(value.as_bytes())])),
         );
     let payload = ProtocolPayload::json_object(
@@ -393,6 +405,7 @@ async fn backend_http_should_preserve_business_headers_without_downstream_transp
         write_completed_sse_response(&mut stream).await;
         request
     });
+    // 不经 API 解码，直接构造协议上下文，验证 Provider 自身的过滤边界。
     let request = request_with_opaque_headers(false);
     let profile = test_wire_profile();
     let profile_snapshot = profile.snapshot();
@@ -424,6 +437,9 @@ async fn backend_http_should_preserve_business_headers_without_downstream_transp
         .expect("opaque HTTP response");
     let raw = server.await.expect("opaque HTTP server task");
 
+    for &(name, _) in DOWNSTREAM_CLIENT_HEADERS {
+        assert!(raw_header_values(&raw, name).is_empty(), "leaked {name}");
+    }
     for &(name, _) in DOWNSTREAM_TRANSPORT_HEADERS {
         // HTTP 正文由 transport 重编码为 zstd，不能沿用下游 Content-Encoding。
         if name == "content-encoding" {
@@ -561,7 +577,10 @@ async fn backend_websocket_should_preserve_business_headers_without_downstream_t
             .collect::<Vec<_>>()
     };
 
-    for (name, _) in DOWNSTREAM_TRANSPORT_HEADERS {
+    for (name, _) in DOWNSTREAM_TRANSPORT_HEADERS
+        .iter()
+        .chain(DOWNSTREAM_CLIENT_HEADERS)
+    {
         assert!(values(name).is_empty(), "unexpected {name}");
     }
     assert!(

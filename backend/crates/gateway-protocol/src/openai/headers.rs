@@ -1,5 +1,17 @@
 //! OpenAI 请求头的业务协议与传输边界。
 
+/// 下游专属信息不属于上游请求事实；调用方须传入 HeaderName 规范化后的小写名称。
+///
+/// 会话别名 `session_id` 先由入站提取语义，再通过规范 `session-id` 输出，
+/// 不能作为不透明头产生第二份会话身份。此规则不涉及正文中的同名字段。
+#[must_use]
+pub fn is_downstream_only_request_header(name: &str) -> bool {
+    name.starts_with("x-stainless-")
+        || name.starts_with("sec-ch-ua")
+        || name.starts_with("sec-fetch-")
+        || matches!(name, "origin" | "referer" | "session_id")
+}
+
 /// 判断小写请求头是否属于传输层管理的字段，不得作为业务扩展头透传。
 ///
 /// API 入站和 Provider 编码共用此分类；`Connection` 动态声明的逐跳头由入站额外剥离。

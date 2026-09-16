@@ -412,6 +412,102 @@ fn decoder_should_exclude_downstream_transport_headers_from_opaque_context() {
 }
 
 #[test]
+fn downstream_client_headers_should_be_removed_without_losing_session_semantics() {
+    for canonical in [None, Some("canonical-session")] {
+        let mut headers = HeaderMap::new();
+        for name in [
+            "X-Stainless-Runtime",
+            "x-stainless-future-field",
+            "Origin",
+            "Referer",
+            "Sec-Ch-Ua",
+            "sec-ch-ua-platform",
+            "Sec-Fetch-Site",
+            "session_id",
+        ] {
+            headers.append(name, HeaderValue::from_static("alias-session"));
+            headers.append(name, HeaderValue::from_static("duplicate"));
+        }
+        if let Some(session) = canonical {
+            headers.insert("session-id", HeaderValue::from_static(session));
+        }
+        for name in [
+            "thread-id",
+            "x-client-request-id",
+            "traceparent",
+            "tracestate",
+        ] {
+            headers.insert(name, HeaderValue::from_static("keep"));
+        }
+        headers.append("x-future-business", HeaderValue::from_static("first"));
+        headers.append(
+            "x-future-business",
+            HeaderValue::from_bytes(b"\x80\xff").unwrap(),
+        );
+        let original_headers = headers.clone();
+        let body = json!({
+            "model": "smart-code", "input": "中文 pi 内容不能被请求头过滤改写",
+            "prompt_cache_key": "synthetic-cache",
+            "client_metadata": {"session_id": "body-session"}
+        });
+        let mut frame = body.clone();
+        frame["type"] = json!("response.create");
+        let opening = OpenAiRequestHeaders::from_headers(&headers);
+        for decoded in [
+            decode_request_with_headers(body.to_string().as_bytes(), &headers).unwrap(),
+            decode_response_create_with_context(&frame.to_string(), &opening).unwrap(),
+            decode_response_create_with_context(&frame.to_string(), &opening).unwrap(),
+        ] {
+            assert_eq!(openai_wire_body(&decoded), body.as_object().unwrap());
+            let context = openai_protocol_context(&decoded);
+            assert_eq!(context["session_id"], canonical.unwrap_or("alias-session"));
+            let entries = context["opaque_request_headers"].as_array().unwrap();
+            for name in [
+                "x-stainless-runtime",
+                "x-stainless-future-field",
+                "origin",
+                "referer",
+                "sec-ch-ua",
+                "sec-ch-ua-platform",
+                "sec-fetch-site",
+                "session_id",
+            ] {
+                assert!(
+                    !entries.iter().any(|entry| entry[0] == name),
+                    "leaked {name}"
+                );
+            }
+            for name in [
+                "thread-id",
+                "x-client-request-id",
+                "traceparent",
+                "tracestate",
+            ] {
+                assert!(
+                    entries
+                        .iter()
+                        .any(|entry| entry == &json!([name, STANDARD.encode(b"keep")]))
+                );
+            }
+            let future: Vec<_> = entries
+                .iter()
+                .filter(|entry| entry[0] == "x-future-business")
+                .cloned()
+                .collect();
+            assert_eq!(
+                future,
+                vec![
+                    json!(["x-future-business", STANDARD.encode(b"first")]),
+                    json!(["x-future-business", STANDARD.encode(b"\x80\xff")]),
+                ]
+            );
+        }
+        // 只过滤向上游投影的副本，CORS、鉴权和观测仍可读取原始请求。
+        assert_eq!(headers, original_headers);
+    }
+}
+
+#[test]
 fn decoder_should_preserve_unknown_nested_values_without_debug_disclosure() {
     let secret = "nested-private-value";
     let decoded = generate_request(json!({

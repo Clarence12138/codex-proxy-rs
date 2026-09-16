@@ -427,3 +427,419 @@ fn parse_config(config: &str) -> Result<(GatewayConfig, tempfile::TempDir), Stri
         .map_err(|error| error.to_string())?;
     Ok((config, directory))
 }
+
+// 组合根连接真实 API decoder、OpenAI encoder 与 transport；不把测试所需的
+// 具体 Provider 依赖倒灌进 API，也不把此协议验证宣称为存储/调度/计费验收。
+const PI_WIRE_FIXTURE: &str = include_str!("fixtures/client_requests/pi-0.85.1.json");
+const DESKTOP_WIRE_FIXTURE: &str =
+    include_str!("fixtures/client_requests/desktop-26.908.40834.json");
+
+type WireHeaders = tokio_tungstenite::tungstenite::http::HeaderMap;
+
+#[derive(Clone, serde::Deserialize)]
+struct ClientWireTurn {
+    headers: Vec<(String, String)>,
+    body: serde_json::Value,
+    response_events: Vec<serde_json::Value>,
+}
+
+#[derive(Clone, serde::Deserialize)]
+struct ClientWireSample {
+    name: String,
+    transport: String,
+    prompt_kind: String,
+    turns: Vec<ClientWireTurn>,
+}
+
+#[derive(serde::Deserialize)]
+struct ClientWireFixture {
+    samples: Vec<ClientWireSample>,
+}
+
+fn desktop_capture_profile() -> provider_openai::transport::profile::CodexWireProfile {
+    let capture: serde_json::Value = serde_json::from_str(DESKTOP_WIRE_FIXTURE).unwrap();
+    let config: provider_openai::config::CodexWireProfileConfig =
+        serde_json::from_value(capture["profile"].clone()).unwrap();
+    assert_eq!(config.originator, "Codex Desktop");
+    assert_eq!(config.codex_version, "0.154.0-alpha.6.2");
+    assert_eq!(config.desktop_version, "26.908.40834");
+    assert_eq!(config.desktop_build, "8881");
+    config.into()
+}
+
+#[tokio::test]
+async fn pi_wire_replay_should_minimize_headers_and_preserve_tools_and_prompts() {
+    let fixture: ClientWireFixture = serde_json::from_str(PI_WIRE_FIXTURE).unwrap();
+    assert_eq!(fixture.samples.len(), 6);
+    for sample in &fixture.samples {
+        assert_eq!(sample.turns.len(), 2);
+        let first = &sample.turns[0].body;
+        let prompt = first["instructions"]
+            .as_str()
+            .unwrap_or_else(|| first["input"][0]["content"].as_str().unwrap());
+        assert_eq!(
+            prompt.contains("operating inside pi"),
+            sample.prompt_kind == "default"
+        );
+        assert_eq!(
+            prompt.contains("Pi documentation"),
+            sample.prompt_kind == "default"
+        );
+        let second = sample.turns[1].body.to_string();
+        assert!(second.contains("function_call_output"));
+        assert!(second.contains("合成文件内容：hello pi"));
+        for upstream_ws in [false, true] {
+            for add_environment_headers in [false, true] {
+                replay_client_wire(sample, upstream_ws, add_environment_headers).await;
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn desktop_bundled_core_wire_replay_should_preserve_its_protocol_fields() {
+    let fixture: ClientWireFixture = serde_json::from_str(DESKTOP_WIRE_FIXTURE).unwrap();
+    assert_eq!(fixture.samples.len(), 2);
+    for sample in &fixture.samples {
+        // Desktop WS 样本含 generate=false 预热和 connection-local continuation，
+        // 不强迫它走 HTTP；沿真实捕获的传输和帧顺序验证。
+        replay_client_wire(sample, sample.transport == "websocket", false).await;
+    }
+}
+
+async fn replay_client_wire(
+    sample: &ClientWireSample,
+    upstream_ws: bool,
+    add_environment_headers: bool,
+) {
+    use gateway_api::openai::responses::{
+        OpenAiRequestHeaders, decode_request_with_headers, decode_response_create_with_context,
+    };
+    use gateway_core::operation::Operation;
+    use provider_openai::transport::profile::CodexWireProfileState;
+    use provider_openai::transport::{
+        CodexBackendClient, CodexRequestContext, CodexWebSocketPool, build_reqwest_client,
+        encode_generate_request,
+    };
+    use serde_json::json;
+    use std::{sync::Arc, time::Duration};
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let turns = sample.turns.clone();
+    let capture = tokio::spawn(async move {
+        if upstream_ws {
+            capture_wire_websocket(listener, turns).await
+        } else {
+            capture_wire_http(listener, turns).await
+        }
+    });
+    let profile = desktop_capture_profile();
+    let backend = CodexBackendClient::new(
+        build_reqwest_client().unwrap(),
+        format!("http://{address}/backend-api"),
+        CodexWireProfileState::new(profile.clone()),
+    )
+    .with_websocket_pool(Arc::new(CodexWebSocketPool::new(Duration::from_secs(60))));
+    let mut expectations = Vec::new();
+    for (index, turn) in sample.turns.iter().enumerate() {
+        let mut headers = WireHeaders::new();
+        for (name, value) in &turn.headers {
+            headers.append(
+                name.parse::<tokio_tungstenite::tungstenite::http::HeaderName>()
+                    .unwrap(),
+                value.parse().unwrap(),
+            );
+        }
+        let mut expected_body = turn.body.clone();
+        if add_environment_headers {
+            for name in [
+                "X-Stainless-Runtime",
+                "x-stainless-future-field",
+                "Origin",
+                "Referer",
+                "Sec-Ch-Ua",
+                "sec-ch-ua-platform",
+                "Sec-Fetch-Site",
+            ] {
+                headers.append(name, "synthetic-environment".parse().unwrap());
+                headers.append(name, "duplicate".parse().unwrap());
+            }
+            headers.append("x-future-business", "first".parse().unwrap());
+            headers.append("x-future-business", "second".parse().unwrap());
+            headers.insert("traceparent", "synthetic-trace".parse().unwrap());
+            headers.insert("tracestate", "synthetic-state".parse().unwrap());
+            expected_body["future_business"] = json!({"text": "中文 pi 扩展字段"});
+        }
+        let decoded = if sample.transport == "websocket" {
+            decode_response_create_with_context(
+                &expected_body.to_string(),
+                &OpenAiRequestHeaders::from_headers(&headers),
+            )
+            .unwrap()
+        } else {
+            // fixture 保存解压后的正文；回放时重建原始入站压缩，而非移除压缩头。
+            let bytes = serde_json::to_vec(&expected_body).unwrap();
+            let bytes = if headers
+                .get("content-encoding")
+                .is_some_and(|value| value == "zstd")
+            {
+                zstd::stream::encode_all(bytes.as_slice(), 3).unwrap()
+            } else {
+                bytes
+            };
+            decode_request_with_headers(&bytes, &headers).unwrap()
+        };
+        let Operation::Generate(generate) = decoded.operation() else {
+            panic!("Generate operation")
+        };
+        let mut request = encode_generate_request(generate, "gpt-5.5", None).unwrap();
+        request.use_websocket = upstream_ws;
+        request.force_http_sse = !upstream_ws;
+        request.local_conversation_id = Some(sample.name.clone());
+        let context = CodexRequestContext {
+            session_id: request.client_session_id.as_deref(),
+            thread_id: request.client_thread_id.as_deref(),
+            client_request_id: request.client_request_id.as_deref(),
+            turn_state: request.turn_state.as_deref(),
+            turn_metadata: request.turn_metadata.as_deref(),
+            beta_features: request.beta_features.as_deref(),
+            codex_window_id: request.codex_window_id.as_deref(),
+            parent_thread_id: request.parent_thread_id.as_deref(),
+            ..CodexRequestContext::auxiliary(
+                "Bearer synthetic-upstream-token",
+                Some("synthetic-upstream-account"),
+                "synthetic-request",
+                None,
+            )
+        };
+        let response_body = tokio::time::timeout(Duration::from_secs(10), async {
+            use futures::StreamExt as _;
+            let mut response = backend
+                .create_response_stream_with_pool_account(
+                    &request,
+                    context,
+                    Some("synthetic-upstream-account"),
+                )
+                .await
+                .unwrap_or_else(|error| {
+                    panic!("{} turn {index}, WS={upstream_ws}: {error}", sample.name)
+                });
+            let mut bytes = Vec::new();
+            while let Some(chunk) = response.body.next().await {
+                bytes.extend_from_slice(&chunk.unwrap());
+            }
+            String::from_utf8(bytes).unwrap()
+        })
+        .await
+        .unwrap();
+        for event in &turn.response_events {
+            assert!(
+                response_body.contains(&event.to_string()),
+                "lost event in {}",
+                sample.name
+            );
+        }
+        expected_body.as_object_mut().unwrap().remove("type");
+        expected_body["stream"] = json!(true);
+        for name in ["max_output_tokens", "temperature"] {
+            expected_body.as_object_mut().unwrap().remove(name);
+        }
+        expectations.push((
+            expected_body,
+            request.client_session_id.clone(),
+            request.client_thread_id.clone(),
+        ));
+    }
+    let observed = tokio::time::timeout(Duration::from_secs(10), capture)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(observed.len(), expectations.len());
+    for ((headers, mut body), (mut expected, session, thread)) in
+        observed.into_iter().zip(expectations)
+    {
+        for name in headers.keys() {
+            let name = name.as_str();
+            assert!(
+                !name.starts_with("x-stainless-")
+                    && !name.starts_with("sec-ch-ua")
+                    && !name.starts_with("sec-fetch-")
+                    && !matches!(name, "origin" | "referer" | "session_id"),
+                "leaked {name} in {}",
+                sample.name
+            );
+        }
+        assert_eq!(headers["user-agent"], profile.user_agent());
+        assert_eq!(headers["originator"], "Codex Desktop");
+        assert_eq!(headers["version"], profile.codex_version);
+        assert_eq!(headers["authorization"], "Bearer synthetic-upstream-token");
+        assert_eq!(headers["chatgpt-account-id"], "synthetic-upstream-account");
+        for (name, value) in [("session-id", session), ("thread-id", thread)] {
+            assert_eq!(
+                headers.get(name).map(|v| v.to_str().unwrap()),
+                value.as_deref()
+            );
+            assert_eq!(
+                headers.get_all(name).iter().count(),
+                usize::from(value.is_some())
+            );
+        }
+        if add_environment_headers {
+            assert_eq!(
+                headers
+                    .get_all("x-future-business")
+                    .iter()
+                    .map(|v| v.to_str().unwrap())
+                    .collect::<Vec<_>>(),
+                ["first", "second"]
+            );
+            assert_eq!(headers["traceparent"], "synthetic-trace");
+            assert_eq!(headers["tracestate"], "synthetic-state");
+        }
+        if upstream_ws {
+            assert_eq!(headers["openai-beta"], "responses_websockets=2026-02-06");
+            assert_eq!(body["type"], "response.create");
+            // 去掉观测帧的外层标记时保持顺序，避免测试自身的 swap_remove 重排字段。
+            body.as_object_mut().unwrap().shift_remove("type");
+            // WS transport 独占的发送时间戳每次生成；其余输入/工具/metadata 完整比较。
+            let metadata = body["client_metadata"].as_object_mut().unwrap();
+            assert!(
+                metadata
+                    .remove("x-codex-ws-stream-request-start-ms")
+                    .unwrap()
+                    .as_str()
+                    .unwrap()
+                    .parse::<u128>()
+                    .unwrap()
+                    > 0
+            );
+            if let Some(metadata) = expected
+                .get_mut("client_metadata")
+                .and_then(serde_json::Value::as_object_mut)
+            {
+                metadata.remove("x-codex-ws-stream-request-start-ms");
+            }
+            if expected.get("client_metadata").is_none() && body["client_metadata"] == json!({}) {
+                body.as_object_mut().unwrap().remove("client_metadata");
+            }
+        } else {
+            assert_eq!(headers["content-encoding"], "zstd");
+        }
+        assert_eq!(
+            body.as_object().unwrap().keys().collect::<Vec<_>>(),
+            expected.as_object().unwrap().keys().collect::<Vec<_>>(),
+            "field order changed in {}",
+            sample.name,
+        );
+        assert_eq!(body, expected, "body changed in {}", sample.name);
+    }
+}
+
+async fn capture_wire_http(
+    listener: tokio::net::TcpListener,
+    turns: Vec<ClientWireTurn>,
+) -> Vec<(WireHeaders, serde_json::Value)> {
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    let mut captured = Vec::new();
+    for turn in turns {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut head = Vec::new();
+        while !head.ends_with(b"\r\n\r\n") {
+            assert!(head.len() < 64 * 1024);
+            head.push(socket.read_u8().await.unwrap());
+        }
+        let head = String::from_utf8(head).unwrap();
+        assert!(head.starts_with("POST /backend-api/codex/responses HTTP/1.1\r\n"));
+        let mut headers = WireHeaders::new();
+        for line in head.split("\r\n").skip(1).filter(|line| !line.is_empty()) {
+            let (name, value) = line.split_once(':').unwrap();
+            headers.append(
+                name.parse::<tokio_tungstenite::tungstenite::http::HeaderName>()
+                    .unwrap(),
+                value.trim().parse().unwrap(),
+            );
+        }
+        let length: usize = headers["content-length"].to_str().unwrap().parse().unwrap();
+        assert!(length < 4 * 1024 * 1024);
+        let mut bytes = vec![0; length];
+        socket.read_exact(&mut bytes).await.unwrap();
+        let body = zstd::stream::decode_all(bytes.as_slice()).unwrap();
+        captured.push((headers, serde_json::from_slice(&body).unwrap()));
+        let body: String = turn
+            .response_events
+            .iter()
+            .map(|event| {
+                format!(
+                    "event: {}\ndata: {event}\n\n",
+                    event["type"].as_str().unwrap()
+                )
+            })
+            .collect();
+        socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
+    }
+    captured
+}
+
+struct WireOpeningCapture(std::sync::Arc<std::sync::Mutex<WireHeaders>>);
+
+impl tokio_tungstenite::tungstenite::handshake::server::Callback for WireOpeningCapture {
+    fn on_request(
+        self,
+        request: &tokio_tungstenite::tungstenite::handshake::server::Request,
+        mut response: tokio_tungstenite::tungstenite::handshake::server::Response,
+    ) -> Result<
+        tokio_tungstenite::tungstenite::handshake::server::Response,
+        tokio_tungstenite::tungstenite::handshake::server::ErrorResponse,
+    > {
+        assert_eq!(request.uri().path(), "/backend-api/codex/responses");
+        *self.0.lock().unwrap() = request.headers().clone();
+        response.headers_mut().insert(
+            "sec-websocket-extensions",
+            "permessage-deflate".parse().unwrap(),
+        );
+        Ok(response)
+    }
+}
+
+async fn capture_wire_websocket(
+    listener: tokio::net::TcpListener,
+    turns: Vec<ClientWireTurn>,
+) -> Vec<(WireHeaders, serde_json::Value)> {
+    use futures::{SinkExt as _, StreamExt as _};
+    use std::sync::{Arc, Mutex};
+    use tokio_tungstenite::{
+        accept_hdr_async_with_config,
+        tungstenite::{
+            Message,
+            extensions::{ExtensionsConfig, compression::deflate::DeflateConfig},
+            protocol::WebSocketConfig,
+        },
+    };
+    let (socket, _) = listener.accept().await.unwrap();
+    let headers = Arc::new(Mutex::new(WireHeaders::new()));
+    let opening = Arc::clone(&headers);
+    let mut extensions = ExtensionsConfig::default();
+    extensions.permessage_deflate = Some(DeflateConfig::default());
+    let mut config = WebSocketConfig::default();
+    config.extensions = extensions;
+    let mut socket =
+        accept_hdr_async_with_config(socket, WireOpeningCapture(opening), Some(config))
+            .await
+            .unwrap();
+    let mut captured = Vec::new();
+    for turn in turns {
+        let frame = socket.next().await.unwrap().unwrap();
+        captured.push((
+            headers.lock().unwrap().clone(),
+            serde_json::from_str(frame.to_text().unwrap()).unwrap(),
+        ));
+        for event in turn.response_events {
+            socket
+                .send(Message::Text(event.to_string().into()))
+                .await
+                .unwrap();
+        }
+    }
+    captured
+}

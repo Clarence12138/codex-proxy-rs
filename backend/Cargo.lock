@@ -731,6 +731,7 @@ name = "codex-proxy-rs"
 version = "0.0.0"
 dependencies = [
  "config",
+ "futures",
  "gateway-admin",
  "gateway-api",
  "gateway-core",
@@ -746,6 +747,8 @@ dependencies = [
  "thiserror",
  "tokio",
  "tokio-rustls",
+ "tokio-tungstenite 0.28.0",
+ "zstd",
 ]
 
 [[package]]

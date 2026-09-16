@@ -194,14 +194,19 @@ Core 只理解 `Operation`、能力要求、Provider 候选、稳定错误和 ca
 
 - OpenAI 默认是透明边界；显式配置 `openai.wire_profile.location` 时，由 Provider 覆盖带环境标记的日期/时区及 Web Search 位置，未配置时保留客户端原值。Responses 请求保留未知字段和字段顺序；SSE、WebSocket、Images 与 standalone
   Search 的业务正文按原始字节转发。canonical facts 从同一数据旁路提取，只用于路由、观测和计费。
-- Responses 的业务扩展头保留原始多值字节；传输与反代请求头分类由 `gateway-protocol` 统一定义，
-  API 入站与 OpenAI Provider 编码共同使用。下游链路元数据和压缩协商不跨越该边界，
-  上游认证、请求画像与传输字段仍由 Provider 生成；响应方向的诊断头不受请求过滤规则影响。
+- Responses 的业务扩展头保留原始多值字节；`gateway-protocol` 分别定义传输/反代头和下游专属头
+  的分类。API 先提取会话语义，再过滤向上游投影的副本；OpenAI Provider 编码与最终 HTTP/WS
+  组装同样过滤下游 SDK/浏览器环境头，不能只依赖某个 HTTP 入口或客户端 UA。
+  下游链路元数据和压缩协商不跨越该边界，上游认证、请求画像与传输字段仍由 Provider 生成。
+  会话别名只规范化请求头，不清除正文身份字段；未知业务扩展与响应诊断头不受影响，字段见
+  [Responses 合同](api.md#3-openai-数据面与模型目录)。提示词、工具及业务正文不做客户端品牌清洗。
 - xAI 是翻译边界。Provider 把 Grok wire 转换为 Responses wire；上游结构化错误的 message/code/type
   可以透出，但账号指纹会先脱敏。
 - response ID 是不透明 UTF-8 bytes，不假设 UUID、固定长度或跨 Provider 可复用。
 - 请求画像以配置为启动基线。OpenAI Desktop 与 xAI CLI 的官方版本检查只更新各自负责的运行时画像，
-  不回写 `config.yaml`。
+  不回写 `config.yaml`。OpenAI 模型请求目标是 Desktop 内嵌 Core/app-server，而不是独立 CLI 的
+  默认身份或 Electron 网络栈。制品版本核实、bundled Core 本地捕获和完整 GUI App 实测是不同证据，
+  不能互相替代；版本跟随也不等于重新验证 TLS 或整套 App 行为。
 
 xAI Provider 负责 Codex custom 工具与 Grok function 工具的双向转换，保持工具类型、item ID 与
 `call_id` 配对；超限或转换失败终止流。默认 `store: false` 的续接由现有会话 owner 重放完整历史；

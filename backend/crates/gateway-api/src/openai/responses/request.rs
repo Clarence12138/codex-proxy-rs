@@ -7,7 +7,7 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 use gateway_core::operation::{GenerateRequest, Operation, ProtocolPayload, ProviderSessionState};
 use gateway_protocol::openai::{
     X_OPENAI_INTERNAL_CODEX_RESPONSES_LITE_HEADER, X_OPENAI_MEMGEN_REQUEST_HEADER,
-    is_transport_managed_request_header,
+    is_downstream_only_request_header, is_transport_managed_request_header,
 };
 use serde_json::{Map, Value};
 
@@ -535,6 +535,7 @@ fn passthrough_header_name(name: &str, connection_headers: &[String]) -> bool {
         .iter()
         .any(|connection_header| connection_header.eq_ignore_ascii_case(name))
         || is_transport_managed_request_header(name)
+        || is_downstream_only_request_header(name)
         || name.starts_with("x-grok-")
         || name.starts_with("x-xai-")
     {
