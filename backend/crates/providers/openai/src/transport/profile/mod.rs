@@ -66,8 +66,6 @@ pub struct CodexWireProfile {
     pub terminal: String,
     /// 未配置时不发送 residency 头；不随制品版本更新而改变。
     pub residency: Option<CodexResidency>,
-    /// 可选的地区覆盖；为空时透传，不随制品版本更新而改变。
-    pub location: Option<CodexRequestLocation>,
     /// 版本元组最后一次经制品核验的时间；不表示 TLS 传输已重新核验。
     pub verified_at: DateTime<Utc>,
 }

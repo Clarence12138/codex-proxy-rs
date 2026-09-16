@@ -43,6 +43,8 @@ impl SettingsStore for AdminSettingsStoreAdapter {
                 refresh_margin_seconds: command.refresh_margin_seconds,
                 refresh_concurrency: command.refresh_concurrency,
                 max_concurrent_per_account: command.max_concurrent_per_account,
+                request_location_enabled: command.request_location_enabled,
+                request_location: command.request_location,
                 request_interval_ms: command.request_interval_ms,
                 max_waiting_per_key: command.max_waiting_per_key,
                 max_waiting_per_account: command.max_waiting_per_account,
@@ -61,6 +63,8 @@ impl SettingsStore for AdminSettingsStoreAdapter {
                 "runtime_settings",
                 "1",
                 vec![
+                    "request_location_enabled".to_owned(),
+                    "request_location_json".to_owned(),
                     "model_mappings_json".to_owned(),
                     "refresh_margin_seconds".to_owned(),
                     "refresh_concurrency".to_owned(),
@@ -167,6 +171,8 @@ pub(crate) fn admin_runtime_settings(
         .collect::<AdminStoreResult<ModelMappings>>()?;
     Ok(AdminRuntimeSettings {
         config_revision: admin_revision(settings.config_revision)?,
+        request_location_enabled: settings.request_location_enabled,
+        request_location: settings.request_location,
         model_mappings,
         refresh_margin_seconds: settings.refresh_margin_seconds,
         refresh_concurrency: settings.refresh_concurrency,

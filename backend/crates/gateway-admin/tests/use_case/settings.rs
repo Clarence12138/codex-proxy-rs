@@ -61,6 +61,8 @@ async fn settings_should_reject_zero_refresh_margin_before_store_call() {
                 request_id: "request-settings".to_owned(),
             },
             ReplaceRuntimeSettings {
+                request_location_enabled: false,
+                request_location: Default::default(),
                 model_mappings: Default::default(),
                 refresh_margin_seconds: 0,
                 refresh_concurrency: 1,

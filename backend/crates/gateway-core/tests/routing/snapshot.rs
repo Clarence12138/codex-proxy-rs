@@ -290,3 +290,85 @@ fn compiler(store: Arc<dyn SnapshotStorePort>) -> RuntimeSnapshotCompiler {
 fn revision(value: u64) -> ConfigRevision {
     ConfigRevision::new(value).expect("positive revision")
 }
+
+#[test]
+fn global_request_location_should_be_frozen_when_snapshot_is_published() {
+    use gateway_core::account::{ProviderAccountId, RequestLocation};
+    use gateway_core::runtime::RuntimeSnapshotHandle;
+    let make_snapshot = |version, timezone: &str, enabled| {
+        let location = RequestLocation {
+            timezone: timezone.parse().unwrap(),
+            ..RequestLocation::default()
+        };
+        let facts = SnapshotFacts::new(
+            revision(version),
+            revision(version),
+            SnapshotSettingsFacts::new(3, 0, "smart", BTreeMap::new(), None, None)
+                .with_request_location(location, enabled),
+            Vec::new(),
+            Vec::new(),
+            vec![SnapshotProviderAccountFacts::new(
+                ProviderAccountId::new("acct_location").unwrap(),
+                "alpha",
+            )],
+            Vec::new(),
+        );
+        block_on(
+            RuntimeSnapshotCompiler::new(
+                Arc::new(TestSnapshotStore::new(Ok(facts))),
+                Arc::new(TestCatalog::Unavailable),
+            )
+            .compile(),
+        )
+        .unwrap()
+    };
+    let handle = RuntimeSnapshotHandle::new(make_snapshot(1, "Asia/Tokyo", true));
+    let frozen = handle.acquire().unwrap();
+    let plan = |snapshot: &gateway_core::routing::RuntimeSnapshot| {
+        snapshot
+            .plan(
+                &PublicModelId::new("public-model").unwrap(),
+                &super::operation(),
+                snapshot.all_account_scope(),
+                &gateway_core::routing::RoutingContext::default(),
+            )
+            .unwrap()
+    };
+    let old_plan = plan(&frozen);
+    handle.publish(make_snapshot(2, "America/New_York", true));
+    assert_eq!(
+        old_plan.request_location().unwrap().timezone.name(),
+        "Asia/Tokyo"
+    );
+    assert_eq!(
+        plan(&frozen).request_location().unwrap().timezone.name(),
+        "Asia/Tokyo"
+    );
+    assert_eq!(
+        plan(&handle.acquire().unwrap())
+            .request_location()
+            .unwrap()
+            .timezone
+            .name(),
+        "America/New_York"
+    );
+    handle.publish(make_snapshot(3, "Asia/Tokyo", false));
+    assert!(
+        plan(&handle.acquire().unwrap())
+            .request_location()
+            .is_none()
+    );
+    assert_eq!(
+        old_plan.request_location().unwrap().timezone.name(),
+        "Asia/Tokyo"
+    );
+    handle.publish(make_snapshot(4, "Asia/Tokyo", true));
+    assert_eq!(
+        plan(&handle.acquire().unwrap())
+            .request_location()
+            .unwrap()
+            .timezone
+            .name(),
+        "Asia/Tokyo"
+    );
+}

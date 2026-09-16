@@ -12,6 +12,7 @@ import AdminApiKeyCard from './components/AdminApiKeyCard.vue'
 import SettingsBackupSection from './components/backup/SettingsBackupSection.vue'
 import ClientVersionSettings from './components/client-version/index.vue'
 import ModelAliasesCard from './components/ModelAliasesCard.vue'
+import RequestLocationCard from './components/RequestLocationCard.vue'
 import RotationStrategyCard from './components/RotationStrategyCard.vue'
 import RuntimeSettingsCard from './components/RuntimeSettingsCard.vue'
 import { useAdminApiKey } from './composables/useAdminApiKey'
@@ -135,6 +136,8 @@ watch(
         v-model:max-waiting-per-account="maxWaitingPerAccountValue"
         v-model:concurrency-wait-timeout-seconds="concurrencyWaitTimeoutSecondsValue"
       />
+
+      <RequestLocationCard v-model="form.requestLocation" v-model:enabled="form.requestLocationEnabled" :disabled="loading || saving" />
 
       <ClientVersionSettings
         v-model:min-codex-desktop-version="form.minCodexDesktopVersion"

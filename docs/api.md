@@ -423,7 +423,8 @@ Images、独立 Search 及管理员连接测试不受该文本模型限制；连
 只改位置不清空连通性测试结果，也不更改账号凭据版本。
 
 关联账号的 OpenAI/Codex Responses 请求（HTTP/SSE、WebSocket）优先使用代理位置，否则使用全局
-`openai.wire_profile.location`；两者都未配置时不改写客户端位置。配置刷新后的新执行尝试生效，无需重启，
+运行设置中已开启的 `requestLocation`；两者均未开启时保留客户端原有位置和时区。全局覆盖按请求冻结，
+新请求使用保存后的设置，无需重启；代理覆盖在每次执行时读取，
 换号或换出口按该次选定账号解析。位置只影响带来源标记的环境上下文日期/时区和 Web Search 的结构化位置，
 不改变用户普通文本、epoch 时间戳、真实出口 IP、服务或管理端时区、数据驻留约束及 xAI 请求。
 
@@ -861,6 +862,8 @@ HTTP 返回 `429`，`error.code` 为 `key_daily_budget_exceeded` 或 `key_weekly
 设置更新字段包括：
 
 ```text
+requestLocationEnabled
+requestLocation
 modelMappings
 refreshMarginSeconds
 refreshConcurrency
@@ -876,6 +879,14 @@ usageRetentionDays
 opsEventRetentionDays
 auditRetentionDays
 ```
+
+`requestLocationEnabled` 是必填布尔值，默认 `false`：关闭时不覆盖客户端原有位置和时区；开启时使用已保存的
+`requestLocation`。关闭不会清空自定义值，代理自定义位置仍优先。
+`requestLocation` 是必填的完整对象 `{ country, region, city, timezone }`，不接受 `null`；初始保存值为
+`{ country: "US", region: "Ohio", city: "Piketon", timezone: "America/New_York" }`。
+字段约束与[代理位置](#独立代理管理--managed-proxies)一致。全局自定义开启后，OpenAI Responses 使用全局位置，
+关联代理配置了自定义位置时优先使用代理值。保存后通过现有配置发布机制对新请求生效，
+已开始请求及其重试保持同一份全局值；普通文本、绝对时间戳和数据驻留要求不受影响。
 
 `maxWaitingPerKey` 与 `maxWaitingPerAccount` 是全局统一的排队容量，取值 0～1,000，默认 0（关闭）；
 每个 Key、每个账号各自独立计数，没有单对象覆盖字段。执行并发为 5、最大排队数为 5 时，

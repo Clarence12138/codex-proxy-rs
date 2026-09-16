@@ -25,3 +25,5 @@ export * from './modules/system'
 
 // 使用记录
 export * from './modules/usage'
+
+export type { RequestLocation } from './types/request-location'

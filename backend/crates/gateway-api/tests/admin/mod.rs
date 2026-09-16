@@ -402,6 +402,8 @@ impl SettingsStore for MemorySettingsStore {
     ) -> AdminStoreResult<RuntimeSettings> {
         let mut settings = self.settings.lock().expect("settings");
         let updated = RuntimeSettings {
+            request_location_enabled: command.request_location_enabled,
+            request_location: command.request_location,
             config_revision: next_revision(settings.config_revision),
             model_mappings: command.model_mappings,
             refresh_margin_seconds: command.refresh_margin_seconds,
@@ -1230,6 +1232,8 @@ fn test_runtime_settings() -> RuntimeSettings {
         ),
     ]);
     RuntimeSettings {
+        request_location_enabled: false,
+        request_location: Default::default(),
         config_revision: Revision::new(7).expect("revision"),
         model_mappings: mappings,
         refresh_margin_seconds: 3_600,

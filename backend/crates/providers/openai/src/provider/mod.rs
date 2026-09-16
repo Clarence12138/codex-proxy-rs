@@ -72,7 +72,7 @@ use crate::transport::diagnostics::{
     CodexFailureCategory, CodexUpstreamFailure, CodexUpstreamSendPhase,
 };
 use crate::transport::profile::{
-    APPCAST_POLL_INTERVAL, CodexDesktopReleaseService, CodexRequestLocation, CodexWireProfileState,
+    APPCAST_POLL_INTERVAL, CodexDesktopReleaseService, CodexWireProfileState,
 };
 use crate::transport::protocol::responses::{
     CodexResponsesRequest, PREVIOUS_RESPONSE_NOT_FOUND_CODE, PREVIOUS_RESPONSE_NOT_FOUND_MESSAGE,
@@ -142,7 +142,6 @@ pub struct CodexProvider {
     quota: Arc<CodexCredentialQuotaService>,
     account_feedback: Arc<AccountFeedbackStats>,
     client: CodexBackendClient,
-    location: Option<CodexRequestLocation>,
     responses_url: Url,
     image_generations_url: Url,
     image_edits_url: Url,
@@ -175,7 +174,6 @@ impl CodexProvider {
             .map_err(|_| CodexProviderConfigError::InvalidBaseUrl)?;
         let search_url = Url::parse(&endpoint_url(&base_url, CODEX_ALPHA_SEARCH_PATH))
             .map_err(|_| CodexProviderConfigError::InvalidBaseUrl)?;
-        let location = profile.snapshot().location;
         let client =
             CodexBackendClient::new(http, base_url, profile).with_websocket_pool(websocket_pool);
         Ok(Self {
@@ -184,7 +182,6 @@ impl CodexProvider {
             quota,
             account_feedback,
             client,
-            location,
             responses_url,
             image_generations_url,
             image_edits_url,
@@ -516,7 +513,7 @@ impl Provider for CodexProvider {
         if let Some(location) = lease
             .account()
             .request_location()
-            .or(self.location.as_ref())
+            .or(context.request_location())
         {
             align_structured_location_fields(
                 upstream_request.body_mut(),

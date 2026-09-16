@@ -1,4 +1,5 @@
 import type { rotationOptions } from '../constants'
+import type { RequestLocation } from '@/api'
 import { computed, reactive, ref, shallowRef } from 'vue'
 
 import { getSettings, updateSettings } from '@/api'
@@ -6,6 +7,7 @@ import { ApiError } from '@/api/request'
 import { toast } from '@/components/base/BaseToast'
 import { useAsyncAction } from '@/composables/useAsyncAction'
 import { errorMessage } from '@/utils/async'
+import { normalizeRequestLocation, requestLocationError } from '@/utils/request-location'
 
 type RotationStrategy = (typeof rotationOptions)[number]['value']
 
@@ -15,7 +17,10 @@ export function useSettingsForm() {
   const saving = saveAction.loading
   const error = shallowRef('')
   const mappings = ref<Array<{ requestedModel: string, upstreamModel: string }>>([])
+  const savedRequestLocation = shallowRef<RequestLocation>()
   const form = reactive({
+    requestLocationEnabled: false,
+    requestLocation: { country: '', region: '', city: '', timezone: '' },
     refreshMarginSeconds: null as number | null,
     refreshConcurrency: null as number | null,
     maxConcurrentPerAccount: null as number | null,
@@ -63,6 +68,9 @@ export function useSettingsForm() {
   }
 
   function applySettings(data: Awaited<ReturnType<typeof getSettings>>) {
+    savedRequestLocation.value = { ...data.requestLocation }
+    form.requestLocationEnabled = data.requestLocationEnabled
+    form.requestLocation = { ...data.requestLocation }
     form.refreshMarginSeconds = data.refreshMarginSeconds
     form.refreshConcurrency = data.refreshConcurrency
     form.maxConcurrentPerAccount = data.maxConcurrentPerAccount
@@ -130,7 +138,7 @@ export function useSettingsForm() {
   }
 
   async function saveSettings() {
-    if (saving.value || loading.value)
+    if (saving.value || loading.value || !savedRequestLocation.value)
       return
     const { refreshMarginSeconds, refreshConcurrency, maxConcurrentPerAccount, requestIntervalMs, rotationStrategy, maxWaitingPerKey, maxWaitingPerAccount, concurrencyWaitTimeoutSeconds } = form
     if (refreshMarginSeconds === null || refreshConcurrency === null || maxConcurrentPerAccount === null || requestIntervalMs === null || !rotationStrategy || maxWaitingPerKey === null || maxWaitingPerAccount === null || concurrencyWaitTimeoutSeconds === null) {
@@ -146,8 +154,19 @@ export function useSettingsForm() {
       toast.warning('请修正客户端最低版本格式')
       return
     }
+    // 关闭时保留已保存的自定义值，未完成的草稿不阻止停止覆盖。
+    const requestLocation = form.requestLocationEnabled
+      ? normalizeRequestLocation(form.requestLocation)
+      : savedRequestLocation.value
+    const locationError = requestLocationError(requestLocation)
+    if (locationError) {
+      toast.warning(locationError)
+      return
+    }
     await saveAction.run(async () => {
       const result = await updateSettings({
+        requestLocationEnabled: form.requestLocationEnabled,
+        requestLocation,
         modelMappings: mappingPayload(),
         refreshMarginSeconds,
         refreshConcurrency,

@@ -37,6 +37,8 @@ async fn response_json(response: axum::response::Response) -> Value {
 
 fn update_body() -> Value {
     json!({
+        "requestLocationEnabled": false,
+        "requestLocation": {"country":"US", "region":"Ohio", "city":"Piketon", "timezone":"America/New_York"},
         "modelMappings": {
             "gpt-5.4": "gpt-5.5",
             "grok-latest": "grok-4.5"
@@ -92,6 +94,8 @@ fn settings_response_should_cover_the_full_runtime_settings_contract() {
     use gateway_core::routing::{PublicModelId, UpstreamModelId};
 
     let settings = RuntimeSettings {
+        request_location_enabled: false,
+        request_location: Default::default(),
         config_revision: Revision::new(7).expect("revision"),
         model_mappings: BTreeMap::from_iter([
             (
@@ -126,6 +130,8 @@ fn settings_response_should_cover_the_full_runtime_settings_contract() {
     assert_eq!(
         value,
         json!({
+            "requestLocationEnabled": false,
+        "requestLocation": {"country":"US", "region":"Ohio", "city":"Piketon", "timezone":"America/New_York"},
             "modelMappings": {
                 "gpt-5.4": "gpt-5.5",
                 "grok-latest": "grok-4.5"
@@ -169,6 +175,8 @@ fn settings_request_and_response_fields_should_stay_in_lockstep() {
         .cloned()
         .collect();
     let settings = RuntimeSettings {
+        request_location_enabled: false,
+        request_location: Default::default(),
         config_revision: Revision::new(7).expect("revision"),
         model_mappings: request
             .model_mappings
@@ -421,4 +429,121 @@ fn concurrency_queue_fields_validate_bounds_and_accept_disabled_queues() {
         .unwrap()
         .validate()
         .unwrap();
+}
+
+#[tokio::test]
+async fn request_location_should_normalize_toggle_and_round_trip() {
+    let fixture = AdminTestFixture::new().await;
+    fixture.auth.insert_session("valid-session");
+    let mut body = update_body();
+    body["requestLocationEnabled"] = json!(true);
+    body["requestLocation"] =
+        json!({"country":"JP", "region":" Tokyo ", "city":" Tokyo ", "timezone":"Asia/Tokyo"});
+    let expected =
+        json!({"country":"JP", "region":"Tokyo", "city":"Tokyo", "timezone":"Asia/Tokyo"});
+    let response = app(fixture.state())
+        .oneshot(request(
+            Method::POST,
+            "/api/admin/settings/update",
+            Some(body),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response_json(response).await["data"]["requestLocation"],
+        expected
+    );
+    let response = app(fixture.state())
+        .oneshot(request(Method::GET, "/api/admin/settings", None))
+        .await
+        .unwrap();
+    assert_eq!(
+        response_json(response).await["data"]["requestLocation"],
+        expected
+    );
+    for enabled in [false, true] {
+        let mut body = update_body();
+        body["requestLocationEnabled"] = json!(enabled);
+        body["requestLocation"] = expected.clone();
+        let response = app(fixture.state())
+            .oneshot(request(
+                Method::POST,
+                "/api/admin/settings/update",
+                Some(body),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let response = app(fixture.state())
+            .oneshot(request(Method::GET, "/api/admin/settings", None))
+            .await
+            .unwrap();
+        let data = response_json(response).await["data"].clone();
+        assert_eq!(data["requestLocationEnabled"], json!(enabled));
+        assert_eq!(data["requestLocation"], expected);
+    }
+}
+
+#[tokio::test]
+async fn request_location_should_reject_invalid_or_missing_fields_without_replacing_settings() {
+    let fixture = AdminTestFixture::new().await;
+    fixture.auth.insert_session("valid-session");
+    let original = update_body()["requestLocation"].clone();
+    // JSON 结构或时区解析失败由 Axum 返回 422，业务校验失败返回 400。
+    let mut invalid = vec![
+        (Value::Null, StatusCode::UNPROCESSABLE_ENTITY),
+        (json!({}), StatusCode::UNPROCESSABLE_ENTITY),
+        (
+            json!({"timezone":"Asia/Tokyo"}),
+            StatusCode::UNPROCESSABLE_ENTITY,
+        ),
+    ];
+    for (field, value, status) in [
+        ("country", "USA", StatusCode::BAD_REQUEST),
+        ("country", "us", StatusCode::BAD_REQUEST),
+        ("city", "", StatusCode::BAD_REQUEST),
+        ("region", "\nTokyo", StatusCode::BAD_REQUEST),
+        (
+            "timezone",
+            "Not/A_Timezone",
+            StatusCode::UNPROCESSABLE_ENTITY,
+        ),
+    ] {
+        let mut location = original.clone();
+        location[field] = json!(value);
+        invalid.push((location, status));
+    }
+    for (location, expected_status) in invalid {
+        let mut body = update_body();
+        body["requestLocation"] = location;
+        let response = app(fixture.state())
+            .oneshot(request(
+                Method::POST,
+                "/api/admin/settings/update",
+                Some(body),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), expected_status);
+    }
+    let mut body = update_body();
+    body.as_object_mut().unwrap().remove("requestLocation");
+    let response = app(fixture.state())
+        .oneshot(request(
+            Method::POST,
+            "/api/admin/settings/update",
+            Some(body),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let response = app(fixture.state())
+        .oneshot(request(Method::GET, "/api/admin/settings", None))
+        .await
+        .unwrap();
+    assert_eq!(
+        response_json(response).await["data"]["requestLocation"],
+        original
+    );
 }

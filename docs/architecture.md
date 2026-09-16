@@ -129,6 +129,10 @@ Provider 模型能力、目录代次与 `ProviderCatalogPort` 由 `routing::cata
 OpenAI 的账号/凭据 revision/客户端版本隔离、并发合并、TTL、容量与失效均归属已有 credential catalog
 service；客户端原生对象只进有界进程缓存，不扩展套餐 Redis ID cache 或持久化模型字段副本。
 
+全局请求位置及开关由运行设置持久化；快照仅在开关开启时生成全局覆盖，并随
+`RuntimeSnapshot → RoutingPlan → AttemptContext` 冻结传递，关闭时保留客户端原有字段；
+Provider 在选定账号后应用代理位置覆盖。请求期间不额外查询全局设置，配置发布不改变已开始请求的全局值。
+
 `engine::observation` 统一维护单次响应的用量、费用、时间和响应 ID，并负责重试前清理；协调器继续
 独占发送、提交、重试和终结顺序。Provider 上报费用优先于本地估算，丢弃的 attempt 不得污染最终计量。
 Client Key 费用账本独立累计各次 attempt 的实际费用，不能因请求重试而清空已产生的费用或未知计费状态。

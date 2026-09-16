@@ -9,6 +9,8 @@ use super::TestDatabase;
 
 fn settings_with_margin(refresh_margin_seconds: u64) -> RuntimeSettingsUpdate {
     RuntimeSettingsUpdate {
+        request_location_enabled: false,
+        request_location: Default::default(),
         admin_api_key: None,
         refresh_margin_seconds,
         refresh_concurrency: 2,
@@ -236,5 +238,68 @@ async fn concurrency_queue_settings_round_trip_into_the_runtime_snapshot() {
         (5, 7, 12)
     );
     assert!(snapshot.config_revision > before.config_revision);
+    database.close().await;
+}
+
+#[tokio::test]
+async fn request_location_defaults_and_updates_reach_the_runtime_snapshot() {
+    use gateway_core::account::RequestLocation;
+    use gateway_store::postgres::{PgRuntimeSnapshotRepository, RuntimeSnapshotRepository};
+    let Some(database) = TestDatabase::create("global_request_location").await else {
+        return;
+    };
+    let repository = PgRuntimeSettingsRepository::new(database.pool.clone());
+    let before = repository.load_runtime_settings().await.unwrap();
+    assert_eq!(before.request_location, RequestLocation::default());
+    assert!(!before.request_location_enabled);
+    let mut update = settings_with_margin(3600);
+    update.request_location = serde_json::from_value(serde_json::json!({"country":"JP", "region":" Tokyo ", "city":" Tokyo ", "timezone":"Asia/Tokyo"})).unwrap();
+    update.request_location_enabled = true;
+    let expected = update.request_location.clone().normalized().unwrap();
+    repository.update_runtime_settings(update).await.unwrap();
+    let settings = repository.load_runtime_settings().await.unwrap();
+    let snapshot = PgRuntimeSnapshotRepository::new(database.pool.clone())
+        .load_runtime_snapshot()
+        .await
+        .unwrap();
+    assert_eq!(settings.request_location, expected);
+    assert_eq!(snapshot.settings.request_location, expected);
+    assert!(settings.request_location_enabled);
+    assert!(snapshot.settings.request_location_enabled);
+    assert!(snapshot.config_revision > before.config_revision);
+    let mut disabled = settings_with_margin(3600);
+    disabled.request_location = expected.clone();
+    repository.update_runtime_settings(disabled).await.unwrap();
+    let disabled_settings = repository.load_runtime_settings().await.unwrap();
+    assert!(!disabled_settings.request_location_enabled);
+    assert_eq!(disabled_settings.request_location, expected);
+    let disabled_snapshot = PgRuntimeSnapshotRepository::new(database.pool.clone())
+        .load_runtime_snapshot()
+        .await
+        .unwrap();
+    assert!(!disabled_snapshot.settings.request_location_enabled);
+    assert_eq!(disabled_snapshot.settings.request_location, expected);
+    assert!(disabled_snapshot.config_revision > snapshot.config_revision);
+    for invalid in [
+        serde_json::json!(null),
+        serde_json::json!({}),
+        serde_json::json!({"country":"US", "region":"Ohio", "city":null, "timezone":"America/New_York"}),
+    ] {
+        assert!(
+            sqlx::query("update runtime_settings set request_location_json = $1 where id = 1")
+                .bind(sqlx::types::Json(invalid))
+                .execute(&database.pool)
+                .await
+                .is_err()
+        );
+    }
+    assert_eq!(
+        repository
+            .load_runtime_settings()
+            .await
+            .unwrap()
+            .request_location,
+        expected
+    );
     database.close().await;
 }

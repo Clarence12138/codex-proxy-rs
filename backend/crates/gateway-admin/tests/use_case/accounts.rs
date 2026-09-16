@@ -916,6 +916,8 @@ struct StaticSettingsStore;
 impl SettingsStore for StaticSettingsStore {
     async fn load_runtime_settings(&self) -> AdminStoreResult<RuntimeSettings> {
         Ok(RuntimeSettings {
+            request_location_enabled: false,
+            request_location: Default::default(),
             config_revision: revision(1),
             model_mappings: Default::default(),
             refresh_margin_seconds: 300,

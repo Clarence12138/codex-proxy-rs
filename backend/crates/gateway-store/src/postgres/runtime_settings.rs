@@ -28,6 +28,8 @@ pub struct RuntimeSettings {
     pub max_waiting_per_account: u32,
     pub concurrency_wait_timeout_seconds: u32,
     pub rotation_strategy: String,
+    pub request_location_enabled: bool,
+    pub request_location: gateway_core::account::RequestLocation,
     pub model_mappings: BTreeMap<String, String>,
     pub min_codex_desktop_version: Option<String>,
     pub min_codex_cli_version: Option<String>,
@@ -54,6 +56,8 @@ impl fmt::Debug for RuntimeSettings {
             )
             .field("request_interval_ms", &self.request_interval_ms)
             .field("rotation_strategy", &self.rotation_strategy)
+            .field("request_location_enabled", &self.request_location_enabled)
+            .field("request_location", &self.request_location)
             .field("model_mappings", &self.model_mappings)
             .field("min_codex_desktop_version", &self.min_codex_desktop_version)
             .field("min_codex_cli_version", &self.min_codex_cli_version)
@@ -76,6 +80,8 @@ pub struct RuntimeSettingsUpdate {
     pub max_waiting_per_account: u32,
     pub concurrency_wait_timeout_seconds: u32,
     pub rotation_strategy: String,
+    pub request_location_enabled: bool,
+    pub request_location: gateway_core::account::RequestLocation,
     pub model_mappings: BTreeMap<String, String>,
     pub min_codex_desktop_version: Option<String>,
     pub min_codex_cli_version: Option<String>,
@@ -93,6 +99,8 @@ impl fmt::Debug for RuntimeSettingsUpdate {
                 &self.admin_api_key.as_ref().map(|_| "[REDACTED]"),
             )
             .field("rotation_strategy", &self.rotation_strategy)
+            .field("request_location_enabled", &self.request_location_enabled)
+            .field("request_location", &self.request_location)
             .field("model_mappings", &self.model_mappings)
             .finish_non_exhaustive()
     }
@@ -100,7 +108,8 @@ impl fmt::Debug for RuntimeSettingsUpdate {
 
 impl RuntimeSettingsUpdate {
     pub fn validate(&self) -> StoreResult<()> {
-        if self.refresh_margin_seconds == 0
+        if self.request_location.validate().is_err()
+            || self.refresh_margin_seconds == 0
             || self.refresh_concurrency == 0
             || self.max_concurrent_per_account == 0
             || self.max_waiting_per_key > 1_000
@@ -169,7 +178,7 @@ impl RuntimeSettingsRepository for PgRuntimeSettingsRepository {
 
 pub(crate) async fn load_runtime_settings_from_pool(pool: &PgPool) -> StoreResult<RuntimeSettings> {
     let row = sqlx::query_as::<_, RuntimeSettingsRow>(
-            "select config_revision, admin_api_key, refresh_margin_seconds,
+            "select config_revision, admin_api_key, refresh_margin_seconds, request_location_json, request_location_enabled,
                     refresh_concurrency, max_concurrent_per_account, request_interval_ms,
                     rotation_strategy, model_mappings_json, usage_retention_days, ops_event_retention_days,
                     audit_retention_days, min_codex_desktop_version,
@@ -208,7 +217,7 @@ pub(crate) async fn load_runtime_settings_in_transaction(
     transaction: &mut Transaction<'_, Postgres>,
 ) -> StoreResult<RuntimeSettings> {
     let row = sqlx::query_as::<_, RuntimeSettingsRow>(
-        "select config_revision, admin_api_key, refresh_margin_seconds,
+        "select config_revision, admin_api_key, refresh_margin_seconds, request_location_json, request_location_enabled,
                 refresh_concurrency, max_concurrent_per_account, request_interval_ms,
                 rotation_strategy, model_mappings_json, usage_retention_days, ops_event_retention_days,
                 audit_retention_days, min_codex_desktop_version,
@@ -250,6 +259,8 @@ pub(crate) async fn update_runtime_settings_in_transaction(
                      max_waiting_per_key = $13,
                      max_waiting_per_account = $14,
                      concurrency_wait_timeout_seconds = $15,
+                     request_location_json = $16,
+                     request_location_enabled = $17,
 	                 updated_at = now()
 	             where id = 1
 	             returning config_revision",
@@ -269,6 +280,14 @@ pub(crate) async fn update_runtime_settings_in_transaction(
     .bind(i64::from(update.max_waiting_per_key))
     .bind(i64::from(update.max_waiting_per_account))
     .bind(i64::from(update.concurrency_wait_timeout_seconds))
+    .bind(sqlx::types::Json(
+        update
+            .request_location
+            .clone()
+            .normalized()
+            .map_err(|_| invalid_location())?,
+    ))
+    .bind(update.request_location_enabled)
     .fetch_optional(&mut **transaction)
     .await
     .map_err(|_| postgres_unavailable("update runtime settings in transaction"))?
@@ -325,6 +344,8 @@ struct RuntimeSettingsRow {
     max_concurrent_per_account: i64,
     request_interval_ms: i64,
     rotation_strategy: String,
+    request_location_enabled: bool,
+    request_location_json: sqlx::types::Json<gateway_core::account::RequestLocation>,
     model_mappings_json: sqlx::types::Json<BTreeMap<String, String>>,
     usage_retention_days: i64,
     ops_event_retention_days: i64,
@@ -346,6 +367,12 @@ fn runtime_settings_from_row(row: RuntimeSettingsRow) -> StoreResult<RuntimeSett
         max_concurrent_per_account: to_u32(row.max_concurrent_per_account)?,
         request_interval_ms: to_u64(row.request_interval_ms)?,
         rotation_strategy: row.rotation_strategy,
+        request_location_enabled: row.request_location_enabled,
+        request_location: row
+            .request_location_json
+            .0
+            .normalized()
+            .map_err(|_| invalid_location())?,
         model_mappings: row.model_mappings_json.0,
         usage_retention_days: to_u32(row.usage_retention_days)?,
         ops_event_retention_days: to_u32(row.ops_event_retention_days)?,
@@ -365,6 +392,13 @@ fn to_u64(value: i64) -> StoreResult<u64> {
 
 fn to_u32(value: i64) -> StoreResult<u32> {
     u32::try_from(value).map_err(|_| invalid_numeric())
+}
+
+fn invalid_location() -> StoreError {
+    StoreError::InvalidData {
+        entity: "runtime settings",
+        message: "request location is invalid".to_owned(),
+    }
 }
 
 fn invalid_numeric() -> StoreError {

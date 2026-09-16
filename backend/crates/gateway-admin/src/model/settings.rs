@@ -18,6 +18,8 @@ pub use gateway_core::account::RotationStrategy;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeSettings {
     pub config_revision: Revision,
+    pub request_location_enabled: bool,
+    pub request_location: gateway_core::account::RequestLocation,
     pub model_mappings: ModelMappings,
     pub refresh_margin_seconds: u64,
     pub refresh_concurrency: u32,
@@ -38,6 +40,8 @@ pub struct RuntimeSettings {
 /// 原子替换运行设置的命令。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReplaceRuntimeSettings {
+    pub request_location_enabled: bool,
+    pub request_location: gateway_core::account::RequestLocation,
     pub model_mappings: ModelMappings,
     pub refresh_margin_seconds: u64,
     pub refresh_concurrency: u32,

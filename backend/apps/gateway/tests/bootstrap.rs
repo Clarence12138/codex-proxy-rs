@@ -386,36 +386,22 @@ fn config_loader_should_reject_invalid_desktop_profile_fields() {
 }
 
 #[test]
-fn config_loader_should_accept_empty_and_custom_request_locations() {
+fn config_loader_should_reject_removed_request_location_setting() {
     let original = valid_config();
-    let omitted = original
-        .lines()
-        .filter(|line| !line.trim_start().starts_with("location:"))
-        .collect::<Vec<_>>()
-        .join("\n");
-    assert_ne!(original, omitted);
-    parse_config(&omitted).expect("location passthrough when omitted");
-    let location_line = original
-        .lines()
-        .find(|line| line.trim_start().starts_with("location:"))
-        .expect("example location");
-    for empty in ["    location:", "    location: null", "    location: ~"] {
-        parse_config(&original.replace(location_line, empty)).expect("empty YAML location");
+    parse_config(&original).expect("location belongs to runtime settings");
+    for value in [
+        "null",
+        "{}",
+        "{ country: 'US', region: 'Ohio', city: 'Piketon', timezone: 'America/New_York' }",
+    ] {
+        let legacy = original.replacen(
+            "    residency: us",
+            &format!("    residency: us\n    location: {value}"),
+            1,
+        );
+        assert_ne!(legacy, original);
+        assert_rejected(legacy);
     }
-    let custom = original.replace(
-        "location: { country: 'US', region: 'Ohio', city: 'Piketon', timezone: 'America/New_York' }",
-        "location: { country: 'NZ', region: 'Auckland', city: 'Auckland', timezone: 'Pacific/Auckland' }",
-    );
-    assert_ne!(original, custom);
-    parse_config(&custom).expect("custom location from YAML");
-}
-
-#[test]
-fn config_loader_should_reject_invalid_request_location_timezones() {
-    let original = valid_config();
-    let invalid = original.replace("timezone: 'America/New_York'", "timezone: 'Not/A_Timezone'");
-    assert_ne!(original, invalid);
-    assert_rejected(invalid);
 }
 
 fn assert_rejected(config: String) {

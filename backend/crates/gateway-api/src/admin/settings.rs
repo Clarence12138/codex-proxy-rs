@@ -34,6 +34,8 @@ pub type ModelMappings = BTreeMap<String, String>;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeSettingsView {
+    pub request_location_enabled: bool,
+    pub request_location: gateway_core::account::RequestLocation,
     pub model_mappings: ModelMappings,
     pub refresh_margin_seconds: u64,
     pub refresh_concurrency: u64,
@@ -55,6 +57,8 @@ pub struct RuntimeSettingsView {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct UpdateRuntimeSettingsRequest {
+    pub request_location_enabled: bool,
+    pub request_location: gateway_core::account::RequestLocation,
     pub model_mappings: ModelMappings,
     pub refresh_margin_seconds: u64,
     pub refresh_concurrency: u64,
@@ -74,6 +78,9 @@ pub struct UpdateRuntimeSettingsRequest {
 impl UpdateRuntimeSettingsRequest {
     /// 校验公共运行参数。
     pub fn validate(&self) -> Result<(), WireValidationError> {
+        self.request_location
+            .validate()
+            .map_err(|_| WireValidationError::new("requestLocation"))?;
         validate_model_mappings(&self.model_mappings)?;
         for (value, field) in [
             (self.max_waiting_per_key, "maxWaitingPerKey"),
@@ -116,6 +123,11 @@ impl UpdateRuntimeSettingsRequest {
     fn into_command(self) -> Result<ReplaceRuntimeSettings, WireValidationError> {
         self.validate()?;
         Ok(ReplaceRuntimeSettings {
+            request_location_enabled: self.request_location_enabled,
+            request_location: self
+                .request_location
+                .normalized()
+                .map_err(|_| WireValidationError::new("requestLocation"))?,
             model_mappings: domain_model_mappings(self.model_mappings)?,
             refresh_margin_seconds: self.refresh_margin_seconds,
             refresh_concurrency: u32::try_from(self.refresh_concurrency)
@@ -143,6 +155,8 @@ impl UpdateRuntimeSettingsRequest {
 impl From<RuntimeSettings> for RuntimeSettingsView {
     fn from(settings: RuntimeSettings) -> Self {
         Self {
+            request_location_enabled: settings.request_location_enabled,
+            request_location: settings.request_location,
             model_mappings: wire_model_mappings(settings.model_mappings),
             refresh_margin_seconds: settings.refresh_margin_seconds,
             refresh_concurrency: u64::from(settings.refresh_concurrency),
@@ -459,6 +473,7 @@ fn map_wire_error(error: WireValidationError) -> AdminError {
         "settingsUsageRetentionOverflow" => "usageRetentionDays 不合法".to_owned(),
         "settingsOpsRetentionOverflow" => "opsEventRetentionDays 不合法".to_owned(),
         "settingsAuditRetentionOverflow" => "auditRetentionDays 不合法".to_owned(),
+        "requestLocation" => "请求位置不合法，请检查国家代码、地区和城市".to_owned(),
         "minCodexDesktopVersion" => "Codex Desktop 最低版本格式不合法".to_owned(),
         "minCodexCliVersion" => "Codex CLI 最低版本格式不合法".to_owned(),
         field => format!("{field} 字段不合法"),

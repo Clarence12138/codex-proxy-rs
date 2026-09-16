@@ -95,24 +95,27 @@ async fn selected_proxy_location_overrides_global_and_reloads_without_mutating_c
             .unwrap()
             .with_context(Map::from_iter([("use_websocket".to_owned(), json!(false))])),
     ));
-    for (index, (proxy, location, expected)) in [
-        (&first_proxy, Some(json!({"country":"JP", "region":"Tokyo", "city":"Tokyo", "timezone":"Asia/Tokyo"})), "Asia/Tokyo"),
-        (&second_proxy, Some(json!({"country":"US", "region":"New York", "city":"New York", "timezone":"America/New_York"})), "America/New_York"),
-        (&second_proxy, None, "Pacific/Auckland"),
+    for (index, (proxy, location, global_enabled, expected)) in [
+        (&first_proxy, Some(json!({"country":"JP", "region":"Tokyo", "city":"Tokyo", "timezone":"Asia/Tokyo"})), true, Some("Asia/Tokyo")),
+        (&second_proxy, Some(json!({"country":"US", "region":"New York", "city":"New York", "timezone":"America/New_York"})), true, Some("America/New_York")),
+        (&second_proxy, None, true, Some("Pacific/Auckland")),
+        (&second_proxy, None, false, None),
+        (&first_proxy, Some(json!({"country":"JP", "region":"Tokyo", "city":"Tokyo", "timezone":"Asia/Tokyo"})), false, Some("Asia/Tokyo")),
     ].into_iter().enumerate() {
         let location = location.map(|value| serde_json::from_value::<RequestLocation>(value).unwrap());
         store.set_egress(account_id, Some(OutboundProxy::parse(&proxy.uri()).unwrap()), location);
-        let mut stream = provider.execute(planned_request("openai", operation.clone()), context_with_state_owner(&format!("req_proxy_location_{index}"), account_id)).await.expect("prepare");
+        let mut stream = provider.execute(planned_request("openai", operation.clone()), context_with_state_owner_and_location(&format!("req_proxy_location_{index}"), account_id, global_enabled.then(global_request_location))).await.expect("prepare");
         while let Some(event) = stream.next().await { event.expect("proxy response"); }
         let requests = proxy.received_requests().await.unwrap();
         let body = captured_request_body(requests.last().expect("request reached selected proxy"));
-        assert_eq!(body.pointer("/tools/0/user_location/timezone"), Some(&json!(expected)));
+        assert_eq!(body.pointer("/tools/0/user_location/timezone"), expected.map(|timezone| json!(timezone)).as_ref());
+        let expected = expected.unwrap_or("UTC");
         assert_eq!(body.pointer("/input/0/content/0/text"), Some(&json!(format!("<environment_context><timezone>{expected}</timezone></environment_context>"))));
         assert_eq!(body.pointer("/input/1/content/0/text"), original.pointer("/input/1/content/0/text"));
         assert_eq!(body.pointer("/input/0/internal_chat_message_metadata_passthrough/create_time"), Some(&json!(1789293131.822)));
     }
-    assert_eq!(first_proxy.received_requests().await.unwrap().len(), 1);
-    assert_eq!(second_proxy.received_requests().await.unwrap().len(), 2);
+    assert_eq!(first_proxy.received_requests().await.unwrap().len(), 2);
+    assert_eq!(second_proxy.received_requests().await.unwrap().len(), 3);
 }
 
 const OFFICIAL_FIXTURE: &[u8] =
@@ -188,9 +191,6 @@ fn wire_profile() -> CodexWireProfileState {
         arch: "x86_64".to_owned(),
         terminal: "provider-contract".to_owned(),
         residency: None,
-        location: serde_json::from_value(json!({
-            "country": "NZ", "region": "Auckland", "city": "Auckland", "timezone": "Pacific/Auckland"
-        })).expect("configured request location"),
         verified_at: Utc::now(),
     })
 }
@@ -536,12 +536,22 @@ fn contract_account_scope() -> Arc<FrozenAccountScope> {
     ))
 }
 
+fn global_request_location() -> gateway_core::account::RequestLocation {
+    gateway_core::account::RequestLocation {
+        country: "NZ".to_owned(),
+        region: "Auckland".to_owned(),
+        city: "Auckland".to_owned(),
+        timezone: "Pacific/Auckland".parse().expect("valid timezone"),
+    }
+}
+
 fn context(request_id: &str, cancellation: CancellationToken) -> AttemptContext {
     AttemptContext::new(
         RequestAttemptContext::new(
             ModelRequestId::new(request_id).expect("request id"),
             ClientApiKeyId::new("key_openai_contract").expect("client key id"),
-        ),
+        )
+        .with_request_location(Some(global_request_location())),
         NonZeroU32::new(1).expect("attempt"),
         SystemTime::now() + Duration::from_secs(30),
         account_policy(),
@@ -561,7 +571,8 @@ fn diagnostic_context(request_id: &str, account_id: &str) -> AttemptContext {
         RequestAttemptContext::new(
             ModelRequestId::new(request_id).expect("request id"),
             ClientApiKeyId::new("key_openai_contract").expect("client key id"),
-        ),
+        )
+        .with_request_location(Some(global_request_location())),
         NonZeroU32::new(1).expect("attempt"),
         SystemTime::now() + Duration::from_secs(30),
         account_policy(),
@@ -576,6 +587,18 @@ fn diagnostic_context(request_id: &str, account_id: &str) -> AttemptContext {
 }
 
 fn context_with_state_owner(request_id: &str, owner_account_id: &str) -> AttemptContext {
+    context_with_state_owner_and_location(
+        request_id,
+        owner_account_id,
+        Some(global_request_location()),
+    )
+}
+
+fn context_with_state_owner_and_location(
+    request_id: &str,
+    owner_account_id: &str,
+    location: Option<gateway_core::account::RequestLocation>,
+) -> AttemptContext {
     let owner = ProviderAccountStateOwner::new(
         ProviderKind::new("openai").expect("provider"),
         ProviderAccountId::new(owner_account_id).expect("owner account id"),
@@ -584,7 +607,8 @@ fn context_with_state_owner(request_id: &str, owner_account_id: &str) -> Attempt
         RequestAttemptContext::new(
             ModelRequestId::new(request_id).expect("request id"),
             ClientApiKeyId::new("key_openai_contract").expect("client key id"),
-        ),
+        )
+        .with_request_location(location),
         NonZeroU32::new(1).expect("attempt"),
         SystemTime::now() + Duration::from_secs(30),
         account_policy(),
@@ -610,7 +634,8 @@ fn replay_any_context(request_id: &str, owner_account_id: &str) -> AttemptContex
         RequestAttemptContext::new(
             ModelRequestId::new(request_id).expect("request id"),
             ClientApiKeyId::new("key_openai_contract").expect("client key id"),
-        ),
+        )
+        .with_request_location(Some(global_request_location())),
         NonZeroU32::new(2).expect("attempt"),
         SystemTime::now() + Duration::from_secs(30),
         account_policy(),
@@ -644,7 +669,8 @@ fn pinned_continuation_context(
         RequestAttemptContext::new(
             ModelRequestId::new(request_id).expect("request id"),
             ClientApiKeyId::new("key_openai_contract").expect("client key id"),
-        ),
+        )
+        .with_request_location(Some(global_request_location())),
         NonZeroU32::new(attempt_index).expect("attempt index"),
         SystemTime::now() + Duration::from_secs(30),
         account_policy(),
@@ -661,7 +687,8 @@ fn external_continuation_context(request_id: &str) -> AttemptContext {
         RequestAttemptContext::new(
             ModelRequestId::new(request_id).expect("request id"),
             ClientApiKeyId::new("key_openai_contract").expect("client key id"),
-        ),
+        )
+        .with_request_location(Some(global_request_location())),
         NonZeroU32::new(1).expect("attempt"),
         SystemTime::now() + Duration::from_secs(30),
         account_policy(),
@@ -719,7 +746,7 @@ async fn capture_scoped_http_request(
 }
 
 #[tokio::test]
-async fn provider_should_send_the_configured_location_to_the_upstream() {
+async fn provider_should_send_the_request_snapshot_location_to_the_upstream() {
     let body = json!({
         "model": "gpt-5.4",
         "input": [{

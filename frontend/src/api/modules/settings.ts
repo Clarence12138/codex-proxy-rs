@@ -1,9 +1,12 @@
 import type { RequestOptions } from '../request'
+import type { RequestLocation } from '../types/request-location'
 import request from '../request'
 
 export type RotationStrategy = 'smart' | 'quota_reset_priority' | 'round_robin' | 'sticky'
 
 export interface RuntimeSettings {
+  requestLocationEnabled: boolean
+  requestLocation: RequestLocation
   modelMappings: Record<string, string>
   refreshMarginSeconds: number
   refreshConcurrency: number

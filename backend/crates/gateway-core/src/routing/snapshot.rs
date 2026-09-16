@@ -28,6 +28,8 @@ const MAXIMUM_CATALOG_STABILITY_ATTEMPTS: usize = 4;
 /// Store 在一个一致性读取中提供的调度设置事实。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SnapshotSettingsFacts {
+    request_location_enabled: bool,
+    request_location: crate::account::RequestLocation,
     max_concurrent_per_account: u32,
     max_waiting_per_key: u32,
     max_waiting_per_account: u32,
@@ -40,6 +42,17 @@ pub struct SnapshotSettingsFacts {
 }
 
 impl SnapshotSettingsFacts {
+    #[must_use]
+    pub fn with_request_location(
+        mut self,
+        location: crate::account::RequestLocation,
+        enabled: bool,
+    ) -> Self {
+        self.request_location_enabled = enabled;
+        self.request_location = location;
+        self
+    }
+
     #[must_use]
     pub const fn with_concurrency_queues(
         mut self,
@@ -63,6 +76,8 @@ impl SnapshotSettingsFacts {
         min_codex_cli_version: Option<String>,
     ) -> Self {
         Self {
+            request_location_enabled: false,
+            request_location: crate::account::RequestLocation::default(),
             max_concurrent_per_account,
             max_waiting_per_key: 0,
             max_waiting_per_account: 0,
@@ -452,6 +467,18 @@ async fn compile_runtime_snapshot(
         ));
     }
 
+    // 关闭自定义时保留持久化值，但不生成全局覆盖；请求继续使用客户端字段。
+    let request_location = if facts.settings.request_location_enabled {
+        Some(
+            facts
+                .settings
+                .request_location
+                .normalized()
+                .map_err(|_| RuntimeSnapshotCompileError::InvalidData)?,
+        )
+    } else {
+        None
+    };
     RuntimeSnapshot::new(
         facts.config_revision,
         selection_policy,
@@ -462,6 +489,7 @@ async fn compile_runtime_snapshot(
     .map_err(|_| RuntimeSnapshotCompileError::InvalidData)
     .map(|snapshot| {
         snapshot
+            .with_request_location(request_location)
             .with_client_queue_policy(client_queue_policy)
             .with_model_mappings(model_mappings)
             .with_account_directory(account_directory)
@@ -473,6 +501,7 @@ async fn compile_runtime_snapshot(
 /// 数据面使用的不可变配置快照。
 #[derive(Debug, Clone)]
 pub struct RuntimeSnapshot {
+    request_location: Option<crate::account::RequestLocation>,
     revision: ConfigRevision,
     client_queue_policy: ConcurrencyQueuePolicy,
     account_selection_policy: AccountSelectionPolicy,
@@ -489,6 +518,15 @@ pub struct RuntimeSnapshot {
 }
 
 impl RuntimeSnapshot {
+    #[must_use]
+    pub fn with_request_location(
+        mut self,
+        location: Option<crate::account::RequestLocation>,
+    ) -> Self {
+        self.request_location = location;
+        self
+    }
+
     #[must_use]
     pub const fn client_queue_policy(&self) -> ConcurrencyQueuePolicy {
         self.client_queue_policy
@@ -568,6 +606,7 @@ impl RuntimeSnapshot {
         client_policy_map.retain(|_, policy| policy.enabled());
 
         Ok(Self {
+            request_location: None,
             revision,
             account_selection_policy,
             client_queue_policy: ConcurrencyQueuePolicy::default(),
@@ -876,6 +915,7 @@ impl RuntimeSnapshot {
 
         Ok(RoutingPlan {
             config_revision: self.revision,
+            request_location: self.request_location.clone(),
             account_selection_policy: self.account_selection_policy,
             operation: operation.kind(),
             max_attempts: NonZeroU32::new(super::MAX_REQUEST_ATTEMPTS)
@@ -917,6 +957,7 @@ impl RuntimeSnapshot {
         };
         Ok(RoutingPlan {
             config_revision: self.revision,
+            request_location: self.request_location.clone(),
             account_selection_policy: self.account_selection_policy,
             operation: operation.kind(),
             max_attempts: NonZeroU32::new(super::MAX_REQUEST_ATTEMPTS)

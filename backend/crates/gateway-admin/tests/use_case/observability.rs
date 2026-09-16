@@ -753,6 +753,8 @@ struct FixtureSettingsStore;
 impl SettingsStore for FixtureSettingsStore {
     async fn load_runtime_settings(&self) -> AdminStoreResult<RuntimeSettings> {
         Ok(RuntimeSettings {
+            request_location_enabled: false,
+            request_location: Default::default(),
             config_revision: Revision::new(1).expect("revision"),
             model_mappings: Default::default(),
             refresh_margin_seconds: 300,

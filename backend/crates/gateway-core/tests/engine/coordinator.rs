@@ -585,6 +585,14 @@ fn plan_with_policy(
     operation: &Operation,
     account_selection_policy: AccountSelectionPolicy,
 ) -> RoutingPlan {
+    plan_with_location(operation, account_selection_policy, Default::default())
+}
+
+fn plan_with_location(
+    operation: &Operation,
+    account_selection_policy: AccountSelectionPolicy,
+    request_location: gateway_core::account::RequestLocation,
+) -> RoutingPlan {
     let provider = ProviderKind::new("openai").expect("provider");
     let public_model = PublicModelId::new("gpt-5").expect("public model");
     let capabilities = ModelCapabilities::new(BTreeSet::from([operation.kind()]), Some(32_000))
@@ -626,6 +634,7 @@ fn plan_with_policy(
         Vec::new(),
     )
     .expect("snapshot")
+    .with_request_location(Some(request_location))
     .with_account_directory(Arc::clone(&directory));
     snapshot
         .plan(
@@ -4496,4 +4505,51 @@ fn deadline_before_first_event_records_no_provider_circuit_failure() {
     assert_eq!(state.attempts.len(), 1);
     assert_eq!(state.finalizations[0].outcome, ExecutionOutcome::Failed);
     assert!(!state.finalizations[0].committed);
+}
+
+#[test]
+fn global_request_location_should_reach_every_account_retry() {
+    let operation = generate_operation();
+    let location = gateway_core::account::RequestLocation {
+        timezone: "Asia/Tokyo".parse().unwrap(),
+        ..Default::default()
+    };
+    let route_plan = plan_with_location(
+        &operation,
+        plan(&operation).account_selection_policy(),
+        location.clone(),
+    );
+    let (coordinator, _, provider) = coordinator(vec![
+        Script::Stream {
+            account_id: "acct_first",
+            items: vec![Err(ProviderError::new(
+                ProviderErrorKind::RateLimited,
+                UpstreamSendState::Sent,
+            )
+            .with_status(429)
+            .with_replay_safe())],
+        },
+        Script::Stream {
+            account_id: "acct_second",
+            items: complete_stream(None),
+        },
+    ]);
+    let mut session = block_on(coordinator.start(
+        model_request(&operation, SystemTime::now() + Duration::from_secs(30)),
+        operation,
+        route_plan,
+        None,
+        None,
+        CancellationToken::new(),
+    ))
+    .unwrap();
+    block_on(session.collect_uncommitted()).unwrap();
+    block_on(session.commit_downstream(Some(200))).unwrap();
+    let contexts = provider.contexts.lock().unwrap();
+    assert_eq!(contexts.len(), 2);
+    assert!(
+        contexts
+            .iter()
+            .all(|context| context.request_location() == Some(&location))
+    );
 }
