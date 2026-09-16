@@ -1065,7 +1065,7 @@ impl ProviderLeasePort for DiagnosticLeasePort {
                                 last_started_at: None,
                                 quota_reset_at: None,
                                 quota_remaining_rank: None,
-                                rate_limited_until: None,
+                                cooldown: None,
                                 failure_rate_basis_points: None,
                                 first_output_latency_ms: None,
                             },

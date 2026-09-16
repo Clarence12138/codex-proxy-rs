@@ -106,7 +106,7 @@ pub struct AccountRuntimeSignals {
     pub quota_reset_at: Option<SystemTime>,
     /// Provider 归一化的剩余额度基点：0 耗尽，10_000 全部可用。
     pub quota_remaining_rank: Option<u64>,
-    pub rate_limited_until: Option<SystemTime>,
+    pub cooldown: Option<super::AccountCooldown>,
     pub failure_rate_basis_points: Option<u16>,
     pub first_output_latency_ms: Option<u64>,
 }
@@ -316,8 +316,8 @@ impl AccountRuntimeSignals {
     }
 
     #[must_use]
-    pub const fn with_rate_limit(mut self, rate_limited_until: Option<SystemTime>) -> Self {
-        self.rate_limited_until = rate_limited_until;
+    pub const fn with_rate_limit(mut self, cooldown: Option<super::AccountCooldown>) -> Self {
+        self.cooldown = cooldown;
         self
     }
 
@@ -654,7 +654,7 @@ impl AccountSelector {
         if !context.eligibility.bypasses_local_eligibility() {
             let status = candidate
                 .account
-                .status_projection(context.now, candidate.signals.rate_limited_until)
+                .status_projection(context.now, candidate.signals.cooldown)
                 .status;
             if status != AccountStatus::Normal {
                 return Some(AccountSchedulingBlocker::LocalAvailability);

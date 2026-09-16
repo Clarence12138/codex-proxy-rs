@@ -451,11 +451,7 @@ impl CodexCredentialSelector {
             let mut rate_limits = HashMap::with_capacity(accounts.len());
             if !diagnostic {
                 for account in &accounts {
-                    let until = self
-                        .quota
-                        .rate_limited_until(account.id())
-                        .await
-                        .unwrap_or(None);
+                    let until = self.quota.cooldown(account.id()).await.unwrap_or(None);
                     rate_limits.insert(account.id().clone(), until);
                 }
             }
@@ -487,7 +483,7 @@ impl CodexCredentialSelector {
                             last_started_at: None,
                             quota_reset_at: None,
                             quota_remaining_rank: None,
-                            rate_limited_until: None,
+                            cooldown: None,
                             failure_rate_basis_points: None,
                             first_output_latency_ms: None,
                         })
@@ -1330,7 +1326,7 @@ fn affinity_selection_for_bound_account(
     };
     match candidate
         .account
-        .status_projection(now, candidate.signals.rate_limited_until)
+        .status_projection(now, candidate.signals.cooldown)
         .status
     {
         AccountStatus::Normal => AffinitySelection::preferred(account_id),
@@ -1349,7 +1345,7 @@ fn affinity_unavailable_reason(
 ) -> AffinityEscapeReason {
     match candidate
         .account
-        .status_projection(now, candidate.signals.rate_limited_until)
+        .status_projection(now, candidate.signals.cooldown)
         .status
     {
         AccountStatus::QuotaExhausted => AffinityEscapeReason::QuotaExhausted,

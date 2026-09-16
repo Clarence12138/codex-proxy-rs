@@ -1,13 +1,15 @@
 //! OpenAI 上游失败分类、恢复决策与稳定错误投影。
 
 use super::*;
-use crate::transport::diagnostics::is_capacity_error;
 
 /// OpenAI 失败对 Smart 账号分数的结构化 reason 闭集。
 ///
 /// 已归一的上游 code 优先；code 缺失时才读取结构化客户端错误的 code/type。
 /// 新增错误、裸 HTTP 状态和内部错误 kind 默认都不会进入该闭集。
+/// 容量拒绝影响短期调度健康度，但不证明账号凭据或额度失效。
 const OPENAI_ACCOUNT_SCORE_FAILURE_REASONS: &[&str] = &[
+    "server_is_overloaded",
+    "slow_down",
     "rate_limit_exceeded",
     "rate_limit_error",
     "server_error",
@@ -32,17 +34,6 @@ fn openai_account_score_failure_reason(error: &ProviderError) -> Option<&str> {
 /// 返回该 OpenAI 失败是否属于 Smart 账号计分闭集。
 #[doc(hidden)]
 pub fn openai_failure_affects_account_score(error: &ProviderError) -> bool {
-    let client_error = error.client_visible_upstream_error();
-    if is_capacity_error(
-        error
-            .upstream_code()
-            .map(OpaqueUpstreamValue::as_str)
-            .or_else(|| client_error.and_then(ClientVisibleUpstreamError::code)),
-        client_error.and_then(ClientVisibleUpstreamError::error_type),
-        client_error.map(ClientVisibleUpstreamError::message),
-    ) {
-        return false;
-    }
     openai_account_score_failure_reason(error).is_some_and(is_openai_account_score_failure_reason)
 }
 
@@ -53,6 +44,7 @@ pub(super) struct MappedProviderFailure {
     /// 原始上游错误描述，仅在凭据错误状态下持久化。
     pub(super) error_message: Option<String>,
     pub(super) cyber_policy_failure: bool,
+    pub(super) upstream_capacity_failure: bool,
     pub(super) set_cookie_headers: Vec<String>,
     pub(super) rate_limit_headers: Vec<(String, String)>,
     pub(super) observation: Option<ProviderResponseObservation>,
@@ -67,6 +59,7 @@ impl MappedProviderFailure {
             account_failure: None,
             error_message: None,
             cyber_policy_failure: false,
+            upstream_capacity_failure: false,
             set_cookie_headers: Vec::new(),
             rate_limit_headers: Vec::new(),
             observation: None,
@@ -211,6 +204,7 @@ pub(super) struct OpenAiFailureContext<'a> {
     pub(super) response_origin: &'a Url,
     pub(super) cyber_policy_scope: Option<&'a CodexCyberPolicyScope>,
     pub(super) allows_account_state_mutation: bool,
+    pub(super) allows_capacity_feedback: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -409,6 +403,13 @@ pub(super) async fn apply_failure(
             error = %error,
             "Failed to persist OpenAI response cookies"
         );
+    }
+    // 探测只验证恢复，不能把探测自身的单请求并发当作业务负载证据。
+    if context.allows_capacity_feedback && failure.upstream_capacity_failure {
+        context
+            .quota
+            .apply_capacity_failure(account, SystemTime::now())
+            .await;
     }
 }
 
@@ -1269,6 +1270,12 @@ pub(super) fn map_upstream_failure(
         ),
         error_message: failure.client_message,
         cyber_policy_failure,
+        // 仅上游明确返回的容量/服务不可用计数；本地连接保护也会映射为
+        // Unavailable，不能用通用 ProviderErrorKind 推断容量证据。
+        upstream_capacity_failure: matches!(
+            category,
+            CodexFailureCategory::CapacityUnavailable | CodexFailureCategory::Unavailable
+        ),
         set_cookie_headers: failure.set_cookie_headers,
         rate_limit_headers: failure.rate_limit_headers,
         observation,

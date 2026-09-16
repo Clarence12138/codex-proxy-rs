@@ -181,6 +181,16 @@ pub trait ProviderLeasePort: Send + Sync {
         &self,
         request: ProviderLeaseRequest,
     ) -> BoxFuture<'_, Result<ProviderLeaseAcquisition, ProviderStoreError>>;
+
+    /// 读取指定账号当前的在途请求数；只用于容量熔断的峰值证据，
+    /// 支持租约信号的存储实现覆盖，否则视为不可观测（空映射）。
+    fn account_in_flight<'a>(
+        &'a self,
+        account_ids: &'a [ProviderAccountId],
+    ) -> BoxFuture<'a, Result<BTreeMap<ProviderAccountId, u32>, ProviderStoreError>> {
+        let _ = account_ids;
+        Box::pin(async move { Ok(BTreeMap::new()) })
+    }
 }
 
 /// Provider 从原始会话锚点派生的不可逆亲和键。
@@ -596,12 +606,16 @@ pub trait ProviderCredentialStatePort: Send + Sync {
     ) -> BoxFuture<'a, Result<(), ProviderStoreError>>;
 }
 
-/// 临时 cooldown 只保存可丢失的调度截止时间，不进入账号持久状态。
+/// 账号级 cooldown 的来源类别；调度状态统一按 `rate_limited` 处理。
+pub use crate::account::AccountCooldownKind as ProviderCooldownKind;
+
+/// 可丢失的账号冷却事实，不进入持久状态；探测冻结到期后仍需确认恢复。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProviderCooldown {
     account_id: ProviderAccountId,
     credential_revision: CredentialRevision,
     until: SystemTime,
+    kind: ProviderCooldownKind,
 }
 
 impl ProviderCooldown {
@@ -611,10 +625,26 @@ impl ProviderCooldown {
         credential_revision: CredentialRevision,
         until: SystemTime,
     ) -> Self {
+        Self::new_with_kind(
+            account_id,
+            credential_revision,
+            until,
+            ProviderCooldownKind::RateLimit,
+        )
+    }
+
+    #[must_use]
+    pub const fn new_with_kind(
+        account_id: ProviderAccountId,
+        credential_revision: CredentialRevision,
+        until: SystemTime,
+        kind: ProviderCooldownKind,
+    ) -> Self {
         Self {
             account_id,
             credential_revision,
             until,
+            kind,
         }
     }
 
@@ -631,6 +661,19 @@ impl ProviderCooldown {
     #[must_use]
     pub const fn until(&self) -> SystemTime {
         self.until
+    }
+
+    #[must_use]
+    pub const fn scheduling_state(&self) -> crate::account::AccountCooldown {
+        crate::account::AccountCooldown {
+            until: self.until,
+            kind: self.kind,
+        }
+    }
+
+    #[must_use]
+    pub const fn kind(&self) -> ProviderCooldownKind {
+        self.kind
     }
 }
 
@@ -749,6 +792,29 @@ pub trait ProviderCooldownPort: Send + Sync {
         &'a self,
         account_id: &'a ProviderAccountId,
     ) -> BoxFuture<'a, Result<bool, ProviderStoreError>>;
+
+    /// 记录一次容量类失败并返回滑动窗口内的累计次数，同时把观测到的账号
+    /// 在途并发并入窗口峰值（`in_flight` 为 0 表示本次未观测，跳过峰值更新）。
+    /// 只服务容量熔断触发器；调用频率受失败频率约束，不需要批量接口。
+    fn record_capacity_failure<'a>(
+        &'a self,
+        account_id: &'a ProviderAccountId,
+        window: Duration,
+        in_flight: u32,
+    ) -> BoxFuture<'a, Result<u32, ProviderStoreError>>;
+
+    /// 普通请求成功后原子清除临时限流及失败证据；必须保留任何容量冻结。
+    fn clear_after_success<'a>(
+        &'a self,
+        account_id: &'a ProviderAccountId,
+        through_revision: CredentialRevision,
+    ) -> BoxFuture<'a, Result<(), ProviderStoreError>>;
+
+    /// 读取窗口内观测到的在途并发峰值；无证据时返回 `None`。
+    fn capacity_peak_in_flight<'a>(
+        &'a self,
+        account_id: &'a ProviderAccountId,
+    ) -> BoxFuture<'a, Result<Option<u32>, ProviderStoreError>>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -864,6 +930,118 @@ pub trait ProviderRuntimePolicyPort: Send + Sync {
     fn load_refresh_policy(
         &self,
     ) -> BoxFuture<'_, Result<ProviderRefreshPolicy, ProviderStoreError>>;
+
+    /// 读取账号容量熔断策略；默认关闭，只有实现运行时设置的存储需要覆盖。
+    fn load_freeze_policy(
+        &self,
+    ) -> BoxFuture<'_, Result<ProviderFreezePolicy, ProviderStoreError>> {
+        Box::pin(async move { Ok(ProviderFreezePolicy::disabled()) })
+    }
+}
+
+/// 账号容量熔断（自动冻结）策略；来源于 `runtime_settings`，
+/// 由 Provider 触发路径与恢复 worker 共享同一份配置事实。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderFreezePolicy {
+    enabled: bool,
+    threshold: u32,
+    window: Duration,
+    freeze_duration: Duration,
+    probe_enabled: bool,
+    probe_model: Option<String>,
+    adaptive_concurrency: bool,
+}
+
+impl ProviderFreezePolicy {
+    /// 边界与迁移 `0010_account_auto_freeze.sql` 的 check 约束一致；
+    /// store 层写入前已校验，这里兜底防御越界配置。
+    pub fn try_new(
+        enabled: bool,
+        threshold: u32,
+        window_seconds: u64,
+        freeze_duration_seconds: u64,
+        probe_enabled: bool,
+        probe_model: Option<String>,
+        adaptive_concurrency: bool,
+    ) -> Result<Self, ProviderStoreError> {
+        if !(2..=1_000).contains(&threshold)
+            || !(60..=3_600).contains(&window_seconds)
+            || !(300..=604_800).contains(&freeze_duration_seconds)
+            || probe_model.as_deref().is_some_and(|model| {
+                model.is_empty()
+                    || model.len() > 128
+                    || model != model.trim()
+                    || model.bytes().any(|byte| byte.is_ascii_control())
+            })
+        {
+            return Err(ProviderStoreError::new(
+                ProviderStoreErrorKind::InvalidData,
+                "validate freeze policy",
+            ));
+        }
+        Ok(Self {
+            enabled,
+            threshold,
+            window: Duration::from_secs(window_seconds),
+            freeze_duration: Duration::from_secs(freeze_duration_seconds),
+            probe_enabled,
+            probe_model,
+            adaptive_concurrency,
+        })
+    }
+
+    /// 功能关闭时的全零策略；触发路径与 worker 都以此短路。
+    #[must_use]
+    pub const fn disabled() -> Self {
+        Self {
+            enabled: false,
+            threshold: 2,
+            window: Duration::from_secs(60),
+            freeze_duration: Duration::from_secs(300),
+            probe_enabled: false,
+            probe_model: None,
+            adaptive_concurrency: false,
+        }
+    }
+
+    #[must_use]
+    pub const fn enabled(&self) -> bool {
+        self.enabled
+    }
+
+    /// 窗口内触发冻结的请求级失败次数阈值。
+    #[must_use]
+    pub const fn threshold(&self) -> u32 {
+        self.threshold
+    }
+
+    /// 失败计数滑动窗口；每次失败都会顺延窗口。
+    #[must_use]
+    pub const fn window(&self) -> Duration {
+        self.window
+    }
+
+    /// 冻结时长；探测失败后的顺延也使用该值。
+    #[must_use]
+    pub const fn freeze_duration(&self) -> Duration {
+        self.freeze_duration
+    }
+
+    #[must_use]
+    pub const fn probe_enabled(&self) -> bool {
+        self.probe_enabled
+    }
+
+    /// 探测模型；`None` 表示由 worker 选择账号可用的第一个模型。
+    #[must_use]
+    pub fn probe_model(&self) -> Option<&str> {
+        self.probe_model.as_deref()
+    }
+
+    #[must_use]
+    pub const fn adaptive_concurrency(&self) -> bool {
+        self.adaptive_concurrency
+    }
 }
 
 /// OAuth pending flow 的原始绑定只在 Provider 与 Store 边界内短暂存在。

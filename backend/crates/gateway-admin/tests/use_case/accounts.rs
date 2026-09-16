@@ -544,6 +544,8 @@ pub(super) struct FakeAccountStore {
     quota_window_usage: Mutex<Vec<AccountUsageWindowResult>>,
     quota_window_queries: Mutex<Vec<AccountUsageWindowQuery>>,
     quota_forecast_history: Mutex<QuotaForecastHistory>,
+    update_commands: Mutex<Vec<UpdateAccount>>,
+    pub(super) lowered_limits: Mutex<Vec<(String, u32)>>,
 }
 
 impl FakeAccountStore {
@@ -551,7 +553,7 @@ impl FakeAccountStore {
         Self::with_account(account_record(kind), events)
     }
 
-    fn with_account(account: AccountRecord, events: EventLog) -> Arc<Self> {
+    pub(super) fn with_account(account: AccountRecord, events: EventLog) -> Arc<Self> {
         Arc::new(Self {
             events,
             accounts: Mutex::new(vec![account]),
@@ -562,7 +564,16 @@ impl FakeAccountStore {
             quota_window_usage: Mutex::new(Vec::new()),
             quota_window_queries: Mutex::new(Vec::new()),
             quota_forecast_history: Mutex::new(QuotaForecastHistory::default()),
+            update_commands: Mutex::new(Vec::new()),
+            lowered_limits: Mutex::new(Vec::new()),
         })
+    }
+
+    pub(super) fn update_commands(&self) -> Vec<UpdateAccount> {
+        self.update_commands
+            .lock()
+            .expect("update commands")
+            .clone()
     }
 
     pub(super) fn fail_next_commit(&self) {
@@ -630,7 +641,7 @@ impl FakeAccountStore {
             credential_state: account.credential_state,
             access_token_expires_at: account.access_token_expires_at.map(Into::into),
             quota: account.quota,
-            rate_limited_until: None,
+            cooldown: None,
             last_error_reason: account.last_error_reason,
             last_error_message: account.last_error_message.clone(),
         };
@@ -852,10 +863,43 @@ impl AccountStore for FakeAccountStore {
         self.record("store.update_account");
         self.record_context(context);
         self.require_commit()?;
+        self.update_commands
+            .lock()
+            .expect("update commands")
+            .push(command.clone());
         Ok(AccountUpdateResult {
             config_revision: revision(2),
             account_id: ProviderAccountId::new(command.account_id).expect("account ID"),
         })
+    }
+
+    async fn lower_concurrency_limit(
+        &self,
+        account_id: &ProviderAccountId,
+        limit: gateway_core::account::AccountConcurrencyLimit,
+        _: &MutationContext,
+    ) -> AdminStoreResult<Option<AccountUpdateResult>> {
+        let mut accounts = self.accounts.lock().expect("accounts");
+        let Some(account) = accounts
+            .iter_mut()
+            .find(|account| account.id == account_id.as_str())
+        else {
+            return Ok(None);
+        };
+        if !account.enabled
+            || account.concurrency_limit.map_or(5, |value| value.get()) <= limit.get()
+        {
+            return Ok(None);
+        }
+        account.concurrency_limit = Some(limit);
+        self.lowered_limits
+            .lock()
+            .expect("lowered limits")
+            .push((account.id.clone(), limit.get()));
+        Ok(Some(AccountUpdateResult {
+            config_revision: revision(2),
+            account_id: account_id.clone(),
+        }))
     }
 
     async fn recover_account(
@@ -946,6 +990,13 @@ impl SettingsStore for StaticSettingsStore {
             usage_retention_days: 30,
             ops_event_retention_days: 30,
             audit_retention_days: 30,
+            account_auto_freeze_enabled: true,
+            account_auto_freeze_threshold: 12,
+            account_auto_freeze_window_seconds: 600,
+            account_auto_freeze_duration_seconds: 7_200,
+            account_auto_freeze_probe_enabled: true,
+            account_auto_freeze_probe_model: None,
+            account_auto_freeze_adaptive_concurrency: true,
             updated_at: Utc::now(),
         })
     }

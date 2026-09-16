@@ -407,15 +407,11 @@ impl AccountStore for PgAdminAccountStore {
             ));
         }
         let now = Utc::now();
-        let rate_limited_until = runtime
-            .rate_limited_until
-            .into_iter()
-            .map(|(account_id, until)| (account_id, until.into()))
-            .collect::<BTreeMap<_, _>>();
+        let cooldown = runtime.cooldown;
         let now_system_time = std::time::SystemTime::from(now);
-        let active_rate_limited_ids = rate_limited_until
+        let active_rate_limited_ids = cooldown
             .iter()
-            .filter(|(_, until)| **until > now_system_time)
+            .filter(|(_, cooldown)| cooldown.is_active(now_system_time))
             .map(|(account_id, _)| account_id.clone())
             .collect::<Vec<_>>();
         let page =
@@ -434,7 +430,7 @@ impl AccountStore for PgAdminAccountStore {
                 let projection = account_status_projection(
                     &summary,
                     now.into(),
-                    rate_limited_until.get(&account_id).copied(),
+                    cooldown.get(&account_id).copied(),
                 );
                 let mut account = admin_account_record(summary)?;
                 account.groups = groups_by_account.remove(&account_id).unwrap_or_default();
@@ -466,12 +462,8 @@ impl AccountStore for PgAdminAccountStore {
             return Ok(None);
         };
         let now = Utc::now();
-        let rate_limited_until = runtime
-            .rate_limited_until
-            .get(account_id)
-            .copied()
-            .map(Into::into);
-        let projection = account_status_projection(&record.summary, now.into(), rate_limited_until);
+        let cooldown = runtime.cooldown.get(account_id).copied();
+        let projection = account_status_projection(&record.summary, now.into(), cooldown);
         let account_id = record.summary.id.clone();
         let mut groups = self
             .account_groups_by_account(std::slice::from_ref(&account_id))
@@ -743,6 +735,69 @@ impl AccountStore for PgAdminAccountStore {
             config_revision,
             account_id,
         })
+    }
+
+    async fn lower_concurrency_limit(
+        &self,
+        account_id: &CoreProviderAccountId,
+        limit: AccountConcurrencyLimit,
+        context: &MutationContext,
+    ) -> AdminStoreResult<Option<AccountUpdateResult>> {
+        let mut transaction = self.pool.begin().await.map_err(|_| {
+            admin_store_error(ENTITY, postgres_unavailable("begin concurrency reduction"))
+        })?;
+        let result =
+            async {
+                // 与管理写入采用相同锁顺序；锁住默认值后再检查账号最新设置，避免把旧快照写回。
+                let default_limit: i64 = sqlx::query_scalar(
+                "select max_concurrent_per_account from runtime_settings where id = 1 for update"
+            ).fetch_one(&mut *transaction).await
+                .map_err(|_| postgres_unavailable("lock default concurrency"))?;
+                let changed = sqlx::query_scalar::<_, String>(
+                    "update provider_accounts set concurrency_limit = $2, updated_at = now()
+                 where id = $1 and enabled = true and coalesce(concurrency_limit, $3) > $2
+                 returning id",
+                )
+                .bind(account_id.as_str())
+                .bind(i64::from(limit.get()))
+                .bind(default_limit)
+                .fetch_optional(&mut *transaction)
+                .await
+                .map_err(|_| postgres_unavailable("lower account concurrency"))?;
+                if changed.is_none() {
+                    return Ok(None);
+                }
+                let revision = bump_config_revision_in_transaction(&mut transaction).await?;
+                append_admin_audit_event_in_transaction(
+                    &mut transaction,
+                    mutation_audit(
+                        context,
+                        "adapt_concurrency",
+                        "provider_account",
+                        account_id.as_str(),
+                        vec!["concurrency_limit".to_owned()],
+                    ),
+                    revision,
+                )
+                .await?;
+                Ok(Some(revision))
+            }
+            .await;
+        let revision = super::repository::finish_admin_transaction(
+            transaction,
+            result,
+            "lower account concurrency",
+        )
+        .await
+        .map_err(|error| admin_store_error(ENTITY, error))?;
+        revision
+            .map(|revision| {
+                Ok(AccountUpdateResult {
+                    config_revision: admin_revision(revision)?,
+                    account_id: account_id.clone(),
+                })
+            })
+            .transpose()
     }
 
     async fn recover_account(

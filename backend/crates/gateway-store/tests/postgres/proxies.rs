@@ -834,7 +834,7 @@ async fn migration_backfills_shared_proxies_without_changing_credentials() {
     .await
     .unwrap();
     sqlx::raw_sql(include_str!(
-        "../../../../migrations/0010_proxy_request_location.sql"
+        "../../../../migrations/0012_proxy_request_location.sql"
     ))
     .execute(&database.pool)
     .await

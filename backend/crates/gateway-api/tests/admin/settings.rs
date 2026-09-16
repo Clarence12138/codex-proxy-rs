@@ -55,7 +55,14 @@ fn update_body() -> Value {
         "minCodexCliVersion": "0.40.0",
         "usageRetentionDays": 32,
         "opsEventRetentionDays": 31,
-        "auditRetentionDays": 91
+        "auditRetentionDays": 91,
+        "accountAutoFreezeEnabled": true,
+        "accountAutoFreezeThreshold": 12,
+        "accountAutoFreezeWindowSeconds": 600,
+        "accountAutoFreezeDurationSeconds": 7200,
+        "accountAutoFreezeProbeEnabled": true,
+        "accountAutoFreezeProbeModel": null,
+        "accountAutoFreezeAdaptiveConcurrency": true
     })
 }
 
@@ -120,6 +127,13 @@ fn settings_response_should_cover_the_full_runtime_settings_contract() {
         usage_retention_days: 32,
         ops_event_retention_days: 31,
         audit_retention_days: 91,
+        account_auto_freeze_enabled: true,
+        account_auto_freeze_threshold: 12,
+        account_auto_freeze_window_seconds: 600,
+        account_auto_freeze_duration_seconds: 7_200,
+        account_auto_freeze_probe_enabled: true,
+        account_auto_freeze_probe_model: None,
+        account_auto_freeze_adaptive_concurrency: true,
         updated_at: Utc
             .with_ymd_and_hms(2026, 8, 2, 10, 30, 0)
             .single()
@@ -149,6 +163,13 @@ fn settings_response_should_cover_the_full_runtime_settings_contract() {
             "usageRetentionDays": 32,
             "opsEventRetentionDays": 31,
             "auditRetentionDays": 91,
+            "accountAutoFreezeEnabled": true,
+            "accountAutoFreezeThreshold": 12,
+            "accountAutoFreezeWindowSeconds": 600,
+            "accountAutoFreezeDurationSeconds": 7200,
+            "accountAutoFreezeProbeEnabled": true,
+            "accountAutoFreezeProbeModel": null,
+            "accountAutoFreezeAdaptiveConcurrency": true,
             "updatedAt": "2026-08-02T10:30:00Z"
         })
     );
@@ -203,6 +224,13 @@ fn settings_request_and_response_fields_should_stay_in_lockstep() {
         usage_retention_days: u32::try_from(request.usage_retention_days).expect("u32"),
         ops_event_retention_days: u32::try_from(request.ops_event_retention_days).expect("u32"),
         audit_retention_days: u32::try_from(request.audit_retention_days).expect("u32"),
+        account_auto_freeze_enabled: true,
+        account_auto_freeze_threshold: 12,
+        account_auto_freeze_window_seconds: 600,
+        account_auto_freeze_duration_seconds: 7_200,
+        account_auto_freeze_probe_enabled: true,
+        account_auto_freeze_probe_model: None,
+        account_auto_freeze_adaptive_concurrency: true,
         updated_at: chrono::Utc::now(),
     };
 

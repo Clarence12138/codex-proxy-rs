@@ -583,6 +583,72 @@ impl AccountErrorReason {
     }
 }
 
+/// 账号冷却的原因与恢复方式。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AccountCooldownKind {
+    /// 上游 429 临时限流；默认类别，兼容升级前未标记的存量 key。
+    #[default]
+    RateLimit,
+    /// 容量类错误高频触发后由熔断策略写入的自动冻结。
+    CapacityFreeze,
+    /// 到期后仍阻止调度，必须由恢复探测成功或管理员恢复解除。
+    CapacityFreezeProbe,
+}
+
+impl AccountCooldownKind {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::RateLimit => "rate_limit",
+            Self::CapacityFreeze => "capacity_freeze",
+            Self::CapacityFreezeProbe => "capacity_freeze_probe",
+        }
+    }
+
+    #[must_use]
+    pub const fn is_capacity_freeze(self) -> bool {
+        matches!(self, Self::CapacityFreeze | Self::CapacityFreezeProbe)
+    }
+
+    #[must_use]
+    pub const fn requires_probe(self) -> bool {
+        matches!(self, Self::CapacityFreezeProbe)
+    }
+
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "rate_limit" => Some(Self::RateLimit),
+            "capacity_freeze" => Some(Self::CapacityFreeze),
+            "capacity_freeze_probe" => Some(Self::CapacityFreezeProbe),
+            _ => None,
+        }
+    }
+}
+
+/// 账号级冷却投影；探测冻结的 until 是下次探测时间，不是自动放行时间。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AccountCooldown {
+    pub until: SystemTime,
+    pub kind: AccountCooldownKind,
+}
+
+impl AccountCooldown {
+    #[must_use]
+    pub fn is_active(self, now: SystemTime) -> bool {
+        self.kind.requires_probe() || self.until > now
+    }
+}
+
+impl From<SystemTime> for AccountCooldown {
+    fn from(until: SystemTime) -> Self {
+        Self {
+            until,
+            kind: AccountCooldownKind::RateLimit,
+        }
+    }
+}
+
 /// 唯一状态解析器的完整输入事实。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AccountStatusFacts {
@@ -590,7 +656,7 @@ pub struct AccountStatusFacts {
     pub credential_state: CredentialState,
     pub access_token_expires_at: Option<SystemTime>,
     pub quota: QuotaState,
-    pub rate_limited_until: Option<SystemTime>,
+    pub cooldown: Option<AccountCooldown>,
     pub last_error_reason: Option<AccountErrorReason>,
     pub last_error_message: Option<String>,
 }
@@ -601,8 +667,8 @@ pub struct AccountStatusProjection {
     pub status: AccountStatus,
     pub error_reason: Option<AccountErrorReason>,
     pub error_message: Option<String>,
-    /// 仅 `rate_limited` 状态携带仍有效的运行时冷却截止时间。
-    pub rate_limited_until: Option<SystemTime>,
+    /// 仅 `rate_limited` 状态携带仍有效的运行时冷却事实。
+    pub cooldown: Option<AccountCooldown>,
 }
 
 /// 从独立事实派生唯一、互斥的对外状态。
@@ -625,21 +691,21 @@ pub fn resolve_account_status(
             status: AccountStatus::Error,
             error_reason: Some(facts.last_error_reason.unwrap_or(default_reason)),
             error_message: facts.last_error_message.clone(),
-            rate_limited_until: None,
+            cooldown: None,
         };
     }
     if facts.quota.is_exhausted() {
         return status_projection(AccountStatus::QuotaExhausted);
     }
     if facts
-        .rate_limited_until
-        .is_some_and(|rate_limited_until| rate_limited_until > now)
+        .cooldown
+        .is_some_and(|cooldown| cooldown.is_active(now))
     {
         return AccountStatusProjection {
             status: AccountStatus::RateLimited,
             error_reason: None,
             error_message: None,
-            rate_limited_until: facts.rate_limited_until,
+            cooldown: facts.cooldown,
         };
     }
     status_projection(AccountStatus::Normal)
@@ -650,7 +716,7 @@ const fn status_projection(status: AccountStatus) -> AccountStatusProjection {
         status,
         error_reason: None,
         error_message: None,
-        rate_limited_until: None,
+        cooldown: None,
     }
 }
 
@@ -920,7 +986,7 @@ impl ProviderAccount {
     pub fn status_projection(
         &self,
         now: SystemTime,
-        rate_limited_until: Option<SystemTime>,
+        cooldown: Option<AccountCooldown>,
     ) -> AccountStatusProjection {
         resolve_account_status(
             &AccountStatusFacts {
@@ -928,7 +994,7 @@ impl ProviderAccount {
                 credential_state: self.credential_state,
                 access_token_expires_at: self.access_token_expires_at,
                 quota: self.quota,
-                rate_limited_until,
+                cooldown,
                 last_error_reason: self.last_error_reason,
                 last_error_message: self.last_error_message.clone(),
             },

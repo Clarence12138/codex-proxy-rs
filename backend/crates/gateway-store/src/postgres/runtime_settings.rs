@@ -11,7 +11,8 @@ use sqlx::{PgPool, Postgres, Transaction};
 use gateway_core::account::RotationStrategy;
 use gateway_core::policy::CodexClientVersion;
 use gateway_core::provider_ports::{
-    ProviderRefreshPolicy, ProviderRuntimePolicyPort, ProviderStoreError, ProviderStoreErrorKind,
+    ProviderFreezePolicy, ProviderRefreshPolicy, ProviderRuntimePolicyPort, ProviderStoreError,
+    ProviderStoreErrorKind,
 };
 
 use crate::{Revision, StoreError, StoreResult, postgres_unavailable};
@@ -36,6 +37,13 @@ pub struct RuntimeSettings {
     pub usage_retention_days: u32,
     pub ops_event_retention_days: u32,
     pub audit_retention_days: u32,
+    pub account_auto_freeze_enabled: bool,
+    pub account_auto_freeze_threshold: u32,
+    pub account_auto_freeze_window_seconds: u64,
+    pub account_auto_freeze_duration_seconds: u64,
+    pub account_auto_freeze_probe_enabled: bool,
+    pub account_auto_freeze_probe_model: Option<String>,
+    pub account_auto_freeze_adaptive_concurrency: bool,
     pub updated_at: DateTime<Utc>,
 }
 
@@ -64,6 +72,34 @@ impl fmt::Debug for RuntimeSettings {
             .field("usage_retention_days", &self.usage_retention_days)
             .field("ops_event_retention_days", &self.ops_event_retention_days)
             .field("audit_retention_days", &self.audit_retention_days)
+            .field(
+                "account_auto_freeze_enabled",
+                &self.account_auto_freeze_enabled,
+            )
+            .field(
+                "account_auto_freeze_threshold",
+                &self.account_auto_freeze_threshold,
+            )
+            .field(
+                "account_auto_freeze_window_seconds",
+                &self.account_auto_freeze_window_seconds,
+            )
+            .field(
+                "account_auto_freeze_duration_seconds",
+                &self.account_auto_freeze_duration_seconds,
+            )
+            .field(
+                "account_auto_freeze_probe_enabled",
+                &self.account_auto_freeze_probe_enabled,
+            )
+            .field(
+                "account_auto_freeze_probe_model",
+                &self.account_auto_freeze_probe_model,
+            )
+            .field(
+                "account_auto_freeze_adaptive_concurrency",
+                &self.account_auto_freeze_adaptive_concurrency,
+            )
             .field("updated_at", &self.updated_at)
             .finish()
     }
@@ -88,6 +124,13 @@ pub struct RuntimeSettingsUpdate {
     pub usage_retention_days: u32,
     pub ops_event_retention_days: u32,
     pub audit_retention_days: u32,
+    pub account_auto_freeze_enabled: bool,
+    pub account_auto_freeze_threshold: u32,
+    pub account_auto_freeze_window_seconds: u64,
+    pub account_auto_freeze_duration_seconds: u64,
+    pub account_auto_freeze_probe_enabled: bool,
+    pub account_auto_freeze_probe_model: Option<String>,
+    pub account_auto_freeze_adaptive_concurrency: bool,
 }
 
 impl fmt::Debug for RuntimeSettingsUpdate {
@@ -118,9 +161,13 @@ impl RuntimeSettingsUpdate {
             || self.usage_retention_days < 31
             || self.ops_event_retention_days == 0
             || self.audit_retention_days == 0
+            || !(2..=1_000).contains(&self.account_auto_freeze_threshold)
+            || !(60..=3_600).contains(&self.account_auto_freeze_window_seconds)
+            || !(300..=604_800).contains(&self.account_auto_freeze_duration_seconds)
             || !valid_model_mappings(&self.model_mappings)
             || !valid_client_version(self.min_codex_desktop_version.as_deref())
             || !valid_client_version(self.min_codex_cli_version.as_deref())
+            || !valid_probe_model(self.account_auto_freeze_probe_model.as_deref())
             || RotationStrategy::parse(&self.rotation_strategy).is_none()
         {
             return Err(StoreError::InvalidData {
@@ -182,7 +229,11 @@ pub(crate) async fn load_runtime_settings_from_pool(pool: &PgPool) -> StoreResul
                     refresh_concurrency, max_concurrent_per_account, request_interval_ms,
                     rotation_strategy, model_mappings_json, usage_retention_days, ops_event_retention_days,
                     audit_retention_days, min_codex_desktop_version,
-                    min_codex_cli_version, updated_at, max_waiting_per_key, max_waiting_per_account, concurrency_wait_timeout_seconds
+                    min_codex_cli_version, updated_at, max_waiting_per_key, max_waiting_per_account, concurrency_wait_timeout_seconds,
+                    account_auto_freeze_enabled, account_auto_freeze_threshold,
+                    account_auto_freeze_window_seconds, account_auto_freeze_duration_seconds,
+                    account_auto_freeze_probe_enabled, account_auto_freeze_probe_model,
+                    account_auto_freeze_adaptive_concurrency
              from runtime_settings where id = 1",
         )
     .fetch_optional(pool)
@@ -211,6 +262,25 @@ impl ProviderRuntimePolicyPort for PgRuntimeSettingsRepository {
             )
         })
     }
+
+    fn load_freeze_policy(
+        &self,
+    ) -> futures::future::BoxFuture<'_, Result<ProviderFreezePolicy, ProviderStoreError>> {
+        Box::pin(async move {
+            let settings = RuntimeSettingsRepository::load_runtime_settings(self)
+                .await
+                .map_err(|_| provider_unavailable("load freeze policy"))?;
+            ProviderFreezePolicy::try_new(
+                settings.account_auto_freeze_enabled,
+                settings.account_auto_freeze_threshold,
+                settings.account_auto_freeze_window_seconds,
+                settings.account_auto_freeze_duration_seconds,
+                settings.account_auto_freeze_probe_enabled,
+                settings.account_auto_freeze_probe_model,
+                settings.account_auto_freeze_adaptive_concurrency,
+            )
+        })
+    }
 }
 
 pub(crate) async fn load_runtime_settings_in_transaction(
@@ -221,7 +291,11 @@ pub(crate) async fn load_runtime_settings_in_transaction(
                 refresh_concurrency, max_concurrent_per_account, request_interval_ms,
                 rotation_strategy, model_mappings_json, usage_retention_days, ops_event_retention_days,
                 audit_retention_days, min_codex_desktop_version,
-                min_codex_cli_version, updated_at, max_waiting_per_key, max_waiting_per_account, concurrency_wait_timeout_seconds
+                min_codex_cli_version, updated_at, max_waiting_per_key, max_waiting_per_account, concurrency_wait_timeout_seconds,
+                account_auto_freeze_enabled, account_auto_freeze_threshold,
+                account_auto_freeze_window_seconds, account_auto_freeze_duration_seconds,
+                account_auto_freeze_probe_enabled, account_auto_freeze_probe_model,
+                account_auto_freeze_adaptive_concurrency
          from runtime_settings where id = 1",
     )
     .fetch_optional(&mut **transaction)
@@ -259,8 +333,15 @@ pub(crate) async fn update_runtime_settings_in_transaction(
                      max_waiting_per_key = $13,
                      max_waiting_per_account = $14,
                      concurrency_wait_timeout_seconds = $15,
-                     request_location_json = $16,
-                     request_location_enabled = $17,
+                     account_auto_freeze_enabled = $16,
+                     account_auto_freeze_threshold = $17,
+                     account_auto_freeze_window_seconds = $18,
+                     account_auto_freeze_duration_seconds = $19,
+                     account_auto_freeze_probe_enabled = $20,
+                     account_auto_freeze_probe_model = $21,
+                     account_auto_freeze_adaptive_concurrency = $22,
+                     request_location_json = $23,
+                     request_location_enabled = $24,
 	                 updated_at = now()
 	             where id = 1
 	             returning config_revision",
@@ -280,6 +361,16 @@ pub(crate) async fn update_runtime_settings_in_transaction(
     .bind(i64::from(update.max_waiting_per_key))
     .bind(i64::from(update.max_waiting_per_account))
     .bind(i64::from(update.concurrency_wait_timeout_seconds))
+    .bind(update.account_auto_freeze_enabled)
+    .bind(i64::from(update.account_auto_freeze_threshold))
+    .bind(i64::try_from(update.account_auto_freeze_window_seconds).map_err(|_| invalid_numeric())?)
+    .bind(
+        i64::try_from(update.account_auto_freeze_duration_seconds)
+            .map_err(|_| invalid_numeric())?,
+    )
+    .bind(update.account_auto_freeze_probe_enabled)
+    .bind(update.account_auto_freeze_probe_model.as_deref())
+    .bind(update.account_auto_freeze_adaptive_concurrency)
     .bind(sqlx::types::Json(
         update
             .request_location
@@ -356,6 +447,13 @@ struct RuntimeSettingsRow {
     max_waiting_per_key: i64,
     max_waiting_per_account: i64,
     concurrency_wait_timeout_seconds: i64,
+    account_auto_freeze_enabled: bool,
+    account_auto_freeze_threshold: i64,
+    account_auto_freeze_window_seconds: i64,
+    account_auto_freeze_duration_seconds: i64,
+    account_auto_freeze_probe_enabled: bool,
+    account_auto_freeze_probe_model: Option<String>,
+    account_auto_freeze_adaptive_concurrency: bool,
 }
 
 fn runtime_settings_from_row(row: RuntimeSettingsRow) -> StoreResult<RuntimeSettings> {
@@ -383,6 +481,13 @@ fn runtime_settings_from_row(row: RuntimeSettingsRow) -> StoreResult<RuntimeSett
         max_waiting_per_key: to_u32(row.max_waiting_per_key)?,
         max_waiting_per_account: to_u32(row.max_waiting_per_account)?,
         concurrency_wait_timeout_seconds: to_u32(row.concurrency_wait_timeout_seconds)?,
+        account_auto_freeze_enabled: row.account_auto_freeze_enabled,
+        account_auto_freeze_threshold: to_u32(row.account_auto_freeze_threshold)?,
+        account_auto_freeze_window_seconds: to_u64(row.account_auto_freeze_window_seconds)?,
+        account_auto_freeze_duration_seconds: to_u64(row.account_auto_freeze_duration_seconds)?,
+        account_auto_freeze_probe_enabled: row.account_auto_freeze_probe_enabled,
+        account_auto_freeze_probe_model: row.account_auto_freeze_probe_model,
+        account_auto_freeze_adaptive_concurrency: row.account_auto_freeze_adaptive_concurrency,
     })
 }
 
@@ -431,4 +536,13 @@ fn valid_model_name(value: &str, max_len: usize) -> bool {
 
 fn valid_client_version(value: Option<&str>) -> bool {
     value.is_none_or(|value| CodexClientVersion::parse(value).is_ok())
+}
+
+fn valid_probe_model(value: Option<&str>) -> bool {
+    value.is_none_or(|value| {
+        !value.is_empty()
+            && value.len() <= 128
+            && value == value.trim()
+            && !value.bytes().any(|byte| byte.is_ascii_control())
+    })
 }

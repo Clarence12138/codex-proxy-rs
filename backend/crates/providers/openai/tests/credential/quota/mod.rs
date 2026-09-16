@@ -1,5 +1,6 @@
 //! OpenAI 额度事实边界与展示快照回归。
 
+mod capacity_freeze;
 mod recovery;
 mod refresh_timing;
 mod scheduling;
@@ -67,6 +68,8 @@ fn quota_service_with_base_url(
         http,
         base_url,
         Arc::new(crate::support::MemoryCooldownPort::new()),
+        Arc::new(crate::support::TestLeaseCoordinator::default()),
+        crate::support::runtime_policy(),
     )
 }
 

@@ -10,14 +10,15 @@ use gateway_core::{
     routing::ProviderKind,
     runtime::SnapshotControl,
     task::{
-        DaemonRestartPolicy, WorkerContribution, WorkerId, WorkerKind, WorkerRegistration,
-        WorkerRunnable,
+        DaemonRestartPolicy, WorkerContribution, WorkerId, WorkerKind, WorkerLeaseRequest,
+        WorkerRegistration, WorkerRunnable, WorkerSchedule,
     },
 };
 use secrecy::{ExposeSecret as _, SecretString};
 use serde::Deserialize;
 
 pub mod backup;
+pub mod freeze_recovery;
 pub mod model;
 pub mod ports;
 mod use_case;
@@ -210,6 +211,12 @@ impl AdminServices {
         self.key_usage.as_ref()
     }
 
+    /// 取得账号服务的共享句柄；后台编排（冻结恢复 worker）需要持有 Arc。
+    #[must_use]
+    pub fn accounts_handle(&self) -> Arc<dyn AccountsService> {
+        Arc::clone(&self.accounts)
+    }
+
     #[must_use]
     pub fn proxies(&self) -> &dyn ProxiesService {
         self.proxies.as_ref()
@@ -392,7 +399,7 @@ pub async fn initialize(
             registry.clone(),
         )),
         auth,
-        accounts,
+        accounts: accounts.clone(),
         account_groups: Arc::new(DefaultAccountGroupService::new(
             store.account_groups(),
             store.account_runtime(),
@@ -419,6 +426,13 @@ pub async fn initialize(
         import_tasks,
         backups,
     };
+    let freeze_recovery =
+        freeze_recovery::FreezeRecoveryTask::new(freeze_recovery::FreezeRecoveryDeps {
+            accounts: Arc::clone(&accounts) as Arc<dyn AccountsService>,
+            store: store.accounts(),
+            runtime: store.account_runtime(),
+            settings: store.settings(),
+        });
     let mut worker_contributions = backup_worker_contribution(backup_task)?;
     let id = WorkerId::try_new(WorkerKind::AccountImport, "admin")
         .map_err(|_| AdminError::internal("导入 Worker ID 不合法"))?;
@@ -433,6 +447,7 @@ pub async fn initialize(
     )
     .map_err(|_| AdminError::internal("导入 Worker 注册信息不合法"))?;
     worker_contributions.push(WorkerContribution::Registration(registration));
+    worker_contributions.extend(freeze_recovery_worker_contribution(freeze_recovery)?);
     Ok(AdminBundle {
         services,
         worker_contributions,
@@ -455,6 +470,37 @@ fn backup_worker_contribution(
         },
     )
     .map_err(|_| AdminError::internal("备份 Worker 注册信息不合法"))?;
+    Ok(vec![WorkerContribution::Registration(registration)])
+}
+
+/// 冻结恢复 Worker 注册：按固定周期扫描活跃冻结，owner 固定。
+fn freeze_recovery_worker_contribution(
+    task: freeze_recovery::FreezeRecoveryTask,
+) -> Result<Vec<WorkerContribution>, AdminError> {
+    let id = WorkerId::try_new(
+        WorkerKind::AccountFreezeRecovery,
+        freeze_recovery::FREEZE_RECOVERY_WORKER_OWNER,
+    )
+    .map_err(|_| AdminError::internal("冻结恢复 Worker ID 不合法"))?;
+    let schedule = WorkerSchedule::try_new(
+        freeze_recovery::FREEZE_RECOVERY_INTERVAL,
+        freeze_recovery::WORKER_INITIAL_BACKOFF,
+        freeze_recovery::WORKER_MAXIMUM_BACKOFF,
+        freeze_recovery::WORKER_LEASE_TTL,
+        freeze_recovery::WORKER_LEASE_RENEWAL,
+    )
+    .map_err(|_| AdminError::internal("冻结恢复 Worker 调度配置不合法"))?;
+    let lease = WorkerLeaseRequest::try_new(id.clone(), freeze_recovery::WORKER_LEASE_TTL)
+        .map_err(|_| AdminError::internal("冻结恢复 Worker 租约配置不合法"))?;
+    let registration = WorkerRegistration::try_new(
+        id,
+        WorkerRunnable::Scheduled {
+            schedule,
+            lease: Some(lease),
+            task: Box::new(task),
+        },
+    )
+    .map_err(|_| AdminError::internal("冻结恢复 Worker 注册信息不合法"))?;
     Ok(vec![WorkerContribution::Registration(registration)])
 }
 

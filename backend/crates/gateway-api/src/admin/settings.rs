@@ -50,6 +50,13 @@ pub struct RuntimeSettingsView {
     pub usage_retention_days: u64,
     pub ops_event_retention_days: u64,
     pub audit_retention_days: u64,
+    pub account_auto_freeze_enabled: bool,
+    pub account_auto_freeze_threshold: u64,
+    pub account_auto_freeze_window_seconds: u64,
+    pub account_auto_freeze_duration_seconds: u64,
+    pub account_auto_freeze_probe_enabled: bool,
+    pub account_auto_freeze_probe_model: Option<String>,
+    pub account_auto_freeze_adaptive_concurrency: bool,
     pub updated_at: DateTime<Utc>,
 }
 
@@ -73,6 +80,13 @@ pub struct UpdateRuntimeSettingsRequest {
     pub usage_retention_days: u64,
     pub ops_event_retention_days: u64,
     pub audit_retention_days: u64,
+    pub account_auto_freeze_enabled: bool,
+    pub account_auto_freeze_threshold: u64,
+    pub account_auto_freeze_window_seconds: u64,
+    pub account_auto_freeze_duration_seconds: u64,
+    pub account_auto_freeze_probe_enabled: bool,
+    pub account_auto_freeze_probe_model: Option<String>,
+    pub account_auto_freeze_adaptive_concurrency: bool,
 }
 
 impl UpdateRuntimeSettingsRequest {
@@ -117,6 +131,35 @@ impl UpdateRuntimeSettingsRequest {
             self.min_codex_cli_version.as_deref(),
             "minCodexCliVersion",
         )?;
+        for (value, field) in [
+            (
+                self.account_auto_freeze_threshold,
+                "accountAutoFreezeThreshold",
+            ),
+            (
+                self.account_auto_freeze_window_seconds,
+                "accountAutoFreezeWindowSeconds",
+            ),
+            (
+                self.account_auto_freeze_duration_seconds,
+                "accountAutoFreezeDurationSeconds",
+            ),
+        ] {
+            require_positive_i64(value, field)?;
+        }
+        if !(2..=1_000).contains(&self.account_auto_freeze_threshold) {
+            return Err(WireValidationError::new("accountAutoFreezeThreshold"));
+        }
+        if !(60..=3_600).contains(&self.account_auto_freeze_window_seconds) {
+            return Err(WireValidationError::new("accountAutoFreezeWindowSeconds"));
+        }
+        if !(300..=604_800).contains(&self.account_auto_freeze_duration_seconds) {
+            return Err(WireValidationError::new("accountAutoFreezeDurationSeconds"));
+        }
+        validate_optional_probe_model(
+            self.account_auto_freeze_probe_model.as_deref(),
+            "accountAutoFreezeProbeModel",
+        )?;
         Ok(())
     }
 
@@ -148,6 +191,14 @@ impl UpdateRuntimeSettingsRequest {
                 .map_err(|_| WireValidationError::new("settingsOpsRetentionOverflow"))?,
             audit_retention_days: u32::try_from(self.audit_retention_days)
                 .map_err(|_| WireValidationError::new("settingsAuditRetentionOverflow"))?,
+            account_auto_freeze_enabled: self.account_auto_freeze_enabled,
+            account_auto_freeze_threshold: u32::try_from(self.account_auto_freeze_threshold)
+                .map_err(|_| WireValidationError::new("settingsFreezeThresholdOverflow"))?,
+            account_auto_freeze_window_seconds: self.account_auto_freeze_window_seconds,
+            account_auto_freeze_duration_seconds: self.account_auto_freeze_duration_seconds,
+            account_auto_freeze_probe_enabled: self.account_auto_freeze_probe_enabled,
+            account_auto_freeze_probe_model: self.account_auto_freeze_probe_model,
+            account_auto_freeze_adaptive_concurrency: self.account_auto_freeze_adaptive_concurrency,
         })
     }
 }
@@ -171,6 +222,14 @@ impl From<RuntimeSettings> for RuntimeSettingsView {
             usage_retention_days: u64::from(settings.usage_retention_days),
             ops_event_retention_days: u64::from(settings.ops_event_retention_days),
             audit_retention_days: u64::from(settings.audit_retention_days),
+            account_auto_freeze_enabled: settings.account_auto_freeze_enabled,
+            account_auto_freeze_threshold: u64::from(settings.account_auto_freeze_threshold),
+            account_auto_freeze_window_seconds: settings.account_auto_freeze_window_seconds,
+            account_auto_freeze_duration_seconds: settings.account_auto_freeze_duration_seconds,
+            account_auto_freeze_probe_enabled: settings.account_auto_freeze_probe_enabled,
+            account_auto_freeze_probe_model: settings.account_auto_freeze_probe_model,
+            account_auto_freeze_adaptive_concurrency: settings
+                .account_auto_freeze_adaptive_concurrency,
             updated_at: settings.updated_at,
         }
     }
@@ -466,6 +525,22 @@ fn validate_optional_client_version(
     Ok(())
 }
 
+/// 探测模型为可选自由文本：非空、去首尾空白后不变、无控制字符且不超过 128 字节。
+fn validate_optional_probe_model(
+    value: Option<&str>,
+    field: &'static str,
+) -> Result<(), WireValidationError> {
+    if value.is_some_and(|value| {
+        value.is_empty()
+            || value.len() > 128
+            || value != value.trim()
+            || value.bytes().any(|byte| byte.is_ascii_control())
+    }) {
+        return Err(WireValidationError::new(field));
+    }
+    Ok(())
+}
+
 fn map_wire_error(error: WireValidationError) -> AdminError {
     let message = match error.field() {
         "settingsRefreshConcurrencyOverflow" => "refreshConcurrency 不合法".to_owned(),
@@ -474,6 +549,11 @@ fn map_wire_error(error: WireValidationError) -> AdminError {
         "settingsOpsRetentionOverflow" => "opsEventRetentionDays 不合法".to_owned(),
         "settingsAuditRetentionOverflow" => "auditRetentionDays 不合法".to_owned(),
         "requestLocation" => "请求位置不合法，请检查国家代码、地区和城市".to_owned(),
+        "settingsFreezeThresholdOverflow" => "accountAutoFreezeThreshold 不合法".to_owned(),
+        "accountAutoFreezeThreshold" => "账号自动冻结阈值应为 2～1000 的整数".to_owned(),
+        "accountAutoFreezeWindowSeconds" => "账号自动冻结统计窗口应为 60～3600 秒".to_owned(),
+        "accountAutoFreezeDurationSeconds" => "账号自动冻结时长应为 300～604800 秒".to_owned(),
+        "accountAutoFreezeProbeModel" => "探测模型格式不合法".to_owned(),
         "minCodexDesktopVersion" => "Codex Desktop 最低版本格式不合法".to_owned(),
         "minCodexCliVersion" => "Codex CLI 最低版本格式不合法".to_owned(),
         field => format!("{field} 字段不合法"),

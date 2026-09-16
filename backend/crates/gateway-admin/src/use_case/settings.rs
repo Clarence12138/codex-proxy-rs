@@ -126,7 +126,11 @@ fn validate_settings(command: &ReplaceRuntimeSettings) -> Result<(), AdminError>
         && command.audit_retention_days > 0
         && valid_client_version(command.min_codex_desktop_version.as_deref())
         && valid_client_version(command.min_codex_cli_version.as_deref())
-        && i64::try_from(command.request_interval_ms).is_ok();
+        && valid_probe_model(command.account_auto_freeze_probe_model.as_deref())
+        && i64::try_from(command.request_interval_ms).is_ok()
+        && (2..=1_000).contains(&command.account_auto_freeze_threshold)
+        && (60..=3_600).contains(&command.account_auto_freeze_window_seconds)
+        && (300..=604_800).contains(&command.account_auto_freeze_duration_seconds);
     if valid {
         Ok(())
     } else {
@@ -136,4 +140,13 @@ fn validate_settings(command: &ReplaceRuntimeSettings) -> Result<(), AdminError>
 
 fn valid_client_version(value: Option<&str>) -> bool {
     value.is_none_or(|value| CodexClientVersion::parse(value).is_ok())
+}
+
+fn valid_probe_model(value: Option<&str>) -> bool {
+    value.is_none_or(|value| {
+        !value.is_empty()
+            && value.len() <= 128
+            && value == value.trim()
+            && !value.bytes().any(|byte| byte.is_ascii_control())
+    })
 }

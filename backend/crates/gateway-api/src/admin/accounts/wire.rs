@@ -361,8 +361,10 @@ pub struct AccountGroupRefView {
 pub struct AccountQuotaView {
     pub refreshed_at_display: String,
     pub limit_reached: bool,
-    /// 429 临时限流（Redis 冷却）到期时间展示；非限流中为 `null`。
+    /// 冷却到期或可开始恢复探测的时间；非限流中为 `null`。
     pub rate_limited_until: Option<String>,
+    pub rate_limit_reason: Option<String>,
+    pub recovery_probe_required: bool,
     pub windows: Vec<AccountQuotaWindowView>,
 }
 

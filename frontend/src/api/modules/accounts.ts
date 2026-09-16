@@ -33,6 +33,8 @@ export interface AccountQuota {
   limitReached: boolean
   // 429 临时限流（Redis 冷却）到期时间；非限流中为 null。
   rateLimitedUntil: string | null
+  rateLimitReason: 'upstream_rate_limit' | 'capacity_freeze' | null
+  recoveryProbeRequired: boolean
   windows: AccountQuotaWindow[]
 }
 

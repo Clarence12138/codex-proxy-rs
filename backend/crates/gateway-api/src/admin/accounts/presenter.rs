@@ -66,7 +66,7 @@ pub(super) fn account_view(item: AccountDirectoryItem, now: DateTime<Utc>) -> Ac
         quota,
     } = item;
     let status = projection.status.as_str().to_owned();
-    let rate_limited_until = projection.rate_limited_until.map(DateTime::<Utc>::from);
+    let cooldown = projection.cooldown;
     let expires_at = account.access_token_expires_at.as_ref().map(china_rfc3339);
     let added_at = china_rfc3339(&account.created_at);
     let updated_at = china_rfc3339(&account.updated_at);
@@ -75,7 +75,7 @@ pub(super) fn account_view(item: AccountDirectoryItem, now: DateTime<Utc>) -> Ac
     if account.authentication_kind == "api_key" {
         usage.window_label_display = "通用额度".to_owned();
     }
-    let (quota, refresh_token_expires_at) = account_quota_view(quota, rate_limited_until, now);
+    let (quota, refresh_token_expires_at) = account_quota_view(quota, cooldown, now);
     AccountView {
         id: account.id.clone(),
         name: account.name,
@@ -189,7 +189,7 @@ fn forecast_usd_display(value: Option<f64>) -> String {
 
 pub(super) fn account_quota_view(
     mut quota: ProviderQuota,
-    rate_limited_until: Option<DateTime<Utc>>,
+    cooldown: Option<gateway_core::account::AccountCooldown>,
     now: DateTime<Utc>,
 ) -> (AccountQuotaView, Option<String>) {
     quota.apply_limit_reached_display();
@@ -200,12 +200,22 @@ pub(super) fn account_quota_view(
         .observed_at
         .map_or_else(|| "—".to_owned(), |value| relative_time(value, now));
     let windows = quota.windows.into_iter().map(quota_window_view).collect();
-    let rate_limited_until = rate_limited_until.map(|until| china_datetime(&until));
+    let rate_limited_until = cooldown.map(|value| china_datetime(&value.until.into()));
+    let rate_limit_reason = cooldown.map(|value| {
+        if value.kind.is_capacity_freeze() {
+            "capacity_freeze".to_owned()
+        } else {
+            "upstream_rate_limit".to_owned()
+        }
+    });
+    let recovery_probe_required = cooldown.is_some_and(|value| value.kind.requires_probe());
     (
         AccountQuotaView {
             refreshed_at_display,
             limit_reached: quota.limit_reached,
             rate_limited_until,
+            rate_limit_reason,
+            recovery_probe_required,
             windows,
         },
         refresh_token_expires_at,

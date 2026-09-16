@@ -419,6 +419,13 @@ impl SettingsStore for MemorySettingsStore {
             usage_retention_days: command.usage_retention_days,
             ops_event_retention_days: command.ops_event_retention_days,
             audit_retention_days: command.audit_retention_days,
+            account_auto_freeze_enabled: true,
+            account_auto_freeze_threshold: 12,
+            account_auto_freeze_window_seconds: 600,
+            account_auto_freeze_duration_seconds: 7_200,
+            account_auto_freeze_probe_enabled: true,
+            account_auto_freeze_probe_model: None,
+            account_auto_freeze_adaptive_concurrency: true,
             updated_at: Utc::now(),
         };
         *settings = updated.clone();
@@ -589,7 +596,7 @@ impl AccountGroupStore for MemoryAccountGroupStore {
                     credential_state: CredentialState::Ready,
                     access_token_expires_at: None,
                     quota: QuotaState::default(),
-                    rate_limited_until: None,
+                    cooldown: None,
                     last_error_reason: None,
                     last_error_message: None,
                 },
@@ -603,7 +610,7 @@ impl AccountGroupStore for MemoryAccountGroupStore {
                     credential_state: CredentialState::Ready,
                     access_token_expires_at: None,
                     quota: QuotaState::default(),
-                    rate_limited_until: None,
+                    cooldown: None,
                     last_error_reason: None,
                     last_error_message: None,
                 },
@@ -898,6 +905,15 @@ impl AccountStore for UnusedStore {
         Err(unavailable("account enabled"))
     }
 
+    async fn lower_concurrency_limit(
+        &self,
+        _: &gateway_core::account::ProviderAccountId,
+        _: gateway_core::account::AccountConcurrencyLimit,
+        _: &MutationContext,
+    ) -> AdminStoreResult<Option<gateway_admin::model::accounts::AccountUpdateResult>> {
+        Ok(None)
+    }
+
     async fn recover_account(
         &self,
         _: &ProviderAccountId,
@@ -935,16 +951,38 @@ impl AccountStore for UnusedStore {
 impl AccountRuntimeStore for UnusedStore {
     async fn active_rate_limits(&self) -> AdminStoreResult<AccountRuntimeSnapshot> {
         Ok(AccountRuntimeSnapshot {
-            rate_limited_until: BTreeMap::new(),
+            cooldown: BTreeMap::new(),
             in_flight: Some(BTreeMap::new()),
         })
     }
 
     async fn account_runtime(&self, _: &[String]) -> AdminStoreResult<AccountRuntimeSnapshot> {
         Ok(AccountRuntimeSnapshot {
-            rate_limited_until: BTreeMap::new(),
+            cooldown: BTreeMap::new(),
             in_flight: Some(BTreeMap::new()),
         })
+    }
+
+    async fn active_freezes(
+        &self,
+    ) -> AdminStoreResult<BTreeMap<String, gateway_admin::model::accounts::AccountFreeze>> {
+        Ok(BTreeMap::new())
+    }
+
+    async fn capacity_peaks(
+        &self,
+        _account_ids: &[String],
+    ) -> AdminStoreResult<BTreeMap<String, u32>> {
+        Ok(BTreeMap::new())
+    }
+
+    async fn finish_freeze(
+        &self,
+        _account_id: &str,
+        _expected: &gateway_admin::model::accounts::AccountFreeze,
+        _postpone_until: Option<DateTime<Utc>>,
+    ) -> AdminStoreResult<bool> {
+        Ok(false)
     }
 }
 
@@ -1249,6 +1287,13 @@ fn test_runtime_settings() -> RuntimeSettings {
         usage_retention_days: 31,
         ops_event_retention_days: 30,
         audit_retention_days: 90,
+        account_auto_freeze_enabled: true,
+        account_auto_freeze_threshold: 12,
+        account_auto_freeze_window_seconds: 600,
+        account_auto_freeze_duration_seconds: 7_200,
+        account_auto_freeze_probe_enabled: true,
+        account_auto_freeze_probe_model: None,
+        account_auto_freeze_adaptive_concurrency: true,
         updated_at: Utc::now(),
     }
 }

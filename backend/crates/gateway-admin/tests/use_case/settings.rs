@@ -77,6 +77,13 @@ async fn settings_should_reject_zero_refresh_margin_before_store_call() {
                 usage_retention_days: 31,
                 ops_event_retention_days: 30,
                 audit_retention_days: 30,
+                account_auto_freeze_enabled: true,
+                account_auto_freeze_threshold: 12,
+                account_auto_freeze_window_seconds: 600,
+                account_auto_freeze_duration_seconds: 7_200,
+                account_auto_freeze_probe_enabled: true,
+                account_auto_freeze_probe_model: None,
+                account_auto_freeze_adaptive_concurrency: true,
             },
         )
         .await

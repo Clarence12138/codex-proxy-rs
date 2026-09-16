@@ -209,7 +209,7 @@ impl AccountGroupStore for PgAccountGroupRepository {
                         credential_state: account.credential_state,
                         access_token_expires_at: account.access_token_expires_at.map(Into::into),
                         quota: account.quota,
-                        rate_limited_until: None,
+                        cooldown: None,
                         last_error_reason: account.last_error_reason,
                         last_error_message: account.last_error_message,
                     },

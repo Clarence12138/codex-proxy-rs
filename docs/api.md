@@ -253,7 +253,10 @@ Responses wire 之间的协议转换层，转换只在 xAI Provider 内完成。
 OpenAI 明确返回 `server_is_overloaded`、`slow_down` 或模型容量不足错误时，代理在允许安全重放且
 尚未交付输出的前提下，先做最多 3 次同账号指数退避，再通过现有调度换号。默认间隔从 500ms 开始，
 上游 `Retry-After` 参与退避计算，单次等待不超过 8 秒；重试同时受请求总尝试次数和截止时间约束。
-容量不足不扣 Smart 账号健康分，不触发 Provider 全局熔断，也不作为账号额度耗尽写入冷却状态。
+`server_is_overloaded`、`slow_down` 与既有可计分的结构化错误按已发送的失败尝试计入 Smart 账号
+健康分；容量分类不再豁免计分。失败率沿用账号级平滑与时间衰减，影响后续普通选路，已有可用账号的
+会话亲和仍优先。容量不足不触发 Provider 全局熔断，也不作为账号额度耗尽；启用账号自动冻结时，
+达到容量失败阈值会另外写入临时冷却。
 最终交付的上游错误仍按上述透明边界保留原始状态码、错误码和正文。
 明确额度耗尽继续走现有账号隔离与安全换号流程，
 包括 WebSocket 握手返回的 429；不会因其长 `Retry-After` 而转入同账号传输恢复等待。
@@ -366,6 +369,11 @@ Token 明细、费用明细、用时/首字与状态。Token 和费用复用现�
 - `status`: `normal`、`quota_exhausted`、`rate_limited`、`disabled`、`error`；
 - `sortBy`: `email`、`status`、`planType`、`usage`、`lastUsedAt`、`expiresAt`；
 - `sortDirection`: `asc`、`desc`。
+
+账号限流详情在 `quota` 中返回：`rateLimitReason` 为 `upstream_rate_limit`（上游临时限流）、
+`capacity_freeze`（容量错误触发自动冻结）或 `null`。`recoveryProbeRequired` 表示解除冻结是否需要成功探测；
+此时 `rateLimitedUntil` 是最早探测时间，到期后仍保持 `rate_limited`，直到探测成功或手动恢复。
+未要求探测时，该字段表示冷却结束时间。所有此类情况统一显示“限流中”，仅详情原因和恢复条件不同。
 
 账号列表和详情返回 `notes`（无备注时为 `null`）。编辑时省略或 `null` 保留原备注；字符串最多 500 个 Unicode
 字符，允许换行和制表符，保存时去除首尾空白，空字符串清空备注。备注独立于上游身份，导入时未显式提供备注、
@@ -923,6 +931,13 @@ minCodexCliVersion
 usageRetentionDays
 opsEventRetentionDays
 auditRetentionDays
+accountAutoFreezeEnabled
+accountAutoFreezeThreshold
+accountAutoFreezeWindowSeconds
+accountAutoFreezeDurationSeconds
+accountAutoFreezeProbeEnabled
+accountAutoFreezeProbeModel
+accountAutoFreezeAdaptiveConcurrency
 ```
 
 `requestLocationEnabled` 是必填布尔值，默认 `false`：关闭时不覆盖客户端原有位置和时区；开启时使用已保存的
@@ -942,6 +957,17 @@ auditRetentionDays
 
 `rotationStrategy` 可取 `smart`、`quota_reset_priority`、`round_robin`、`sticky`。
 两个 `minCodex*Version` 字段为 `string | null`，只设置最低版本，不存在最大版本字段。
+
+账号自动冻结（`accountAutoFreezeEnabled`）默认关闭。启用后，在统计窗口内按尝试累计容量类上游错误（`server_is_overloaded`
+等与 5xx 不可用），达到阈值后把该账号冻结为带恢复倒计时的 `rate_limited` 状态。`accountAutoFreezeThreshold`
+取值 2～1,000（默认 12，按普通请求的 attempt 计数，含请求内同账号重试，不含诊断探测与本地连接保护错误）；`accountAutoFreezeWindowSeconds`
+取值 60～3,600（默认 600，随每次失败滑动顺延）；`accountAutoFreezeDurationSeconds` 取值 300～604,800
+（默认 7,200，即 2 小时，探测失败后按该时长顺延）。`accountAutoFreezeProbeEnabled` 开启时恢复 worker
+在到期后执行真实探测调用，成功才解冻；探测过程中和服务重启后继续阻止普通请求。关闭自动冻结或探测后，
+已有冻结等待当前冷却结束再恢复调度。`accountAutoFreezeProbeModel` 为 `string | null`，留空时自动
+选择账号可用的第一个模型。`accountAutoFreezeAdaptiveConcurrency` 开启时冻结期间把账号并发上限下调到
+观测在途峰值的 80%（下限 2，只降不升）。这会持久修改账号并发设置；跟随全局默认的账号也会设为独立上限，
+解冻后不自动恢复，管理员可手动改回。
 
 Windows 离线包接口固定解析 Microsoft Store Product ID `9PLM9XGG6VKS` 的 Retail 包，不接受调用方提供
 产品 ID、上游地址、ring 或文件名。后端只返回通过包名、架构、Microsoft CDN host/path、scheme 和失效

@@ -291,6 +291,8 @@ const {
                 :error-reason="row.errorReason"
                 :error-message="row.errorMessage"
                 :rate-limited-until="row.quota.rateLimitedUntil"
+                :rate-limit-reason="row.quota.rateLimitReason"
+                :recovery-probe-required="row.quota.recoveryProbeRequired"
                 :next-refresh-at="row.nextRefreshAt"
               />
             </template>

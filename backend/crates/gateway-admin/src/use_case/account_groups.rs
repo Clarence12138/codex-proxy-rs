@@ -192,11 +192,7 @@ fn project_group_runtime(
     let mut accounts_by_group = BTreeMap::<&str, Vec<&str>>::new();
     for member in members {
         let mut status = member.status.clone();
-        status.rate_limited_until = runtime
-            .rate_limited_until
-            .get(&member.account_id)
-            .copied()
-            .map(Into::into);
+        status.cooldown = runtime.cooldown.get(&member.account_id).copied();
         status_by_account
             .entry(member.account_id.as_str())
             .or_insert_with(|| resolve_account_status(&status, now).status);

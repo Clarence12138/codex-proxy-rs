@@ -56,6 +56,14 @@ impl SettingsStore for AdminSettingsStoreAdapter {
                 usage_retention_days: command.usage_retention_days,
                 ops_event_retention_days: command.ops_event_retention_days,
                 audit_retention_days: command.audit_retention_days,
+                account_auto_freeze_enabled: command.account_auto_freeze_enabled,
+                account_auto_freeze_threshold: command.account_auto_freeze_threshold,
+                account_auto_freeze_window_seconds: command.account_auto_freeze_window_seconds,
+                account_auto_freeze_duration_seconds: command.account_auto_freeze_duration_seconds,
+                account_auto_freeze_probe_enabled: command.account_auto_freeze_probe_enabled,
+                account_auto_freeze_probe_model: command.account_auto_freeze_probe_model,
+                account_auto_freeze_adaptive_concurrency: command
+                    .account_auto_freeze_adaptive_concurrency,
             },
             audit: mutation_audit(
                 context,
@@ -77,6 +85,7 @@ impl SettingsStore for AdminSettingsStoreAdapter {
                     "min_codex_desktop_version".to_owned(),
                     "min_codex_cli_version".to_owned(),
                     "retention".to_owned(),
+                    "account_auto_freeze".to_owned(),
                 ],
             ),
         };
@@ -187,6 +196,13 @@ pub(crate) fn admin_runtime_settings(
         usage_retention_days: settings.usage_retention_days,
         ops_event_retention_days: settings.ops_event_retention_days,
         audit_retention_days: settings.audit_retention_days,
+        account_auto_freeze_enabled: settings.account_auto_freeze_enabled,
+        account_auto_freeze_threshold: settings.account_auto_freeze_threshold,
+        account_auto_freeze_window_seconds: settings.account_auto_freeze_window_seconds,
+        account_auto_freeze_duration_seconds: settings.account_auto_freeze_duration_seconds,
+        account_auto_freeze_probe_enabled: settings.account_auto_freeze_probe_enabled,
+        account_auto_freeze_probe_model: settings.account_auto_freeze_probe_model,
+        account_auto_freeze_adaptive_concurrency: settings.account_auto_freeze_adaptive_concurrency,
         updated_at: settings.updated_at,
     })
 }

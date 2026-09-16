@@ -24,7 +24,10 @@ use gateway_core::account::{
     QuotaAccessChange, QuotaAccessState, QuotaEvidence, QuotaObservation, QuotaObservationTouch,
     QuotaState, QuotaWriteOutcome,
 };
-use gateway_core::provider_ports::{ProviderCooldown, ProviderCooldownPort};
+use gateway_core::provider_ports::{
+    ProviderCooldown, ProviderCooldownKind, ProviderCooldownPort, ProviderFreezePolicy,
+    ProviderLeasePort, ProviderRuntimePolicyPort,
+};
 use gateway_protocol::openai::events::{
     ParsedRateLimits, RateLimitDetails, RateLimitWindow, parse_rate_limit_headers,
 };
@@ -184,9 +187,16 @@ pub struct CodexCredentialQuotaService {
     http: Client,
     base_url: String,
     cooldowns: Arc<dyn ProviderCooldownPort>,
+    leases: Arc<dyn ProviderLeasePort>,
+    runtime_policy: Arc<dyn ProviderRuntimePolicyPort>,
+    /// 冻结策略的短 TTL 缓存：失败路径热读，避免每个容量错误都查询设置。
+    freeze_policy_cache: Mutex<Option<(ProviderFreezePolicy, Instant)>>,
     scheduling: CodexQuotaSchedulingProjection,
     reset_consume_locks: Mutex<HashMap<ProviderAccountId, Arc<Mutex<()>>>>,
 }
+
+/// 冻结策略缓存活跃期；过期后下一次容量错误重新读取运行时设置。
+const FREEZE_POLICY_CACHE_TTL: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum QuotaRefreshAuthority {
@@ -481,6 +491,8 @@ impl CodexCredentialQuotaService {
         http: Client,
         base_url: String,
         cooldowns: Arc<dyn ProviderCooldownPort>,
+        leases: Arc<dyn ProviderLeasePort>,
+        runtime_policy: Arc<dyn ProviderRuntimePolicyPort>,
     ) -> Self {
         Self {
             store: Arc::clone(repository.store()),
@@ -489,9 +501,87 @@ impl CodexCredentialQuotaService {
             http,
             base_url,
             cooldowns,
+            leases,
+            runtime_policy,
+            freeze_policy_cache: Mutex::new(None),
             scheduling: CodexQuotaSchedulingProjection::default(),
             reset_consume_locks: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// 读取容量熔断策略（带短 TTL 缓存）；读取失败退化为关闭，熔断不得放大失败。
+    async fn freeze_policy(&self) -> ProviderFreezePolicy {
+        {
+            let cache = self.freeze_policy_cache.lock().await;
+            if let Some((policy, loaded_at)) = cache.as_ref()
+                && loaded_at.elapsed() < FREEZE_POLICY_CACHE_TTL
+            {
+                return policy.clone();
+            }
+        }
+        let loaded = self.runtime_policy.load_freeze_policy().await.ok();
+        let mut cache = self.freeze_policy_cache.lock().await;
+        if let Some(policy) = loaded {
+            *cache = Some((policy.clone(), Instant::now()));
+            return policy;
+        }
+        cache
+            .as_ref()
+            .filter(|(_, loaded_at)| loaded_at.elapsed() < FREEZE_POLICY_CACHE_TTL)
+            .map_or_else(ProviderFreezePolicy::disabled, |(policy, _)| policy.clone())
+    }
+
+    /// 容量熔断入口：滑动窗口内累计容量类失败，达到阈值即写入带
+    /// `CapacityFreeze` 类别的账号级冷却。调度侧立即屏蔽该账号，恢复由
+    /// freeze-recovery worker 处理；本路径只依赖 Redis 可丢失事实。
+    pub async fn apply_capacity_failure(&self, account: &ProviderAccount, observed_at: SystemTime) {
+        let policy = self.freeze_policy().await;
+        if !policy.enabled() {
+            return;
+        }
+        let in_flight = self.current_in_flight(account.id()).await;
+        let Ok(count) = self
+            .cooldowns
+            .record_capacity_failure(account.id(), policy.window(), in_flight)
+            .await
+        else {
+            return;
+        };
+        if count < policy.threshold() {
+            return;
+        }
+        let Some(until) = observed_at.checked_add(policy.freeze_duration()) else {
+            return;
+        };
+        let cooldown = ProviderCooldown::new_with_kind(
+            account.id().clone(),
+            account.revision(),
+            until,
+            if policy.probe_enabled() {
+                ProviderCooldownKind::CapacityFreezeProbe
+            } else {
+                ProviderCooldownKind::CapacityFreeze
+            },
+        );
+        if self.cooldowns.put_if_later(cooldown).await.is_ok() {
+            tracing::warn!(
+                account_id = account.id().as_str(),
+                threshold = policy.threshold(),
+                window_seconds = policy.window().as_secs(),
+                freeze_seconds = policy.freeze_duration().as_secs(),
+                peak_in_flight = in_flight,
+                "账号容量熔断触发：冻结该账号一段时间",
+            );
+        }
+    }
+
+    async fn current_in_flight(&self, account_id: &ProviderAccountId) -> u32 {
+        self.leases
+            .account_in_flight(std::slice::from_ref(account_id))
+            .await
+            .ok()
+            .and_then(|signals| signals.get(account_id).copied())
+            .unwrap_or(0)
     }
 
     /// 查询当前账号由 Codex Desktop 暴露的主动额度重置卡。
@@ -607,7 +697,7 @@ impl CodexCredentialQuotaService {
     }
 
     /// 成功推理是额度可访问的权威证据，同时解除账号级 429 冷却。
-    pub(crate) async fn record_successful_inference(
+    pub async fn record_successful_inference(
         &self,
         account: &ProviderAccount,
         observed_at: SystemTime,
@@ -628,7 +718,7 @@ impl CodexCredentialQuotaService {
             }
         }
         self.cooldowns
-            .clear(account.id(), account.revision())
+            .clear_after_success(account.id(), account.revision())
             .await
             .map_err(|error| CodexCredentialQuotaError::Store {
                 detail: error.to_string(),
@@ -975,11 +1065,11 @@ impl CodexCredentialQuotaService {
         Ok(())
     }
 
-    /// 读取账号当前是否处于临时限流（429）冷却，及到期时间。
-    pub async fn rate_limited_until(
+    /// 读取有效的账号冷却事实；等待恢复探测的冻结到期后仍有效。
+    pub async fn cooldown(
         &self,
         account_id: &ProviderAccountId,
-    ) -> Result<Option<SystemTime>, CodexCredentialQuotaError> {
+    ) -> Result<Option<gateway_core::account::AccountCooldown>, CodexCredentialQuotaError> {
         let Some(cooldown) = self.cooldowns.read(account_id).await.map_err(|error| {
             CodexCredentialQuotaError::Store {
                 detail: error.to_string(),
@@ -988,11 +1078,8 @@ impl CodexCredentialQuotaService {
         else {
             return Ok(None);
         };
-        let until = cooldown.until();
-        if until <= SystemTime::now() {
-            return Ok(None);
-        }
-        Ok(Some(until))
+        let state = cooldown.scheduling_state();
+        Ok(state.is_active(SystemTime::now()).then_some(state))
     }
 
     /// 读取单账号最后一次落库的 Provider quota，并由 Codex 域解析展示窗口。

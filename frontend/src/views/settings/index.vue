@@ -8,6 +8,7 @@ import BaseConfirmModal from '@/components/base/BaseConfirmModal.vue'
 import BasePageHeader from '@/components/base/BasePageHeader.vue'
 import BaseSegmented from '@/components/base/BaseSegmented.vue'
 
+import AccountAutoFreezeCard from './components/AccountAutoFreezeCard.vue'
 import AdminApiKeyCard from './components/AdminApiKeyCard.vue'
 import SettingsBackupSection from './components/backup/SettingsBackupSection.vue'
 import ClientVersionSettings from './components/client-version/index.vue'
@@ -53,6 +54,9 @@ const {
   maxWaitingPerKeyValue,
   maxWaitingPerAccountValue,
   concurrencyWaitTimeoutSecondsValue,
+  accountAutoFreezeThresholdValue,
+  accountAutoFreezeWindowSecondsValue,
+  accountAutoFreezeDurationSecondsValue,
 
   minCodexDesktopVersionError,
   minCodexCliVersionError,
@@ -138,6 +142,15 @@ watch(
       />
 
       <RequestLocationCard v-model="form.requestLocation" v-model:enabled="form.requestLocationEnabled" :disabled="loading || saving" />
+      <AccountAutoFreezeCard
+        v-model:enabled="form.accountAutoFreezeEnabled"
+        v-model:threshold="accountAutoFreezeThresholdValue"
+        v-model:window-seconds="accountAutoFreezeWindowSecondsValue"
+        v-model:duration-seconds="accountAutoFreezeDurationSecondsValue"
+        v-model:probe-enabled="form.accountAutoFreezeProbeEnabled"
+        v-model:probe-model="form.accountAutoFreezeProbeModel"
+        v-model:adaptive-concurrency="form.accountAutoFreezeAdaptiveConcurrency"
+      />
 
       <ClientVersionSettings
         v-model:min-codex-desktop-version="form.minCodexDesktopVersion"
