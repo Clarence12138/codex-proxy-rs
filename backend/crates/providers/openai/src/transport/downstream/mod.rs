@@ -1,5 +1,6 @@
-//! 下游来源适配，与官方 OpenAI/Codex 上游协议实现分开维护。
+//! 下游客户端对 Codex Core/Desktop 请求协议的兼容处理。
+//! 账号身份保护、会话规范化和 HTTP 传输规则由对应职责模块维护。
 
 mod headers;
 
-pub(super) use headers::decode_passthrough_headers;
+pub(super) use headers::is_non_codex_request_header;

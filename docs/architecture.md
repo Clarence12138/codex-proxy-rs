@@ -197,9 +197,11 @@ API Key 默认 HTTP/SSE，可选 WS 优先；选号先验证传输资格，WS po
   Search 的业务正文按原始字节转发。canonical facts 从同一数据旁路提取，只用于路由、观测和计费。
 - Responses 的业务扩展头保留原始多值字节。API 负责剥离鉴权、账号身份和 HTTP 传输字段，
   并提取会话语义；`gateway-protocol` 共享 HTTP 传输与网关链路字段分类。来源相关的透传规则集中在
-  `providers/openai/src/transport/downstream/headers.rs`，Provider 从不透明上下文解码时统一过滤
-  反代、SDK、浏览器及其他 Provider 的私有头，HTTP/SSE 与 WebSocket 共用这一边界。
-  官方上游认证、请求画像与传输字段仍由 `transport/headers.rs` 生成。
+  `providers/openai/src/transport/downstream/headers.rs`，仅维护相对于 Codex Core/Desktop
+  请求协议的客户端兼容规则，不持有账号身份保护或会话规范化规则。OpenAI 官方 SDK 的
+  `x-stainless-*` 也描述下游 SDK 环境；字段合法性与是否跨链路透传是不同判断。
+  Provider 在 `transport/request.rs` 解码不透明头时组合兼容、身份与 HTTP 规则，
+  HTTP/SSE 与 WebSocket 共用此边界。`transport/headers.rs` 负责上游身份保护和官方头组装。
   会话别名只规范化请求头，不清除正文身份字段；未知业务扩展与响应诊断头不受影响，字段见
   [Responses 合同](api.md#3-openai-数据面与模型目录)。提示词、工具及业务正文不做客户端品牌清洗。
 - xAI 是翻译边界。Provider 把 Grok wire 转换为 Responses wire；上游结构化错误的 message/code/type

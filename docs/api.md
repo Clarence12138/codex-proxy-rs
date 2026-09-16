@@ -169,9 +169,10 @@ Responses 不透传下游的逐跳头、反代元数据（如 `cf-*`、`x-forwar
 API Key 上游还会移除 Cookie、ChatGPT 账号身份、`x-codex-*`、`x-openai-internal-*`、会话/线程身份头及
 `X-OpenAI-Actor-Authorization`，避免把 OAuth 或网关托管身份传给第三方 API。
 
-Responses 也不透传下游专属的 `x-stainless-*`、`Origin`、`Referer`、`sec-ch-ua*` 和
-`sec-fetch-*` 请求头，避免将 SDK/浏览器环境或页面来源冒充上游请求事实。规则不依赖下游
-User-Agent，也不改变原始入站请求供 CORS、鉴权和本地观测使用的字段。
+Responses 也不透传 `x-stainless-*`、`Origin`、`Referer`、`sec-ch-ua*` 和 `sec-fetch-*`
+携带的下游 SDK/浏览器环境或页面来源。兼容基准是 Codex Core/Desktop 请求协议；
+OpenAI 官方 SDK 也会发送 `x-stainless-*`，浏览器字段也有标准定义，过滤不表示这些头非法。
+规则不依赖下游 User-Agent，也不改变原始入站请求供 CORS、鉴权和本地观测使用的字段。
 `session_id` 请求头仅作为入站会话别名，提取后不再原样透传，上游通过 `session-id` 表达；
 两者同时存在时仍优先使用 `session-id`。正文中的 `client_metadata.session_id`、
 `prompt_cache_key` 不受这条请求头规则影响。

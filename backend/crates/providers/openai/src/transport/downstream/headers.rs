@@ -1,85 +1,39 @@
-//! 下游请求头的透传规则；只作用于请求，不处理上游响应诊断头。
+//! 已识别的非 Codex 环境信息过滤；官方身份和会话规则由 transport 自身维护。
 
-use base64::{Engine as _, engine::general_purpose::STANDARD};
-use gateway_protocol::openai::is_transport_managed_request_header;
-use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
-use serde_json::{Map, Value};
-
-const PASSTHROUGH_HEADERS_CONTEXT_KEY: &str = "opaque_request_headers";
-
-// 协议上下文只在这里解码为可透传头，HTTP/SSE 与 WebSocket 共用同一边界。
-pub(in crate::transport) fn decode_passthrough_headers(context: &Map<String, Value>) -> HeaderMap {
-    let mut headers = HeaderMap::new();
-    let Some(entries) = context
-        .get(PASSTHROUGH_HEADERS_CONTEXT_KEY)
-        .and_then(Value::as_array)
-    else {
-        return headers;
-    };
-
-    for entry in entries {
-        let Some(entry) = entry.as_array().filter(|entry| entry.len() == 2) else {
-            continue;
-        };
-        let Some(name) = entry.first().and_then(Value::as_str) else {
-            continue;
-        };
-        let Ok(name) = HeaderName::from_bytes(name.as_bytes()) else {
-            continue;
-        };
-        if is_filtered_header(name.as_str()) {
-            continue;
-        }
-        let Some(encoded) = entry.get(1).and_then(Value::as_str) else {
-            continue;
-        };
-        let Ok(bytes) = STANDARD.decode(encoded) else {
-            continue;
-        };
-        let Ok(value) = HeaderValue::from_bytes(&bytes) else {
-            continue;
-        };
-        headers.append(name, value);
-    }
-    headers
-}
-
-fn is_filtered_header(name: &str) -> bool {
-    is_transport_managed_request_header(name)
-        // 反代元数据只描述下游链路，未知命名空间扩展也不能继承到上游。
-        || name.starts_with("cf-")
+/// 调用方须传入 HeaderName 规范化后的小写名称。
+///
+/// 此处的“官方”仅指 Codex Core/Desktop 发往 Codex 上游的请求协议，
+/// 不包括整个 OpenAI SDK 生态。名单中的字段可能是合法 HTTP 字段，
+/// 过滤表示网关不继承下游环境，不代表官方服务端必然拒绝该字段。
+/// 按已知来源命名空间覆盖扩展；其他未知业务头不因源码中未出现而被过滤。
+pub(in crate::transport) fn is_non_codex_request_header(name: &str) -> bool {
+    // Cloudflare 链路信息及 Access 认证不跨到上游；cf-* 不只包含诊断字段。
+    name.starts_with("cf-")
+        // 反代记录的是客户端到网关这一段地址、协议和路由。
         || name.starts_with("x-forwarded-")
-        // SDK、浏览器与其他 Provider 的私有环境不属于 OpenAI 请求事实。
+        // OpenAI 官方 Python/Node SDK 也发送 X-Stainless-*；它描述 SDK 的
+        // 环境、版本和重试等信息，不作为 Codex Core/Desktop 的上游请求画像继承。
         || name.starts_with("x-stainless-")
+        // UA Client Hints 与 Fetch Metadata 是浏览器标准，描述下游浏览器
+        // 和页面请求上下文，不能当作网关连接上游时的环境。
         || name.starts_with("sec-ch-ua")
         || name.starts_with("sec-fetch-")
+        // Grok 官方客户端的认证和路由头不属于 Codex 协议；
+        // 例如 x-grok-model-override 与 X-XAI-Token-Auth。
         || name.starts_with("x-grok-")
         || name.starts_with("x-xai-")
         || matches!(
             name,
+            // Forwarded、Via、CDN-Loop 有 RFC 定义；剥离是本应用重建
+            // Provider 请求的策略，不是通用 HTTP 代理的协议要求。
             "forwarded"
                 | "via"
                 | "cdn-loop"
+                // Nginx/代理与 Cloudflare 使用的原始访客地址。
                 | "x-real-ip"
                 | "true-client-ip"
+                // 页面来源与引用地址属于下游请求，不继承到上游。
                 | "origin"
                 | "referer"
-                // API 已提取会话语义；别名不再成为第二份上游会话头。
-                | "session_id"
-                // 即使绕过 API 直接提供协议上下文，也不能覆盖服务端账号身份。
-                | "authorization"
-                | "x-api-key"
-                | "x-openai-actor-authorization"
-                | "cookie"
-                | "cookie2"
-                | "chatgpt-account-id"
-                | "chatgpt-organization-id"
-                | "chatgpt-org-id"
-                | "chatgpt-project-id"
-                | "openai-organization"
-                | "openai-project"
-                | "x-openai-organization"
-                | "x-openai-project"
-                | "x-codex-installation-id"
         )
 }
