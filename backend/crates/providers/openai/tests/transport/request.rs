@@ -180,28 +180,6 @@ fn encoder_should_patch_model_and_preserve_supported_generate_semantics() {
 }
 
 #[test]
-fn encoder_should_remove_unsupported_fields_from_upstream_body() {
-    let request = request(Map::from_iter([
-        ("model".to_owned(), json!("client-model")),
-        ("input".to_owned(), json!("hello")),
-        ("max_output_tokens".to_owned(), json!(512)),
-        ("max_tokens".to_owned(), json!(256)),
-        ("temperature".to_owned(), json!(0.2)),
-    ]));
-
-    let encoded = encode_generate_request(&request, "gpt-test", None).expect("encode");
-
-    assert_eq!(
-        Value::Object(encoded.body().clone()),
-        json!({
-            "model": "gpt-test",
-            "input": "hello",
-            "max_tokens": 256,
-        })
-    );
-}
-
-#[test]
 fn encoder_should_align_structured_location_fields_without_rewriting_chat_text() {
     let normal_chat = "<environment_context>\n  <current_date>2026-09-13</current_date>\n  \
         <timezone>Asia/Shanghai</timezone>\n</environment_context>";

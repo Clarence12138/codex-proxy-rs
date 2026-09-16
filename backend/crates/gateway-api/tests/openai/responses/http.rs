@@ -15,6 +15,7 @@ use axum::{
         header::{AUTHORIZATION, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE},
     },
 };
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use bytes::Bytes;
 use futures::StreamExt;
 use futures::future::{BoxFuture, pending};
@@ -638,7 +639,11 @@ async fn request_context_should_resolve_forwarded_precedence_and_peer_fallback()
             input: Some(json!("hello")),
             client_metadata: None,
             // 客户端 User-Agent 仅用于本地展示，不再透传给上游指纹上下文。
-            protocol_context: None,
+            protocol_context: Some(json!({"opaque_request_headers": [
+                ["cf-connecting-ip", STANDARD.encode(b"198.51.100.1")],
+                ["x-real-ip", STANDARD.encode(b"198.51.100.2")],
+                ["x-forwarded-for", STANDARD.encode(b"10.0.0.2, 203.0.113.3")]
+            ]})),
             prompt_cache_key: None,
             previous_response_id: None,
         }
@@ -659,6 +664,26 @@ async fn request_context_should_resolve_forwarded_precedence_and_peer_fallback()
             .await
             .client_ip,
         Some("192.0.2.10".parse().expect("expected peer IP"))
+    );
+}
+
+#[tokio::test]
+async fn opaque_client_headers_should_not_change_local_client_observation() {
+    let mut headers = HeaderMap::new();
+    headers.insert("user-agent", "pi/synthetic".parse().unwrap());
+    headers.insert("x-stainless-runtime", "node".parse().unwrap());
+    headers.insert("origin", "https://synthetic.invalid".parse().unwrap());
+    let captured = captured_client_context(headers, "192.0.2.10:443".parse().unwrap()).await;
+    assert_eq!(captured.user_agent.as_deref(), Some("pi/synthetic"));
+    assert_eq!(captured.client_ip, Some("192.0.2.10".parse().unwrap()));
+    assert_eq!(
+        captured.protocol_context,
+        Some(json!({
+            "opaque_request_headers": [
+                ["x-stainless-runtime", STANDARD.encode(b"node")],
+                ["origin", STANDARD.encode(b"https://synthetic.invalid")]
+            ]
+        }))
     );
 }
 
@@ -768,7 +793,7 @@ async fn subagent_header_should_not_replace_non_object_client_metadata() {
 }
 
 #[tokio::test]
-async fn xai_private_headers_should_not_enter_openai_request_facts() {
+async fn xai_private_headers_should_remain_opaque_without_projecting_request_facts() {
     let peer = "192.0.2.10:443".parse().expect("peer address");
     let mut headers = HeaderMap::new();
     headers.insert("x-grok-turn-idx", "7".parse().expect("header"));
@@ -776,7 +801,15 @@ async fn xai_private_headers_should_not_enter_openai_request_facts() {
 
     let captured = captured_client_context(headers, peer).await;
 
-    assert!(captured.protocol_context.is_none());
+    assert_eq!(
+        captured.protocol_context,
+        Some(json!({
+            "opaque_request_headers": [
+                ["x-grok-turn-idx", STANDARD.encode(b"7")],
+                ["x-grok-conv-id", STANDARD.encode(b"private-session")]
+            ]
+        }))
+    );
     assert!(captured.prompt_cache_key.is_none());
 }
 

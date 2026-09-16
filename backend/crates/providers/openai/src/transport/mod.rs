@@ -6,6 +6,7 @@ pub mod client;
 mod client_json;
 mod client_sse;
 pub mod diagnostics;
+mod downstream;
 pub mod endpoints;
 pub mod headers;
 pub mod profile;

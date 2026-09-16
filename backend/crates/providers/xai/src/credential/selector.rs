@@ -100,11 +100,25 @@ impl GrokAccountSessionSelector {
         );
         loop {
             let diagnostic = request.eligibility() == AccountEligibilityPolicy::BypassForDiagnostic;
-            let accounts = self
+            // store 侧常规调度列表不包含停用账号；管理端诊断要对固定账号执行真实上游
+            // 验证，这里把不在列表里的 required 账号显式补回候选。
+            let mut accounts = self
                 .repository
                 .list_accounts_for_provider()
                 .await
                 .map_err(|_| GrokSessionSelectorError::Unavailable)?;
+            if diagnostic
+                && let Some(required) = request.required_account()
+                && !accounts.iter().any(|account| account.id() == required)
+                && let Some(account) = self
+                    .repository
+                    .account_by_id(required)
+                    .await
+                    .map_err(|_| GrokSessionSelectorError::Unavailable)?
+                && account.provider() == &self.provider_kind
+            {
+                accounts.push(account);
+            }
             let accounts = if diagnostic {
                 accounts
             } else {

@@ -169,6 +169,24 @@ Responses 不透传下游的逐跳头、反代元数据（如 `cf-*`、`x-forwar
 API Key 上游还会移除 Cookie、ChatGPT 账号身份、`x-codex-*`、`x-openai-internal-*`、会话/线程身份头及
 `X-OpenAI-Actor-Authorization`，避免把 OAuth 或网关托管身份传给第三方 API。
 
+Responses 也不透传 `x-stainless-*`、`Origin`、`Referer`、`sec-ch-ua*` 和 `sec-fetch-*`
+携带的下游 SDK/浏览器环境或页面来源。兼容基准是 Codex Core/Desktop 请求协议；
+OpenAI 官方 SDK 也会发送 `x-stainless-*`，浏览器字段也有标准定义，过滤不表示这些头非法。
+规则不依赖下游 User-Agent，也不改变原始入站请求供 CORS、鉴权和本地观测使用的字段。
+`session_id` 请求头仅作为入站会话别名，提取后不再原样透传，上游通过 `session-id` 表达；
+两者同时存在时仍优先使用 `session-id`。正文中的 `client_metadata.session_id`、
+`prompt_cache_key` 不受这条请求头规则影响。
+`thread-id`、turn metadata 等 Codex 协议字段及未知业务扩展继续按既有合同处理；
+`traceparent`、`tracestate` 不因属于追踪字段而被删除。
+
+Responses 上游编码会移除 Codex 不接受的顶层 `temperature`、`max_output_tokens` 和
+`prompt_cache_retention`；这些参数可能来自 Pi 等客户端的普通 OpenAI Responses 适配。
+`prompt_cache_key`、`reasoning`、`include` 等 Codex 参数继续保留。过滤只作用于顶层，
+不删除工具参数 schema、输入内容或 `client_metadata` 内的同名业务字段；其他未知字段继续透传。
+
+这不是客户端匿名化：系统提示词、工具定义、工具结果、工作目录及其他业务 metadata 仍可能
+透露客户端环境，网关不对正文做客户端品牌清洗。
+
 Responses WebSocket 仅接受文本 `response.create`，同一连接串行执行。当前响应期间收到的后续业务帧
 留在有界接收队列中，待当前响应完成终结和写出后再逐条校验、准入与执行，不因请求提前到达而断开。
 接收队列容量为 32 个事件，超载仍关闭连接；Ping/Pong、客户端关闭和服务关闭不等待队列中的请求执行。
@@ -319,6 +337,10 @@ Token 明细、费用明细、用时/首字与状态。Token 和费用复用现�
 | `GET` | `/api/admin/accounts/detail` | `accountId` | 查询账号详情、额度和本地用量 |
 | `GET` | `/api/admin/accounts/export` | `accountIds`、`confirm=export_sensitive_accounts` | 显式导出最多 200 个账号的敏感 Provider 文档 |
 | `POST` | `/api/admin/accounts/import` | `{ provider, data, settings?, outboundProxyId? }` | 导入或按上游身份更新账号，可同时应用调度、分组设置与默认代理 |
+| `POST` | `/api/admin/accounts/import-tasks` | `{ submissionId, items: [{ provider, data, settings?, outboundProxyId? }] }` | 接受后台导入，返回 HTTP 202 和任务摘要 |
+| `GET` | `/api/admin/accounts/import-tasks` | 无 | 当前管理员仍保留的任务，按创建时间倒序 |
+| `GET` | `/api/admin/accounts/import-tasks/detail` | `taskId` | 任务摘要和逐条结果，不含原始凭据 |
+| `POST` | `/api/admin/accounts/import-tasks/stop` | `{ taskId }` | 跳过未开始的条目，已开始的条目继续完成 |
 | `POST` | `/api/admin/accounts/refresh` | `{ accountId }` | 手工刷新 OAuth credential（`idToken` / `accessToken` / `refreshToken`），不刷新额度 |
 | `POST` | `/api/admin/accounts/recover` | `{ accountId }` | 管理员显式清除该账号的本地错误/额度/cooldown 事实并重新启用，不访问上游 |
 | `POST` | `/api/admin/accounts/rotate` | OpenAI rotation 字段 | 更新指定 OpenAI 账号的 OAuth token 或 API Key 上游设置 |
@@ -352,6 +374,8 @@ Token 明细、费用明细、用时/首字与状态。Token 和费用复用现�
 账号视图和 Dashboard 账号概览中的 `planType` 保留原始套餐值；`planTypeDisplay` 由后端先按 Provider 解析名称，
 再统一为大驼峰格式，前端直接展示该字段，例如 `Free`、`SuperGrokPro`、`EduPlus`。
 OpenAI 的 `self_serve_business_prolite` 等 Team 套餐显示为 `Business`；新套餐也使用相同格式。
+OpenAI 主动额度刷新和正常响应携带的明确套餐会同步到账号，支持升级与降级；
+空值或 `unknown` 不覆盖已有套餐，同族泛化值（如 `team`）保留已知的具体套餐子类型。
 账号套餐为空或 `unknown` 时，后端优先用已保存的上游额度响应
 中的明确套餐值补全 `planType` 和 `planTypeDisplay`；两处均无套餐信息时才显示“未知套餐”。
 
@@ -464,6 +488,27 @@ OAuth 等待回调期间不持有保护；提交仍拒绝已删除、连接配�
 - `sendState` 为 `not_sent`、`sent`、`ambiguous`，非 Provider 错误为 `null`。
 - `error`、`providerErrorCode`、`providerErrorType`、`upstreamStatus`、`upstreamContentType` 和
   `upstreamBody` 是实际捕获的原始诊断字段；缺失时为 `null`，不会由本地猜测或翻译。
+
+### 后台导入任务
+
+管理端通过后台任务导入账号，关闭页面不会取消执行。`submissionId` 为客户端生成的 UUID；同一管理员在任务记录
+保留期间使用相同标识和相同输入重新提交，会返回已有任务，内容改变则返回 409。修改输入须使用新标识。
+
+每个任务接受 1–200 个 `items`，请求体上限为 4 MiB。每个条目沿用下节的 Provider 文档与设置合同，独立调用
+凭据准备、校验、事务提交与快照发布流程。批量 AT / RT 由前端按非空输入顺序拆成单账号条目，因此可逐条统计；
+JSON 文件按 Provider 文档分项，不拆解内部代理引用或改变 Provider 对文档的原子性与部分成功语义。
+一个文档可导入多个账号，条目成功数与入库账号数可能不同。
+
+摘要字段为 `taskId`、`createdAt`、`finishedAt`（未结束为 null）、`stopRequested`、`total`、`counts`。
+`counts` 包含 `pending`、`running`、`succeeded`、`failed`、`unknown`、`skipped` 和 `importedAccounts`。
+详情追加 `items: [{ index, provider, status, accountIds, message }]`，`index` 从 1 开始；`status` 对应上述前六类状态。
+列表返回 `{ items: [摘要] }`。结果未知时保留 `unknown`，先核对账号目录再决定是否重新导入；服务端不自动重试凭据交换。
+停止请求可重复调用，已结束的任务保持原结果；未知、已过期或其他管理员的任务 ID 返回 404。
+
+任务仅保存在单实例进程内，不新增数据库表，也不使用 Redis 保存任务。所有后台导入共享 3 个执行槽位；
+最多接受 8 个未结束任务、保留 100 个任务，达到上限返回 429。成功、失败或跳过后立即释放对应输入，
+终态结果保留 1 小时后自动清理。服务重启会丢失任务与未执行输入，已提交的账号不受影响；
+重新打开页面从服务端恢复当前管理员的任务列表，前端不持久化任务 ID 或凭据。
 
 ### 账号导入与 OAuth
 

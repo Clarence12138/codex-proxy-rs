@@ -71,19 +71,13 @@ const metrics = computed(() => [
       </div>
     </div>
 
-    <div class="grid gap-3">
-      <div class="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-2 text-cp-xs">
-        <span class="text-cp-text-secondary">更新时的剩余额度</span>
-        <span class="font-mono font-emphasis text-cp-text [html[data-theme=light]_&]:font-medium">
-          {{ forecast.remainingTokensDisplay }} Tokens
-          <span class="mx-1 text-cp-text-tertiary">/</span>
-          {{ forecast.remainingUsdDisplay }}
-        </span>
-      </div>
-      <p v-if="forecast.incompleteTokens || forecast.incompleteCost" class="m-0 flex items-start gap-1.5 text-cp-xs leading-relaxed text-cp-text-secondary">
-        <Info class="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-        按已记录数据估算，缺失的用量或费用可能使结果偏低。
-      </p>
+    <div class="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-2 text-cp-xs">
+      <span class="text-cp-text-secondary">更新时的剩余额度</span>
+      <span class="font-mono font-emphasis text-cp-text [html[data-theme=light]_&]:font-medium">
+        {{ forecast.remainingTokensDisplay }} Tokens
+        <span class="mx-1 text-cp-text-tertiary">/</span>
+        {{ forecast.remainingUsdDisplay }}
+      </span>
     </div>
   </section>
 </template>

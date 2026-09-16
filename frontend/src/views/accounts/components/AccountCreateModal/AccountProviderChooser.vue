@@ -50,8 +50,8 @@ function selectProvider(value: string) {
     label="选择账号平台"
     :options="providers"
     :disabled="disabled"
-    display="icon"
-    class="w-31"
+    size="lg"
+    class="w-full"
     @update:model-value="selectProvider"
   />
 </template>

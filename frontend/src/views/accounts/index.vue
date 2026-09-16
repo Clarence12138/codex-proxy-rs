@@ -7,8 +7,10 @@ import BaseCard from '@/components/base/BaseCard.vue'
 import BaseCheckbox from '@/components/base/BaseCheckbox.vue'
 import BaseConfirmModal from '@/components/base/BaseConfirmModal.vue'
 import BasePageHeader from '@/components/base/BasePageHeader.vue'
+import BaseTableColumnSettings from '@/components/base/BaseTable/BaseTableColumnSettings.vue'
 import BaseTablePagination from '@/components/base/BaseTable/BaseTablePagination.vue'
 import BaseTable from '@/components/base/BaseTable/index.vue'
+import { useTableColumns } from '@/components/base/BaseTable/useTableColumns'
 import LastUsedAtCell from '@/components/LastUsedAtCell.vue'
 import ProviderIconGroup from '@/components/ProviderIconGroup.vue'
 import { useAccountGroupCatalog } from '@/composables/useAccountGroupCatalog'
@@ -18,6 +20,7 @@ import AccountCreateModal from './components/AccountCreateModal/index.vue'
 import AccountEditModal from './components/AccountEditModal.vue'
 import AccountFilters from './components/AccountFilters.vue'
 import AccountIdentityCell from './components/AccountIdentityCell.vue'
+import AccountImportTasks from './components/AccountImportTasks/index.vue'
 import AccountOverviewCards from './components/AccountOverviewCards.vue'
 import AccountPlanBadge from './components/AccountPlanBadge.vue'
 import AccountQuotaPanel from './components/AccountQuotaPanel/index.vue'
@@ -28,12 +31,14 @@ import AccountUsagePanel from './components/AccountUsagePanel.vue'
 import { useAccountBatchEditor } from './composables/useAccountBatchEditor'
 import { useAccountConnectionTest } from './composables/useAccountConnectionTest'
 import { useAccountEditor } from './composables/useAccountEditor'
+import { useAccountImportTasks } from './composables/useAccountImportTasks'
 import { useAccountMutations } from './composables/useAccountMutations'
 import { useAccountsQuery } from './composables/useAccountsQuery'
 import { useAccountsTable } from './composables/useAccountsTable'
 import { accountColumns, derivedAccountStatus } from './constants'
 
 const selectedIds = ref<Set<string>>(new Set())
+const { visibleColumns, columnOptions, setColumnVisible, resetColumns } = useTableColumns(accountColumns, 'accounts')
 const {
   loading,
   accounts,
@@ -57,6 +62,20 @@ const {
   loading: groupsLoading,
   loadGroups,
 } = useAccountGroupCatalog()
+
+const importTasks = useAccountImportTasks({
+  reload: () => Promise.all([loadAccounts(), loadGroups()]),
+})
+const {
+  open: showImportTasks,
+  tasks: recentImportTasks,
+  selectedId: importTaskId,
+  detail: importTaskDetail,
+  loading: loadingImportTasks,
+  stopping: stoppingImportTask,
+  error: importTaskError,
+  activeCount: activeImportCount,
+} = importTasks
 
 const {
   showCreateModal,
@@ -85,6 +104,7 @@ const {
   handleRefresh,
   handleRefreshQuota,
 } = useAccountMutations({
+  onImportTaskCreated: importTasks.created,
   accounts,
   selectedIds,
   reload: () => Promise.all([loadAccounts(), loadGroups()]),
@@ -192,18 +212,29 @@ const {
           :selected-count="selectedIds.size"
           :batch-deleting="batchDeleting"
           :exporting-accounts="exportingAccounts"
+          :has-import-tasks="recentImportTasks.length > 0"
+          :active-import-count="activeImportCount"
+          @import-tasks="showImportTasks = true"
           @delete-selected="showDeleteModal = true"
           @export-selected="handleExportAccounts"
           @create="openCreateAccount"
           @edit-selected="openBatchEdit"
-        />
+        >
+          <template #actions>
+            <BaseTableColumnSettings
+              :options="columnOptions"
+              @change="setColumnVisible"
+              @reset="resetColumns"
+            />
+          </template>
+        </AccountFilters>
       </template>
 
       <template #body>
         <div class="flex min-h-0 flex-col xl:h-full">
           <BaseTable
             class="h-100! min-h-100 flex-none [--cp-table-row-height:72px] xl:h-auto! xl:min-h-0 xl:flex-1"
-            :columns="accountColumns"
+            :columns="visibleColumns"
             :rows="accounts"
             :loading="loading"
             :selected-row-keys="selectedRowKeys"
@@ -340,6 +371,20 @@ const {
       :status-view="connectionTestStatusView"
       @refresh-models="handleRefreshConnectionTestModels()"
       @test="handleTestConnection()"
+    />
+
+    <AccountImportTasks
+      v-model="showImportTasks"
+      :tasks="recentImportTasks"
+      :selected-id="importTaskId"
+      :detail="importTaskDetail"
+      :loading="loadingImportTasks"
+      :stopping="stoppingImportTask"
+      :error="importTaskError"
+      @select="importTasks.select"
+      @refresh="importTasks.refresh"
+      @stop="importTasks.stop"
+      @view-accounts="showImportTasks = false; loadAccounts()"
     />
 
     <AccountCreateModal

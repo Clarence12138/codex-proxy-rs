@@ -16,6 +16,23 @@ use super::protocol::responses::CodexResponsesRequest;
 
 const CODEX_RESIDENCY_HEADER: &str = "x-openai-internal-codex-residency";
 
+/// 不透传下游携带的认证、账号及相关身份字段，避免影响网关选定的上游身份。
+/// 上游需要的官方身份头由网关构造；这里也包含通用认证和 Cookie 字段。
+pub(super) fn is_managed_identity_header(name: &str) -> bool {
+    matches!(
+        name,
+        "authorization"
+            | "x-api-key"
+            | "x-openai-actor-authorization"
+            | "cookie"
+            | "cookie2"
+            | "chatgpt-account-id"
+            | "chatgpt-project-id"
+            | "openai-organization"
+            | "openai-project"
+    )
+}
+
 /// 构造 Codex Core 为模型请求设置的稳定身份请求头。
 pub fn build_codex_model_headers(
     profile: &CodexWireProfile,
@@ -231,7 +248,6 @@ fn append_passthrough_headers(
                     | "content-type"
                     | "content-encoding"
                     | "x-codex-routing-hint"
-                    | "x-codex-installation-id"
                     | "x-codex-turn-id"
                     | "x-oai-attestation"
                     | "x-oai-is"

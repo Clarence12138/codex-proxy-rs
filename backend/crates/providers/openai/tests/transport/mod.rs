@@ -50,6 +50,7 @@ mod canonical;
 mod catalog;
 mod client;
 mod diagnostics;
+mod downstream;
 mod endpoints;
 mod headers;
 mod http_client;

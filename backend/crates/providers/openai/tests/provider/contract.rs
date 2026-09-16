@@ -3695,12 +3695,9 @@ async fn same_account_scope_preserves_future_protocol_shapes() {
     );
     assert_eq!(
         body.get("installation_id"),
-        body.pointer("/client_metadata/installation_id")
-    );
-    assert!(
         body.pointer("/client_metadata/x-codex-installation-id")
-            .is_none()
     );
+    assert!(body.pointer("/client_metadata/installation_id").is_none());
     assert!(captured_header_values(&request, "x-codex-installation-id").is_empty());
 }
 
@@ -3848,7 +3845,7 @@ async fn websocket_account_scoping_preserves_ascii_turn_metadata_and_unicode_inp
         }).to_string().into())).await.expect("complete response");
         body
     });
-    // Official Codex keeps embedded turn metadata ASCII even for Unicode workspaces.
+    // 官方 Codex 在工作区包含 Unicode 时也保持内嵌 turn metadata 为 ASCII。
     let raw = r#"{"installation_id":"client-installation","workspaces":{"C:\\Users\\\u9879\u76ee\\\ud83d\ude80":{"label":"caf\u00e9","literal":"\\u4e2d","quoted":"\"line\n"}}}"#;
     let input = json!([{"role": "user", "content": "中文正文 🚀"}]);
     let payload = ProtocolPayload::json_object(
@@ -3858,7 +3855,12 @@ async fn websocket_account_scoping_preserves_ascii_turn_metadata_and_unicode_inp
             ("input".to_owned(), input.clone()),
             (
                 "client_metadata".to_owned(),
-                json!({"x-codex-turn-metadata": raw}),
+                json!({
+                    "x-codex-turn-metadata": raw,
+                    "x-codex-installation-id": "client-installation",
+                    "installation_id": "client-legacy-installation",
+                    "installationId": "client-camel-installation"
+                }),
             ),
         ]),
     )
@@ -3878,13 +3880,20 @@ async fn websocket_account_scoping_preserves_ascii_turn_metadata_and_unicode_inp
         event.expect("successful websocket response");
     }
     let body = server.await.expect("server");
+    let installation_id = body["client_metadata"]["x-codex-installation-id"]
+        .as_str()
+        .expect("account installation ID");
+    assert_ne!(installation_id, "client-installation");
+    for alias in ["installation_id", "installationId"] {
+        assert_eq!(body["client_metadata"][alias], installation_id);
+    }
     let encoded = body
         .pointer("/client_metadata/x-codex-turn-metadata")
         .and_then(Value::as_str)
         .expect("turn metadata");
     assert!(encoded.is_ascii(), "embedded header JSON must remain ASCII");
     let mut expected: Value = serde_json::from_str(raw).expect("original metadata");
-    expected["installation_id"] = body["client_metadata"]["installation_id"].clone();
+    expected["installation_id"] = json!(installation_id);
     assert_eq!(
         serde_json::from_str::<Value>(encoded).expect("metadata JSON"),
         expected
@@ -3913,10 +3922,16 @@ async fn http_account_scoping_keeps_unicode_metadata_ascii_in_headers_and_body()
         )
         .await;
         let body = captured_request_body(&request);
+        let installation_id = body["client_metadata"]["x-codex-installation-id"]
+            .as_str()
+            .expect("account installation ID");
+        assert_ne!(installation_id, "client-installation");
+        assert!(body.pointer("/client_metadata/installation_id").is_none());
+        assert!(body.pointer("/client_metadata/installationId").is_none());
         let headers = captured_header_values(&request, "x-codex-turn-metadata");
         assert_eq!(headers.len(), 1);
         let mut expected: Value = serde_json::from_str(raw).expect("original metadata");
-        expected["installation_id"] = body["client_metadata"]["installation_id"].clone();
+        expected["installation_id"] = json!(installation_id);
         for encoded in [
             std::str::from_utf8(&headers[0]).expect("UTF-8 header"),
             body["turnMetadata"].as_str().expect("body turn metadata"),
@@ -4584,6 +4599,7 @@ async fn affinity_quota_switch_should_clear_old_turn_state_without_a_provider_st
     let observed_at = SystemTime::now();
     store
         .compare_and_swap_quota(QuotaObservation {
+            plan_type: None,
             account_id: first_account.id().clone(),
             expected_revision: first_account.revision(),
             quota: OpaqueProviderData::new(Map::new()),
@@ -5350,6 +5366,7 @@ async fn official_usage_limit_failure_persists_fact_without_fabricating_usage() 
     let observed_at = SystemTime::now();
     store
         .compare_and_swap_quota(QuotaObservation {
+            plan_type: None,
             account_id: account.id().clone(),
             expected_revision: account.revision(),
             quota: OpaqueProviderData::new(
@@ -6549,6 +6566,7 @@ async fn quota_limited_account_diagnostic_uses_upstream() {
     let observed_at = SystemTime::now();
     store
         .compare_and_swap_quota(QuotaObservation {
+            plan_type: None,
             account_id: account.id().clone(),
             expected_revision: account.revision(),
             quota: OpaqueProviderData::new(
@@ -7601,6 +7619,48 @@ async fn connection_limit_payload_survives_exhausted_retry_budget() {
     );
 }
 
+const API_KEY_DOWNSTREAM_HEADERS: &[&str] = &[
+    "cf-future-proxy-field",
+    "x-forwarded-for",
+    "x-stainless-runtime",
+    "origin",
+    "referer",
+    "sec-ch-ua",
+    "sec-fetch-site",
+    "x-grok-turn-idx",
+    "x-xai-future-field",
+    "session_id",
+    "session-id",
+    "thread-id",
+    "x-codex-future",
+    "x-openai-internal-future",
+    "authorization",
+    "cookie",
+    "chatgpt-account-id",
+];
+
+fn generate_with_downstream_headers() -> Operation {
+    let mut headers: Vec<_> = API_KEY_DOWNSTREAM_HEADERS
+        .iter()
+        .map(|name| json!([name, STANDARD.encode(b"downstream-value")]))
+        .collect();
+    headers.push(json!(["x-business-extension", STANDARD.encode(b"keep")]));
+    Operation::Generate(GenerateRequest::from_protocol_payload(
+        ProtocolPayload::json_object(
+            "openai",
+            json!({"model": "gpt-5.4", "input": "hello"})
+                .as_object()
+                .unwrap()
+                .clone(),
+        )
+        .unwrap()
+        .with_context(Map::from_iter([(
+            "opaque_request_headers".to_owned(),
+            json!(headers),
+        )])),
+    ))
+}
+
 #[tokio::test]
 async fn api_key_default_http_uses_own_prefix_plain_json_and_only_own_authentication() {
     for prefix in ["", "/v1", "/custom/v2"] {
@@ -7655,7 +7715,7 @@ async fn api_key_default_http_uses_own_prefix_plain_json_and_only_own_authentica
         ));
         let mut stream = provider
             .execute(
-                planned_request("openai", generate_operation()),
+                planned_request("openai", generate_with_downstream_headers()),
                 context("req_api_http", CancellationToken::new()),
             )
             .await
@@ -7671,6 +7731,13 @@ async fn api_key_default_http_uses_own_prefix_plain_json_and_only_own_authentica
             .find(|request| request.method == "POST")
             .unwrap();
         assert!(!request.headers.contains_key("content-encoding"));
+        for name in API_KEY_DOWNSTREAM_HEADERS
+            .iter()
+            .filter(|name| **name != "authorization")
+        {
+            assert!(!request.headers.contains_key(*name), "leaked {name}");
+        }
+        assert_eq!(request.headers["x-business-extension"], "keep");
         for header in [
             "cookie",
             "chatgpt-account-id",
@@ -7684,6 +7751,94 @@ async fn api_key_default_http_uses_own_prefix_plain_json_and_only_own_authentica
         assert_eq!(body["stream"], true);
         assert_eq!(body["model"], "gpt-5.4");
     }
+}
+
+#[tokio::test]
+async fn disabled_api_key_diagnostic_preserves_authentication_and_transport_constraints() {
+    let upstream = MockServer::start().await;
+    let oauth = MockServer::start().await;
+    let store = Arc::new(MemoryAccountStore::default());
+    let account_id = "acct_provider_contract";
+    store
+        .seed_api_key(
+            account_id,
+            upstream.uri(),
+            provider_openai::credential::ApiKeyTransport::Http,
+        )
+        .await;
+    let account = store.account(account_id).expect("API account");
+    store
+        .set_enabled(account.id(), false)
+        .await
+        .expect("disable API account");
+    Mock::given(method("POST"))
+        .and(path("/responses"))
+        .and(header("authorization", "Bearer sk-api-test-only"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_raw(
+                format!(
+                    "event: response.created\ndata: {{\"type\":\"response.created\",\"response\":{{\"id\":\"resp_scope_capture\",\"model\":\"gpt-5.4\"}}}}\n\n{CAPTURE_COMPLETED_SSE}"
+                ),
+                "text/event-stream",
+            ),
+        )
+        .expect(1)
+        .mount(&upstream)
+        .await;
+    let provider = provider_with_base_url(&store, oauth.uri());
+    let mut stream = provider
+        .execute(
+            planned_request("openai", generate_operation()),
+            diagnostic_context("req_disabled_api_http", account_id),
+        )
+        .await
+        .expect("disabled API account diagnostic");
+    let mut completed = false;
+    while let Some(event) = stream.next().await {
+        completed |= event
+            .expect("API response")
+            .canonical_facts()
+            .iter()
+            .any(|event| matches!(event, GatewayEvent::Completed(_)));
+    }
+    assert!(completed);
+
+    let warmup = Operation::Generate(GenerateRequest::from_protocol_payload(
+        ProtocolPayload::json_object(
+            "openai",
+            json!({"model":"gpt-5.4","input":[],"store":false,"generate":false})
+                .as_object()
+                .expect("warmup object")
+                .clone(),
+        )
+        .expect("warmup payload"),
+    ));
+    let search = Operation::Search(StandaloneSearchRequest::from_raw_json(
+        RawJsonPayload::new(
+            "openai",
+            Bytes::from_static(br#"{"id":"disabled-api-search","commands":{}}"#),
+        )
+        .expect("search payload"),
+    ));
+    for request in [
+        planned_request("openai", warmup),
+        planned_provider_endpoint_request("openai", search),
+    ] {
+        let result = provider
+            .execute(
+                request,
+                diagnostic_context("req_disabled_api_restricted", account_id),
+            )
+            .await;
+        let Err(error) = result else {
+            panic!("diagnostic must preserve authentication and transport restrictions")
+        };
+        assert_eq!(error.kind(), ProviderErrorKind::NoEligibleAccount);
+        assert_eq!(error.send_state(), UpstreamSendState::NotSent);
+    }
+    assert!(oauth.received_requests().await.unwrap().is_empty());
+    assert_eq!(upstream.received_requests().await.unwrap().len(), 1);
+    assert!(!store.account(account_id).expect("API account").enabled());
 }
 
 #[tokio::test]
@@ -7757,6 +7912,13 @@ async fn api_key_websocket_uses_api_path_and_bearer_without_oauth_identity() {
                 assert!(!request.headers().contains_key("chatgpt-account-id"));
                 assert!(!request.headers().contains_key("cookie"));
                 assert!(!request.headers().contains_key("originator"));
+                for name in API_KEY_DOWNSTREAM_HEADERS
+                    .iter()
+                    .filter(|name| **name != "authorization")
+                {
+                    assert!(!request.headers().contains_key(*name), "leaked {name}");
+                }
+                assert_eq!(request.headers()["x-business-extension"], "keep");
             })
             .await;
         let frame = websocket.next().await.unwrap().unwrap();
@@ -7767,7 +7929,7 @@ async fn api_key_websocket_uses_api_path_and_bearer_without_oauth_identity() {
     let provider = provider(&store);
     let mut stream = provider
         .execute(
-            planned_request("openai", generate_operation()),
+            planned_request("openai", generate_with_downstream_headers()),
             diagnostic_context("req_api_ws", "acct_provider_contract"),
         )
         .await
