@@ -279,6 +279,37 @@ fn config_loader_should_reject_admin_password_with_compose_interpolation() {
 }
 
 #[test]
+fn config_loader_should_reject_zero_client_session_ttl() {
+    let mut config = valid_config_document();
+    *config
+        .pointer_mut("/client/session_ttl_minutes")
+        .expect("example client session TTL") = serde_json::json!(0);
+    assert_rejected(config.to_string());
+}
+
+#[test]
+fn config_loader_should_default_missing_client_section() {
+    let mut config = valid_config_document();
+    config
+        .as_object_mut()
+        .expect("example config mapping")
+        .remove("client")
+        .expect("example client section");
+    parse_config(&config.to_string()).expect("client defaults when the section is omitted");
+}
+
+#[test]
+fn config_loader_should_reject_missing_client_session_ttl() {
+    let mut config = valid_config_document();
+    config["client"]
+        .as_object_mut()
+        .expect("example client mapping")
+        .remove("session_ttl_minutes")
+        .expect("example client session TTL");
+    assert_rejected(config.to_string());
+}
+
+#[test]
 fn config_loader_should_reject_removed_fingerprint_section() {
     assert_rejected(valid_config().replace(
         "openai:\n",
@@ -310,6 +341,42 @@ fn config_loader_should_reject_invalid_desktop_profile_fields() {
     assert_rejected(valid_config().replace("desktop_build: '8109'", "desktop_build: 'build'"));
 }
 
+#[test]
+fn config_loader_should_accept_empty_and_custom_request_locations() {
+    let original = valid_config();
+    let omitted = original
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("location:"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert_ne!(original, omitted);
+    parse_config(&omitted).expect("location passthrough when omitted");
+    let location_line = original
+        .lines()
+        .find(|line| line.trim_start().starts_with("location:"))
+        .expect("example location");
+    for empty in ["    location:", "    location: null", "    location: ~"] {
+        parse_config(&original.replace(location_line, empty)).expect("empty YAML location");
+    }
+    let custom = original.replace(
+        "location: null",
+        "location: { country: 'NZ', region: 'Auckland', city: 'Auckland', timezone: 'Pacific/Auckland' }",
+    );
+    assert_ne!(original, custom);
+    parse_config(&custom).expect("custom location from YAML");
+}
+
+#[test]
+fn config_loader_should_reject_invalid_request_location_timezones() {
+    let original = valid_config();
+    let invalid = original.replace(
+        "location: null",
+        "location: { country: 'US', region: 'Ohio', city: 'Piketon', timezone: 'Not/A_Timezone' }",
+    );
+    assert_ne!(original, invalid);
+    assert_rejected(invalid);
+}
+
 fn assert_rejected(config: String) {
     assert!(parse_config(&config).is_err());
 }
@@ -330,6 +397,18 @@ fn valid_config() -> String {
             "default_password: ''",
             &format!("default_password: '{ADMIN_PASSWORD}'"),
         )
+}
+
+fn valid_config_document() -> serde_json::Value {
+    // 按字段修改样例，避免注释或排版变化让测试输入悄悄失效；JSON 仍可由 YAML 文件入口加载。
+    config::Config::builder()
+        .add_source(config::File::from_str(
+            &valid_config(),
+            config::FileFormat::Yaml,
+        ))
+        .build()
+        .and_then(config::Config::try_deserialize)
+        .expect("example config document")
 }
 
 fn parse_config(config: &str) -> Result<(GatewayConfig, tempfile::TempDir), String> {

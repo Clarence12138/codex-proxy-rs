@@ -729,5 +729,53 @@ async fn client_key_list_filters_by_owner_user_id() {
         .find(|item| item.id == "key_owned_filter")
         .expect("owned key");
     assert_eq!(owned_key.owner_username.as_deref(), Some("owner-filter"));
+}
+
+#[tokio::test]
+async fn session_key_status_checks_the_exact_current_enabled_record() {
+    let Some(database) = TestDatabase::create("session_key_status").await else {
+        return;
+    };
+    let store = PgAdminClientKeyStore::new(database.pool.clone());
+    let key = ClientApiKeyId::new("key-session-test").unwrap();
+    assert!(!store.is_enabled(&key).await.unwrap());
+    sqlx::query("insert into client_api_keys (id, name, key, enabled, created_at, updated_at) values ($1, 'Session test', 'synthetic-session-status-key', true, now(), now())")
+        .bind(key.as_str()).execute(&database.pool).await.unwrap();
+    assert!(store.is_enabled(&key).await.unwrap());
+    assert!(
+        !store
+            .is_enabled(&ClientApiKeyId::new("other-key").unwrap())
+            .await
+            .unwrap()
+    );
+    sqlx::query("insert into portal_users (id, username, password_hash, status, created_at, updated_at) values ('session-owner', 'session-owner', 'hash', 'active', now(), now())").execute(&database.pool).await.unwrap();
+    sqlx::query("update client_api_keys set owner_user_id = 'session-owner' where id = $1")
+        .bind(key.as_str())
+        .execute(&database.pool)
+        .await
+        .unwrap();
+    assert!(store.is_enabled(&key).await.unwrap());
+    sqlx::query("update portal_users set status = 'disabled' where id = 'session-owner'")
+        .execute(&database.pool)
+        .await
+        .unwrap();
+    assert!(!store.is_enabled(&key).await.unwrap());
+    sqlx::query("update portal_users set status = 'active' where id = 'session-owner'")
+        .execute(&database.pool)
+        .await
+        .unwrap();
+    assert!(store.is_enabled(&key).await.unwrap());
+    sqlx::query("update client_api_keys set enabled = false where id = $1")
+        .bind(key.as_str())
+        .execute(&database.pool)
+        .await
+        .unwrap();
+    assert!(!store.is_enabled(&key).await.unwrap());
+    sqlx::query("delete from client_api_keys where id = $1")
+        .bind(key.as_str())
+        .execute(&database.pool)
+        .await
+        .unwrap();
+    assert!(!store.is_enabled(&key).await.unwrap());
     database.close().await;
 }

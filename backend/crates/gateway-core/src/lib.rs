@@ -4,6 +4,7 @@
 //! 具体客户端协议和具体 Provider 都通过外层 adapter 接入。
 
 pub mod account;
+pub mod concurrency;
 pub mod diagnostics;
 pub mod engine;
 pub mod error;
@@ -30,7 +31,8 @@ use engine::admission::{
 };
 use engine::continuation::NativeContinuationPort;
 use engine::execution::{
-    ClientApiKeyUsageSink, DefaultExecutionService, ExecutionService, ProviderCircuitPort,
+    ClientApiKeyUsageSink, ClientKeyVerifier, DefaultExecutionService, ExecutionService,
+    ProviderCircuitPort,
 };
 use engine::probe::AccountProbe;
 use engine::provider::ProviderRegistry;
@@ -93,6 +95,7 @@ impl CoreStorePorts {
 
 pub struct CoreBundle {
     execution: Arc<dyn ExecutionService>,
+    client_key_verifier: Arc<dyn ClientKeyVerifier>,
     snapshot_control: Arc<dyn SnapshotControl>,
     account_probe: Arc<dyn AccountProbe>,
     health_probes: Vec<Arc<dyn HealthProbe>>,
@@ -103,6 +106,11 @@ impl CoreBundle {
     #[must_use]
     pub fn execution_service(&self) -> Arc<dyn ExecutionService> {
         Arc::clone(&self.execution)
+    }
+
+    #[must_use]
+    pub fn client_key_verifier(&self) -> Arc<dyn ClientKeyVerifier> {
+        Arc::clone(&self.client_key_verifier)
     }
 
     #[must_use]
@@ -167,11 +175,13 @@ pub async fn initialize(
     }
     let service = Arc::new(service);
     let execution: Arc<dyn ExecutionService> = service.clone();
+    let client_key_verifier: Arc<dyn ClientKeyVerifier> = service.clone();
     let account_probe: Arc<dyn AccountProbe> = service;
     let snapshot_control: Arc<dyn SnapshotControl> = publisher;
     let health_probes: Vec<Arc<dyn HealthProbe>> = vec![Arc::new(snapshots)];
     Ok(CoreBundle {
         execution,
+        client_key_verifier,
         snapshot_control,
         account_probe,
         health_probes,

@@ -698,6 +698,20 @@ impl PgAdminClientKeyStore {
         }
     }
 
+    /// 会话恢复只读启用状态，不加载明文凭据或其他 Key 的资料。
+    pub async fn is_enabled(&self, id: &ClientApiKeyId) -> AdminStoreResult<bool> {
+        sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM client_api_keys k
+             WHERE k.id = $1 AND k.enabled AND (k.owner_user_id IS NULL OR EXISTS(
+               SELECT 1 FROM portal_users u WHERE u.id = k.owner_user_id AND u.status = 'active'
+             )))",
+        )
+        .bind(id.as_str())
+        .fetch_one(&self.keys.pool)
+        .await
+        .map_err(|_| admin_store_error(ENTITY, postgres_unavailable("read client key status")))
+    }
+
     async fn revision(&self) -> AdminStoreResult<gateway_admin::model::Revision> {
         self.control_plane
             .load_control_plane()
@@ -726,6 +740,18 @@ impl PgAdminClientKeyStore {
 
 #[async_trait]
 impl ClientKeyStore for PgAdminClientKeyStore {
+    async fn get_client_key(
+        &self,
+        id: &ClientApiKeyId,
+    ) -> AdminStoreResult<Option<AdminClientKeyRecord>> {
+        self.keys
+            .get_client_api_key(id.as_str())
+            .await
+            .map_err(|error| admin_store_error(ENTITY, error))?
+            .map(admin_client_key_record)
+            .transpose()
+    }
+
     async fn list_client_keys(
         &self,
         query: AdminClientKeyListQuery,

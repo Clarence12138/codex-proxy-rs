@@ -11,6 +11,7 @@ Codex Proxy RS 是单进程、单副本运行的多 Provider AI 网关，同时�
 - 面向客户端的 OpenAI Responses、Images、standalone Search 和模型目录协议；
 - 面向管理员的 `/api/admin/*` 控制面和 Vue 管理端；
 - 可选的拼车用户控制面 `/api/portal/*` 与 `/portal`（合同见 [Portal](portal.md)）；
+- 面向 Key 持有者的 `/api/key-usage/*` 只读用量接口和独立 `/key-usage` 页面；
 - OpenAI 与 xAI 两个编译期 Provider；
 - PostgreSQL 持久化、Redis 协调状态以及 S3/R2 数据库备份。
 
@@ -58,14 +59,14 @@ flowchart LR
 | `backend/apps/gateway` | 读取顶层配置、连接 Bundle、注册 Provider 与 Worker |
 | `gateway-protocol` | 跨层共享的 OpenAI wire contract、SSE 编解码与无业务 owner 的解析事实，不依赖其他 workspace crate |
 | `gateway-core` | operation、canonical event、请求快照、路由、admission、attempt 协调、交付边界和计量 |
-| `gateway-admin` | 管理领域、用例、Provider/Store 端口、审计语义和备份策略 |
+| `gateway-admin` | 管理领域、Key 用量查询、Provider/Store 端口、审计语义和备份策略 |
 | `gateway-portal` | 拼车用户、套餐、订阅与用户 Key/用量用例；不依赖 gateway-admin |
-| `gateway-api` | HTTP/WS/SSE 解码与交付、Admin wire、静态管理端；不直接访问 Store 或具体 Provider |
+| `gateway-api` | HTTP/WS/SSE 解码与交付、Admin 与 Key 用量 wire、静态 Web UI；不直接访问 Store 或具体 Provider |
 | `gateway-store` | PostgreSQL、Redis、S3/R2、`pg_dump` 适配器；不拥有业务策略 |
 | `gateway-host` | 配置加载、日志、HTTP 生命周期、Worker 监督和系统更新 |
 | `providers/openai` | OpenAI OAuth、账号选择、目录、额度、Responses/Images/Search transport |
 | `providers/xai` | xAI OAuth session、账号选择、目录、额度和 Grok/Responses 转换 |
-| `frontend` | Vue 管理端，仅通过 Admin API 读写状态 |
+| `frontend` | Vue 管理端与 Key 用量页，仅通过各自身份允许的控制面 API 访问状态 |
 
 依赖方向遵守四条规则：
 
@@ -132,6 +133,8 @@ service；客户端原生对象只进有界进程缓存，不扩展套餐 Redis 
 
 Admin 与 Portal 的费用输入、规范金额及分解结果合同共用 `gateway-core::metering`；Provider 继续拥有价格规则及已存总额校验。组合根从已初始化的 Provider 注册表向 Portal 注入仅能读取计费分解的 `BillingResolver`，不开放管理员服务。API 的内部 `usage_presentation` 统一 Token 与费用展示格式，Portal 仍使用独立的白名单响应，不包含账号身份或原始观测文档。
 
+Portal 概览通过自身 Usage 端口查询；Store 复用观测查询实现，并按请求冻结的用户归属过滤，共享观测连接预算。成功汇总与健康计数分别使用完整交付和全部请求口径。API 只复用 Admin 已有的纯健康计算和展示转换，不调用管理员服务；`gateway-portal` 不依赖 `gateway-admin`。前端 Key/Portal 页面共用纯用量展示组件，认证与取数保持分域。
+
 `engine::observation` 统一维护单次响应的用量、费用、时间和响应 ID，并负责重试前清理；协调器继续
 独占发送、提交、重试和终结顺序。Provider 上报费用优先于本地估算，丢弃的 attempt 不得污染最终计量。
 Client Key 费用账本独立累计各次 attempt 的实际费用，不能因请求重试而清空已产生的费用或未知计费状态。
@@ -160,7 +163,7 @@ sequenceDiagram
   E->>S: enqueue terminal observation and metering
 ```
 
-请求开始时冻结 `RuntimeSnapshot`、Client Key 的账号范围、模型映射、Codex 客户端最低版本、Provider
+请求开始时冻结 `RuntimeSnapshot`、Client Key 的账号范围及账号模型政策、模型映射、Codex 客户端最低版本、Provider
 候选顺序和调度策略。
 运行中的请求始终使用该快照，不拼接不同版本的配置，也不在热路径查询分组关系。
 
@@ -189,7 +192,7 @@ Images 与 standalone Search 是 OpenAI Provider 自有端点：两者都不参�
 Core 只理解 `Operation`、能力要求、Provider 候选、稳定错误和 canonical event，不读取 Provider SDK
 类型。Provider 独占 credential schema、OAuth、账号选择、模型目录、额度投影和上游 transport。
 
-- OpenAI 是透明边界。Responses 请求保留未知字段和字段顺序；SSE、WebSocket、Images 与 standalone
+- OpenAI 默认是透明边界；显式配置 `openai.wire_profile.location` 时，由 Provider 覆盖带环境标记的日期/时区及 Web Search 位置，未配置时保留客户端原值。Responses 请求保留未知字段和字段顺序；SSE、WebSocket、Images 与 standalone
   Search 的业务正文按原始字节转发。canonical facts 从同一数据旁路提取，只用于路由、观测和计费。
 - Responses 的业务扩展头保留原始多值字节；传输与反代请求头分类由 `gateway-protocol` 统一定义，
   API 入站与 OpenAI Provider 编码共同使用。下游链路元数据和压缩协商不跨越该边界，
@@ -274,10 +277,20 @@ Vue 普通管理请求的错误提示由 `api/request.ts` 响应拦截器统一�
 规范化异常保留 `status`、`code`、`requestId` 与 `kind`。页面和 `useAsyncAction` 不重复弹出接口错误；
 查询可以保留失败状态与重试入口，本地校验、文件操作、SSE 诊断和成功响应中的业务结果仍归各自 owner。
 
-API 模块通过统一的 `RequestOptions` 传递 `signal`、`timeout` 和 `silent`。取消或已被新查询取代的请求
+API 模块按 `url`、`method`、`data`（POST）或 `params: data`（GET）排列请求配置；
+仅在实际调用方需要时提供 `RequestOptions`（`signal`、`timeout`、`silent`），并放在请求配置末尾。取消或已被新查询取代的请求
 不弹提示；后台轮询、重启探测等显式使用 `silent`，它只关闭提示，不吞异常，也不跳过会话失效处理。
 批量操作的部分成功汇总、不可逆操作的结果未知等必要业务处理先将对应请求静默，再由业务 owner 提供
 一次有上下文的反馈；不得为普通失败重新维护一套消息或业务码映射。
+
+管理员和密钥登录共用 `/api/auth/*`、AuthService、Redis 会话结构和 `cpr_session` Cookie。
+登录类型只选择凭据校验方式，权限来自服务端保存的身份。管理入口只接受管理员身份或原有部署级管理 API Key；
+AuthService 每次恢复 Key 会话时重新检查 Key 是否存在且启用；Key 会话不能访问管理员页面和管理接口。
+前端只维护一份 Auth Store，不在每个 API 请求上标记身份；401 会话失效、403 权限不足和 503 依赖故障分别处理。
+成功登录替换旧会话，登出必须确认服务端撤销；旧管理员会话路径不保留兼容读取。
+KeyUsageService 从 AuthService 的服务端身份确定唯一查询范围，复用 ClientKeyStore 的额度账本投影和
+ObservabilityStore 的范围查询；API 只输出单页所需的字段白名单，不复用管理员的宽响应。
+前端 `/key-usage` 独立于管理布局，不挂载管理员菜单或请求管理接口。
 
 ## 6. 路由、账号范围与 continuation
 
@@ -289,9 +302,14 @@ Client Key 与账号分组形成授权范围：
 - 分组可以包含多个 Provider，账号也可以属于多个分组。
 
 账号选择综合启停状态、credential/quota 事实、Redis cooldown、并发上限、权重、请求间隔和会话亲和。
-账号编辑在一个事务中替换完整调度事实。导入与首次 OAuth 可携带统一账号设置，由 Admin 传递给 Store，
+`account::AccountModelAccess` 拥有管理员模型政策的校验与精确匹配语义，存入账号行的 `model_access_json`，
+由 `RuntimeAccountDirectory` / `FrozenAccountScope` 随配置快照冻结。Provider 在额度、亲和与租约之前
+按映射后的上游模型筛选账号；重试和 fallback 使用同一冻结政策。上游目录和凭据不承载或改写该政策。
+客户端目录的政策过滤判断范围内整个候选池，原生模型对象仍由 Provider 独占解释。
+
+账号编辑在一个事务中更新调度事实，批量更新只应用显式提供的字段。导入与首次 OAuth 可携带统一账号设置，由 Admin 传递给 Store，
 与凭据在同一事务中提交；Provider 仍独占凭据解析。未附带设置的导入、重新授权和后台刷新保留已有分组、
-权重与并发设置。管理端导入和账号编辑共用设置表单，凭据输入独立于设置。
+权重、并发与模型政策。模型政策变更推进配置 revision，不推进 credential revision。管理端导入和账号编辑共用设置表单，凭据输入独立于设置。
 
 Continuation 仍受原请求的 Client Key、账号范围、Provider 和发送/交付边界约束：
 
@@ -301,6 +319,21 @@ Continuation 仍受原请求的 Client Key、账号范围、Provider 和发送/�
 - scope 外账号、跨 Key 复用或不明确发送结果均 fail closed。
 
 会话亲和是优先选择提示，不是硬账号绑定；native continuation 才携带不可跨越的 owner 约束。
+
+### 并发等待
+
+Core 的 `concurrency` 拥有中立的有界等待位置与 FIFO 唤醒，不依赖账号、路由或执行会话；
+账号策略仅引用其中的等待配置值。执行准入与各 Provider 选择器分别持有等待队列，按 Key/账号隔离。
+运行并发仍由 Redis 原子准入与账号租约裁决，等待队列只保存当前进程中的等待位置，不复制运行计数，
+也不持久化正文或在重启后重放请求。每个等待 owner 最多容纳 1,024 个等待者作为资源兜底。
+
+新请求不能抢占已有等待队列；队首短周期重读容量，取消/完成等待通过 Drop 回收位置并唤醒后继。
+Provider 等待重试仍在同一次未发送准备阶段重新读取账号资格、容量、目录和冷却，不增加 attempt；
+Key 的 RPM 在成功准入时才计数，金额限制在入队前及成功准入后检查。
+账号并发与本地请求间隔可有限等待，权限、额度和上游冷却不能作为可等待容量。
+密钥准入、账号选择与后续重试共享请求级等待预算，从首次入队开始计时，同时受请求整体截止时刻约束。
+切换等待层、账号或 Provider 不重置等待时限；没有发生排队时不启动该计时，也不据此中断已开始的上游生成。
+队列满/超时属于本地容量拒绝，不作为上游限流反馈或 Provider 故障熔断证据。
 
 ### Client Key 限额与结算
 
@@ -368,6 +401,7 @@ PostgreSQL 周期对账才是正确性基础。
 | 账号、credential、分组、Client Key、设置、审计、请求与备份记录 | PostgreSQL | 业务持久化事实 |
 | Client Key 金额窗口与费用事件 | PostgreSQL | 准入与幂等结算的权威账本，独立于请求观测与日志保留策略 |
 | admission、lease、cooldown、circuit、会话亲和、continuation、OAuth pending、目录 cache | Redis | 可重建、可过期的协调状态 |
+| 控制面统一登录会话与登录限流桶 | Redis | AuthService 唯一拥有；保存 Admin / Key 身份、绑定 ID、绝对有效期和计数，不保存原始凭据 |
 | 日志、OAuth 恢复记录、在线更新状态、备份暂存 | `.runtime/` | 部署节点本地运行文件 |
 | 重置卡库存与消费结果 | OpenAI upstream | 后端不建立本地卡库存；前端按账号保留当前浏览器会话的最近查询、未决消费幂等键与发送锁，展开行卸载不会清空 |
 | Provider 公开模型与请求画像 | Provider/runtime cache | 由官方目录或发布源刷新，不写成第二份业务配置 |

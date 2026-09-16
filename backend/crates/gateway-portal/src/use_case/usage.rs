@@ -20,6 +20,11 @@ use crate::{
 /// 用户用量服务。
 #[async_trait]
 pub trait PortalUsageService: Send + Sync {
+    async fn overview(
+        &self,
+        user_id: &str,
+        query: crate::model::usage::PortalOverviewQuery,
+    ) -> Result<crate::model::usage::PortalUsageOverview, PortalError>;
     async fn me(&self, user_id: &str) -> Result<PortalMe, PortalError>;
     async fn records(
         &self,
@@ -48,6 +53,19 @@ impl DefaultPortalUsageService {
 
 #[async_trait]
 impl PortalUsageService for DefaultPortalUsageService {
+    async fn overview(
+        &self,
+        user_id: &str,
+        query: crate::model::usage::PortalOverviewQuery,
+    ) -> Result<crate::model::usage::PortalUsageOverview, PortalError> {
+        if query.end <= query.start || query.end - query.start > chrono::Duration::days(31) {
+            return Err(PortalError::invalid("时间范围须大于零且不超过 31 天"));
+        }
+        self.store
+            .overview(user_id, query, Utc::now())
+            .await
+            .map_err(super::store_error)
+    }
     async fn me(&self, user_id: &str) -> Result<PortalMe, PortalError> {
         self.store
             .load_me(user_id, Utc::now())

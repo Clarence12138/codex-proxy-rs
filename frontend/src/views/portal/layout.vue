@@ -1,11 +1,17 @@
 <script setup lang="ts">
 import { KeyRound, LayoutDashboard, LogOut, ScrollText, UserRound } from '@lucide/vue'
+import { shallowRef } from 'vue'
 import { useRouter } from 'vue-router'
-
+import { toast } from '@/components/base/BaseToast'
 import { usePortalAuthStore } from '@/stores/modules/portal-auth'
+import { useThemeStore } from '@/stores/modules/theme'
+
+import { errorMessage } from '@/utils/async'
 
 const router = useRouter()
 const auth = usePortalAuthStore()
+const theme = useThemeStore()
+const loggingOut = shallowRef(false)
 const nav = [
   { label: '概览', path: '/portal', icon: LayoutDashboard },
   { label: '我的密钥', path: '/portal/keys', icon: KeyRound },
@@ -14,8 +20,19 @@ const nav = [
 ]
 
 async function logout() {
-  await auth.logout()
-  await router.replace('/login')
+  if (loggingOut.value)
+    return
+  loggingOut.value = true
+  try {
+    await auth.logout()
+    await router.replace('/login')
+  }
+  catch (cause) {
+    toast.error(errorMessage(cause, '退出失败，请重试'))
+  }
+  finally {
+    loggingOut.value = false
+  }
 }
 </script>
 
@@ -33,7 +50,10 @@ async function logout() {
         <component :is="item.icon" class="size-4" />
         {{ item.label }}
       </router-link>
-      <button type="button" class="flex items-center gap-2 px-3 py-2 text-cp-sm md:mt-auto" @click="logout">
+      <button type="button" class="px-3 py-2 text-left text-cp-sm md:mt-auto" @click="theme.toggleTheme($event)">
+        切换{{ theme.effectiveTheme === 'dark' ? '浅色' : '深色' }}主题
+      </button>
+      <button type="button" :disabled="loggingOut" class="flex items-center gap-2 px-3 py-2 text-cp-sm" @click="logout">
         <LogOut class="size-4" />
         退出
       </button>

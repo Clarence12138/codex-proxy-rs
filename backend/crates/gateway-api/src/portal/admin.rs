@@ -16,14 +16,19 @@ use gateway_portal::model::{
 };
 use serde::Deserialize;
 
-use crate::admin::{AdminAuth, AdminJson, AdminQuery, AdminSessionState};
+use crate::admin::{AdminAuth, AdminJson, AdminQuery};
 use gateway_admin::model::auth::AdminPrincipal;
 
 use super::wire::{PortalEnvelope, PortalError, PortalResponse, map_portal_error};
 
 pub fn router<S>() -> Router<S>
 where
-    S: crate::portal::PortalSessionState + AdminSessionState + Clone + Send + Sync + 'static,
+    S: crate::portal::PortalSessionState
+        + crate::auth::SessionState
+        + Clone
+        + Send
+        + Sync
+        + 'static,
 {
     Router::new()
         .route("/api/admin/portal/users", get(list_users::<S>))

@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import type { AccountCreateForm } from './model'
 import type { AccountGroup } from '@/api'
+import BaseFormItem from '@/components/base/BaseForm/FormItem.vue'
+import BaseTextarea from '@/components/base/BaseTextarea.vue'
 import AccountSettingsFields from '../AccountSettingsFields.vue'
 import AccountProviderChooser from './AccountProviderChooser.vue'
 
@@ -25,14 +27,25 @@ const form = defineModel<AccountCreateForm>({ required: true })
       v-model:enabled="form.enabled"
       v-model:concurrency-limit="form.concurrencyLimit"
       v-model:weight="form.weight"
+      v-model:model-access="form.modelAccess"
       v-model:selected-group-ids="form.groupIds"
       v-model:proxy-mode="form.proxyMode"
       v-model:proxy-id="form.proxyId"
+      preserve-model-access
       :groups="groups"
       :groups-loading="groupsLoading"
       :preserve-proxy="false"
       :disabled="disabled"
       :proxy-error="proxyError"
     />
+    <BaseFormItem label="备注">
+      <BaseTextarea
+        v-model="form.notes"
+        :rows="3"
+        :maxlength="500"
+        placeholder="最多 500 字，可不填。"
+        :disabled="disabled"
+      />
+    </BaseFormItem>
   </div>
 </template>

@@ -835,6 +835,60 @@ async fn usage_summary_is_owner_scoped() {
     assert_eq!(summary.request_count, 2);
     assert_eq!(summary.total_tokens, 30);
     assert_eq!(summary.total_usd, "1.2500000000");
+    // 概览沿用成功交付口径；即使当前 Key 不存在，也按请求冻结 owner 聚合。
+    let now = Utc::now();
+    let overview_query = gateway_portal::model::usage::PortalOverviewQuery {
+        start: now - chrono::Duration::days(1),
+        end: now + chrono::Duration::seconds(1),
+        model: None,
+    };
+    let overview = store
+        .overview(&one.id, overview_query.clone(), now)
+        .await
+        .expect("owner overview");
+    assert_eq!(overview.summary.requests, 2);
+    assert_eq!(overview.summary.total_tokens, 30);
+    assert_eq!(
+        overview
+            .trend
+            .iter()
+            .map(|point| point.metrics.total_tokens)
+            .sum::<u64>(),
+        30
+    );
+    assert!(overview.summary.cost_incomplete);
+    assert!(!overview.me.subscription_effective);
+    sqlx::query(
+        "update model_requests set requested_model_id = 'model-one' where id = 'req_usage_one'",
+    )
+    .execute(&database.pool)
+    .await
+    .unwrap();
+    let filtered = store
+        .overview(
+            &one.id,
+            gateway_portal::model::usage::PortalOverviewQuery {
+                model: Some("model-one".to_owned()),
+                ..overview_query
+            },
+            now,
+        )
+        .await
+        .unwrap();
+    assert_eq!(filtered.summary.requests, 1);
+    assert_eq!(filtered.summary.total_tokens, 10);
+    assert_eq!(
+        filtered
+            .health
+            .iter()
+            .map(|point| point.success)
+            .sum::<u64>(),
+        overview
+            .health
+            .iter()
+            .map(|point| point.success)
+            .sum::<u64>()
+    );
     let future = Utc::now() + chrono::Duration::days(1);
     assert_eq!(
         store
@@ -945,6 +999,7 @@ async fn usage_records_are_owner_scoped_and_keep_a_stable_key_reference() {
         .list_records(
             &one.id,
             PortalUsageQuery {
+                model: None,
                 start: None,
                 end: None,
                 cursor: None,
@@ -975,6 +1030,7 @@ async fn usage_records_are_owner_scoped_and_keep_a_stable_key_reference() {
         .list_records(
             &two.id,
             PortalUsageQuery {
+                model: None,
                 start: None,
                 end: None,
                 cursor: None,
@@ -996,6 +1052,7 @@ async fn usage_records_are_owner_scoped_and_keep_a_stable_key_reference() {
         .list_records(
             &one.id,
             PortalUsageQuery {
+                model: None,
                 start: None,
                 end: None,
                 cursor: None,

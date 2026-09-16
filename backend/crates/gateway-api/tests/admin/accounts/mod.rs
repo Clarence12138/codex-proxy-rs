@@ -319,31 +319,29 @@ mod batch_update {
     }
 
     #[test]
-    fn batch_update_should_require_enabled_and_reject_unknown_fields() {
+    fn batch_update_model_access_preserves_omitted_settings_and_rejects_unknown_fields() {
+        let request: BatchUpdateAccountsRequest = serde_json::from_value(json!({
+            "accountIds": ["acct_test"], "modelAccess": {"mode":"allowlist","models":["test-luna"]}
+        }))
+        .expect("policy-only update");
+        request.validate().expect("valid update");
+        assert!(request.enabled.is_none());
+        assert!(request.weight.is_none());
+        assert!(request.group_ids.is_none());
+        assert!(request.concurrency_limit.is_none());
         assert!(
             serde_json::from_value::<BatchUpdateAccountsRequest>(json!({
-            "accountIds": ["acct_test"],
-            "concurrencyLimit": null,
-            "weight": 1,
-            "groupIds": []
+                "accountIds": ["acct_test"], "enabled": true, "legacy": true
             }))
             .is_err()
         );
-        assert!(
-            serde_json::from_value::<BatchUpdateAccountsRequest>(json!({
-                "accountIds": ["acct_test"],
-                "enabled": true,
-                "concurrencyLimit": null,
-                "weight": 1,
-                "groupIds": [],
-                "legacy": true
-            }))
-            .is_err()
-        );
+        let empty: BatchUpdateAccountsRequest =
+            serde_json::from_value(json!({"accountIds":["acct_test"]})).expect("empty mutation");
+        assert!(empty.validate().is_err());
     }
 
     #[test]
-    fn batch_update_should_reject_invalid_scheduling_bounds_and_missing_fields() {
+    fn batch_update_should_reject_invalid_scheduling_bounds_and_distinguish_clear_from_preserve() {
         for (concurrency_limit, weight, field) in [
             (json!(0), json!(1), "concurrencyLimit"),
             (json!(4294967296_u64), json!(1), "concurrencyLimit"),
@@ -351,36 +349,20 @@ mod batch_update {
             (json!(null), json!(101), "weight"),
         ] {
             let request: BatchUpdateAccountsRequest = serde_json::from_value(json!({
-                "accountIds": ["acct_test"],
-                "enabled": true,
-                "concurrencyLimit": concurrency_limit,
-                "weight": weight,
-                "groupIds": []
-            }))
-            .expect("deserialize invalid scheduling");
+                "accountIds": ["acct_test"], "concurrencyLimit": concurrency_limit, "weight": weight,
+            })).expect("deserialize bounds");
             assert_eq!(
-                request.validate().expect_err("reject scheduling").field(),
+                request.validate().expect_err("reject bounds").field(),
                 field
             );
         }
-        assert!(
-            serde_json::from_value::<BatchUpdateAccountsRequest>(json!({
-                "accountIds": ["acct_test"],
-                "enabled": true,
-                "weight": 1,
-                "groupIds": []
-            }))
-            .is_err()
-        );
-        assert!(
-            serde_json::from_value::<BatchUpdateAccountsRequest>(json!({
-                "accountIds": ["acct_test"],
-                "enabled": true,
-                "concurrencyLimit": null,
-                "groupIds": []
-            }))
-            .is_err()
-        );
+        let cleared: BatchUpdateAccountsRequest = serde_json::from_value(json!({
+            "accountIds": ["acct_test"], "concurrencyLimit": null
+        }))
+        .expect("clear concurrency override");
+        cleared.validate().expect("valid clear");
+        assert_eq!(cleared.concurrency_limit, Some(None));
+        assert!(cleared.weight.is_none());
     }
 
     #[test]
@@ -404,6 +386,43 @@ mod batch_update {
             }))
             .is_err()
         );
+    }
+}
+
+#[test]
+fn single_update_should_accept_optional_unicode_and_multiline_notes() {
+    use gateway_api::admin::accounts::UpdateAccountRequest;
+    use serde_json::json;
+    for notes in [
+        json!(null),
+        json!(""),
+        json!("团队备用\n第二行\t说明"),
+        json!("备".repeat(500)),
+    ] {
+        let request: UpdateAccountRequest = serde_json::from_value(json!({
+            "accountId": "acct_notes", "enabled": true, "concurrencyLimit": null,
+            "weight": 1, "groupIds": [], "notes": notes
+        }))
+        .unwrap();
+        request.validate().expect("accept bounded notes");
+    }
+}
+
+#[test]
+fn single_update_should_reject_oversized_notes_and_control_characters() {
+    use gateway_api::admin::accounts::UpdateAccountRequest;
+    use serde_json::json;
+    for notes in [
+        "备".repeat(501),
+        "备注\0".to_owned(),
+        "备注\u{001b}".to_owned(),
+    ] {
+        let request: UpdateAccountRequest = serde_json::from_value(json!({
+            "accountId": "acct_notes", "enabled": true, "concurrencyLimit": null,
+            "weight": 1, "groupIds": [], "notes": notes
+        }))
+        .unwrap();
+        assert_eq!(request.validate().unwrap_err().field(), "notes");
     }
 }
 
@@ -845,6 +864,9 @@ mod import_settings {
             ("weight", json!(0)),
             ("weight", json!(101)),
             ("groupIds", json!(["invalid-group"])),
+            ("notes", json!("备".repeat(501))),
+            ("notes", json!("备注\u{0000}")),
+            ("notes", json!("备注\u{001b}")),
         ] {
             let mut settings =
                 json!({"enabled": false, "concurrencyLimit": null, "weight": 1, "groupIds": []});
@@ -862,6 +884,25 @@ mod import_settings {
                 oauth.validate().expect_err("invalid settings").field(),
                 field
             );
+        }
+    }
+
+    #[test]
+    fn import_and_oauth_accept_optional_unicode_and_multiline_notes() {
+        for notes in [
+            json!(null),
+            json!(""),
+            json!("团队备用\n下月续费\t"),
+            json!("备".repeat(500)),
+        ] {
+            let settings = json!({"enabled": true, "concurrencyLimit": null, "weight": 1, "groupIds": [], "notes": notes});
+            let import: AccountImportRequest = serde_json::from_value(
+                json!({"provider": "openai", "data": {}, "settings": settings}),
+            )
+            .unwrap();
+            let oauth: CompleteAccountAuthorizationRequest = serde_json::from_value(json!({"provider": "xai", "flowId": "flow-test", "callbackUrl": "code", "settings": settings})).unwrap();
+            import.validate().expect("import notes");
+            oauth.validate().expect("OAuth notes");
         }
     }
 

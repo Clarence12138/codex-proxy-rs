@@ -22,7 +22,7 @@ pub use wire::PortalError;
 /// 构造 `/api/portal` 与管理员用户/套餐路由。
 pub fn router<S>() -> Router<S>
 where
-    S: PortalSessionState + crate::admin::AdminSessionState + Clone + Send + Sync + 'static,
+    S: PortalSessionState + crate::auth::SessionState + Clone + Send + Sync + 'static,
 {
     Router::new()
         .merge(auth::router::<S>())

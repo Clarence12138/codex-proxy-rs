@@ -1,5 +1,7 @@
 //! Runtime settings、旧设置页聚合投影与明文 Admin API Key wire。
 
+use crate::auth::SessionState;
+
 use std::{collections::BTreeMap, fmt};
 
 use axum::{
@@ -21,7 +23,7 @@ use gateway_core::routing::{PublicModelId, UpstreamModelId};
 use serde::{Deserialize, Serialize};
 
 use super::{
-    AdminAuth, AdminEnvelope, AdminError, AdminJson, AdminQuery, AdminResponse, AdminSessionState,
+    AdminAuth, AdminEnvelope, AdminError, AdminJson, AdminQuery, AdminResponse,
     WireValidationError, wire::map_admin_service_error,
 };
 
@@ -37,6 +39,9 @@ pub struct RuntimeSettingsView {
     pub refresh_concurrency: u64,
     pub max_concurrent_per_account: u64,
     pub request_interval_ms: u64,
+    pub max_waiting_per_key: u32,
+    pub max_waiting_per_account: u32,
+    pub concurrency_wait_timeout_seconds: u32,
     pub rotation_strategy: String,
     pub min_codex_desktop_version: Option<String>,
     pub min_codex_cli_version: Option<String>,
@@ -55,6 +60,9 @@ pub struct UpdateRuntimeSettingsRequest {
     pub refresh_concurrency: u64,
     pub max_concurrent_per_account: u64,
     pub request_interval_ms: u64,
+    pub max_waiting_per_key: u32,
+    pub max_waiting_per_account: u32,
+    pub concurrency_wait_timeout_seconds: u32,
     pub rotation_strategy: String,
     pub min_codex_desktop_version: Option<String>,
     pub min_codex_cli_version: Option<String>,
@@ -67,6 +75,17 @@ impl UpdateRuntimeSettingsRequest {
     /// 校验公共运行参数。
     pub fn validate(&self) -> Result<(), WireValidationError> {
         validate_model_mappings(&self.model_mappings)?;
+        for (value, field) in [
+            (self.max_waiting_per_key, "maxWaitingPerKey"),
+            (self.max_waiting_per_account, "maxWaitingPerAccount"),
+        ] {
+            if value > 1_000 {
+                return Err(WireValidationError::new(field));
+            }
+        }
+        if !(1..=120).contains(&self.concurrency_wait_timeout_seconds) {
+            return Err(WireValidationError::new("concurrencyWaitTimeoutSeconds"));
+        }
         for (value, field) in [
             (self.refresh_margin_seconds, "refreshMarginSeconds"),
             (self.refresh_concurrency, "refreshConcurrency"),
@@ -104,6 +123,9 @@ impl UpdateRuntimeSettingsRequest {
             max_concurrent_per_account: u32::try_from(self.max_concurrent_per_account)
                 .map_err(|_| WireValidationError::new("settingsMaxConcurrencyOverflow"))?,
             request_interval_ms: self.request_interval_ms,
+            max_waiting_per_key: self.max_waiting_per_key,
+            max_waiting_per_account: self.max_waiting_per_account,
+            concurrency_wait_timeout_seconds: self.concurrency_wait_timeout_seconds,
             rotation_strategy: RotationStrategy::parse(&self.rotation_strategy)
                 .ok_or_else(|| WireValidationError::new("rotationStrategy"))?,
             min_codex_desktop_version: self.min_codex_desktop_version,
@@ -126,6 +148,9 @@ impl From<RuntimeSettings> for RuntimeSettingsView {
             refresh_concurrency: u64::from(settings.refresh_concurrency),
             max_concurrent_per_account: u64::from(settings.max_concurrent_per_account),
             request_interval_ms: settings.request_interval_ms,
+            max_waiting_per_key: settings.max_waiting_per_key,
+            max_waiting_per_account: settings.max_waiting_per_account,
+            concurrency_wait_timeout_seconds: settings.concurrency_wait_timeout_seconds,
             rotation_strategy: settings.rotation_strategy.as_str().to_owned(),
             min_codex_desktop_version: settings.min_codex_desktop_version,
             min_codex_cli_version: settings.min_codex_cli_version,
@@ -228,7 +253,7 @@ impl Default for DeletedAdminApiKey {
 /// 构造固定 GET/POST 设置路由。
 pub fn router<S>() -> Router<S>
 where
-    S: AdminSessionState + Clone + Send + Sync + 'static,
+    S: SessionState + Clone + Send + Sync + 'static,
 {
     Router::new()
         .route("/api/admin/settings", get(settings::<S>))
@@ -257,7 +282,7 @@ async fn codex_desktop_windows_downloads<S>(
     AdminQuery(query): AdminQuery<ClientDownloadsQuery>,
 ) -> impl IntoResponse
 where
-    S: AdminSessionState + Send + Sync,
+    S: SessionState + Send + Sync,
 {
     let downloads = state
         .admin_services()
@@ -275,7 +300,7 @@ async fn settings<S>(
     State(state): State<S>,
 ) -> Result<impl IntoResponse, AdminError>
 where
-    S: AdminSessionState + Send + Sync,
+    S: SessionState + Send + Sync,
 {
     let result = state
         .admin_services()
@@ -295,7 +320,7 @@ async fn update_settings<S>(
     AdminJson(request): AdminJson<UpdateRuntimeSettingsRequest>,
 ) -> Result<impl IntoResponse, AdminError>
 where
-    S: AdminSessionState + Send + Sync,
+    S: SessionState + Send + Sync,
 {
     let command = request.into_command().map_err(map_wire_error)?;
     let result = state
@@ -315,7 +340,7 @@ async fn admin_api_key_status<S>(
     State(state): State<S>,
 ) -> Result<impl IntoResponse, AdminError>
 where
-    S: AdminSessionState + Send + Sync,
+    S: SessionState + Send + Sync,
 {
     let exists = state
         .admin_services()
@@ -334,7 +359,7 @@ async fn regenerate_admin_api_key<S>(
     State(state): State<S>,
 ) -> Result<impl IntoResponse, AdminError>
 where
-    S: AdminSessionState + Send + Sync,
+    S: SessionState + Send + Sync,
 {
     let result = state
         .admin_services()
@@ -355,7 +380,7 @@ async fn delete_admin_api_key<S>(
     State(state): State<S>,
 ) -> Result<impl IntoResponse, AdminError>
 where
-    S: AdminSessionState + Send + Sync,
+    S: SessionState + Send + Sync,
 {
     state
         .admin_services()

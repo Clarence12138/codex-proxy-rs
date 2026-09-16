@@ -86,8 +86,6 @@ services:
       redis:
         condition: service_healthy
     pids_limit: 256
-    cpus: '2.0'
-    mem_limit: 1g
     ports:
       - '127.0.0.1:8080:8080'
     volumes:

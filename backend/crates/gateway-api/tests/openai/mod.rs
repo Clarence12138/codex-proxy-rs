@@ -49,6 +49,41 @@ pub(super) async fn api_router(execution: Arc<dyn ExecutionService>) -> axum::Ro
     api_router_with_origins(execution, Vec::new()).await
 }
 
+pub(super) fn api_router_with_admin(admin: gateway_admin::AdminServices) -> axum::Router {
+    api_router_with_admin_and_proxies(admin, Vec::new())
+}
+
+pub(super) fn api_router_with_admin_and_proxies(
+    admin: gateway_admin::AdminServices,
+    trusted_proxy_ips: Vec<std::net::IpAddr>,
+) -> axum::Router {
+    gateway_api::initialize(
+        gateway_api::ApiConfig {
+            asset_directory: std::env::temp_dir(),
+            trusted_proxy_ips,
+            cors_allowed_origins: Vec::new(),
+            request_timeout_seconds: None,
+            request_id_header: "x-request-id".to_owned(),
+        },
+        Arc::new(DefaultExecutionService::new(
+            RuntimeSnapshotHandle::new(snapshot("unused-client-route-key", "openai")),
+            Arc::new(UnusedExecutionStore),
+            ProviderRegistry::default(),
+            Arc::new(UnusedAdmissions),
+            Arc::new(UnusedCircuits),
+            Arc::new(UnusedContinuation),
+            Arc::new(IgnoredClientApiKeyUsage),
+        )),
+        admin,
+        crate::support::services(),
+        Vec::new(),
+        Arc::new(EmptyWorkerHealth),
+        Arc::new(TestLifecycle::default()),
+    )
+    .expect("API bundle")
+    .router()
+}
+
 pub(super) async fn api_router_with_worker_health(
     execution: Arc<dyn ExecutionService>,
     worker_health: Arc<dyn WorkerHealthSource>,
@@ -296,6 +331,15 @@ impl ExecutionStore for UnusedExecutionStore {
 struct UnusedAdmissions;
 
 impl ClientAdmissionPort for UnusedAdmissions {
+    fn abandon(
+        &self,
+        key: &gateway_core::policy::ClientApiKeyId,
+        request: &gateway_core::engine::ModelRequestId,
+        owner_scope_id: Option<&gateway_core::policy::OwnerScopeId>,
+    ) {
+        let _ = futures::FutureExt::now_or_never(self.release(key, request, owner_scope_id));
+    }
+
     fn admit(
         &self,
         _: ClientAdmissionRequest,

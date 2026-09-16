@@ -90,56 +90,50 @@ export function getApiKeys(data: ApiKeyListParams, options: RequestOptions = {})
   })
 }
 
-export function createApiKey(data: ApiKeyCreateParam, options: RequestOptions = {}) {
+export function createApiKey(data: ApiKeyCreateParam) {
   return request<ApiKeyCreateResponse>({
     url: '/api/admin/client-keys/create',
     method: 'POST',
     data,
-    ...options,
   })
 }
 
-export function updateApiKey(data: ApiKeyUpdateParam, options: RequestOptions = {}) {
+export function updateApiKey(data: ApiKeyUpdateParam) {
   return request<ApiKeyMutationResponse>({
     url: '/api/admin/client-keys/update',
     method: 'POST',
     data,
-    ...options,
   })
 }
 
-export function revealApiKey(data: ApiKeyIdParam, options: RequestOptions = {}) {
+export function revealApiKey(data: ApiKeyIdParam) {
   return request<ApiKeyRevealResponse>({
     url: '/api/admin/client-keys/reveal',
     method: 'GET',
     params: data,
-    ...options,
   })
 }
 
-export function deleteApiKey(data: ApiKeyIdParam, options: RequestOptions = {}) {
+export function deleteApiKey(data: ApiKeyIdParam) {
   return request<ApiKeyMutationResponse>({
     url: '/api/admin/client-keys/delete',
     method: 'POST',
     data,
-    ...options,
   })
 }
 
-export function disableApiKey(data: ApiKeyIdParam, options: RequestOptions = {}) {
+export function disableApiKey(data: ApiKeyIdParam) {
   return request<ApiKeyMutationResponse>({
     url: '/api/admin/client-keys/disable',
     method: 'POST',
     data,
-    ...options,
   })
 }
 
-export function enableApiKey(data: ApiKeyIdParam, options: RequestOptions = {}) {
+export function enableApiKey(data: ApiKeyIdParam) {
   return request<ApiKeyMutationResponse>({
     url: '/api/admin/client-keys/enable',
     method: 'POST',
     data,
-    ...options,
   })
 }

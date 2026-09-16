@@ -20,6 +20,7 @@ where
     S: PortalSessionState + Clone + Send + Sync + 'static,
 {
     Router::new()
+        .route("/api/portal/usage/overview", get(overview::<S>))
         .route("/api/portal/usage/records", get(records::<S>))
         .route("/api/portal/usage/summary", get(summary::<S>))
 }
@@ -31,6 +32,7 @@ struct UsageQuery {
     end: Option<String>,
     cursor: Option<String>,
     page_size: Option<u32>,
+    model: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -80,6 +82,88 @@ fn parse_time(value: Option<String>) -> Result<Option<DateTime<Utc>>, PortalErro
         .transpose()
 }
 
+fn validated_model(model: Option<String>) -> Result<Option<String>, PortalError> {
+    let model = model
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty());
+    if model
+        .as_ref()
+        .is_some_and(|value| value.len() > 256 || value.chars().any(char::is_control))
+    {
+        return Err(PortalError::invalid_request(
+            StatusCode::BAD_REQUEST,
+            "模型筛选内容不合法",
+        ));
+    }
+    Ok(model)
+}
+
+async fn overview<S>(
+    auth: PortalAuth,
+    State(state): State<S>,
+    Query(query): Query<crate::key_usage::query::OverviewQuery>,
+) -> Result<impl axum::response::IntoResponse, PortalError>
+where
+    S: PortalSessionState + Send + Sync,
+{
+    use gateway_admin::model::observability::{Granularity, RequestMetricPoint, RequestMetrics};
+    let query = query.into_domain().map_err(|_| {
+        PortalError::invalid_request(
+            StatusCode::BAD_REQUEST,
+            "时间范围或模型筛选不合法（最多 31 天）",
+        )
+    })?;
+    let value = state
+        .portal_services()
+        .usage()
+        .overview(
+            &auth.principal.user_id,
+            gateway_portal::model::usage::PortalOverviewQuery {
+                start: query.range.start,
+                end: query.range.end,
+                model: query.model,
+            },
+        )
+        .await
+        .map_err(map_portal_error)?;
+    // 只复用纯健康展示计算，不调用管理员服务，不传递账号资料。
+    let points = value
+        .health
+        .into_iter()
+        .map(|point| RequestMetricPoint {
+            bucket_start: point.time,
+            granularity: Granularity::FifteenMinutes,
+            metrics: RequestMetrics {
+                success_count: point.success,
+                failure_count: point.failed,
+                cancelled_count: point.cancelled,
+                incomplete_count: point.incomplete,
+                caller_error_count: point.caller_error,
+                ..RequestMetrics::default()
+            },
+            costs: Vec::new(),
+            cost_coverage: Default::default(),
+        })
+        .collect::<Vec<_>>();
+    let health = crate::admin::observability::health_timeline_view(
+        gateway_admin::health_timeline_at(&points, value.as_of),
+    );
+    let me = value.me;
+    Ok(PortalResponse::new(
+        StatusCode::OK,
+        PortalEnvelope::ok(serde_json::json!({
+            "asOf": value.as_of, "startTime": value.query.start, "endTime": value.query.end,
+            "user": { "userId": me.user_id, "username": me.username, "planName": me.plan_name,
+                "subscriptionEffective": me.subscription_effective, "subscriptionEndsAt": me.subscription_ends_at },
+            "budget": { "dailyLimitUsd": me.daily_limit_usd, "dailyUsedUsd": me.daily_used_usd,
+                "dailyResetsAt": value.daily_resets_at, "weeklyLimitUsd": me.weekly_limit_usd,
+                "weeklyUsedUsd": me.weekly_used_usd, "weeklyResetsAt": value.weekly_resets_at,
+                "maxConcurrency": me.max_concurrency, "requestsPerMinute": me.requests_per_minute },
+            "summary": value.summary, "trend": value.trend, "healthTimeline": health,
+        })),
+    ))
+}
+
 async fn records<S>(
     auth: PortalAuth,
     State(state): State<S>,
@@ -94,6 +178,7 @@ where
         .records(
             &auth.principal.user_id,
             PortalUsageQuery {
+                model: validated_model(query.model)?,
                 start: parse_time(query.start)?,
                 end: parse_time(query.end)?,
                 cursor: query.cursor,

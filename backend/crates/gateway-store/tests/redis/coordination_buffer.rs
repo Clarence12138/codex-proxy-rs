@@ -38,6 +38,15 @@ impl RecordingCoordination {
 }
 
 impl ClientAdmissionPort for RecordingCoordination {
+    fn abandon(
+        &self,
+        key: &gateway_core::policy::ClientApiKeyId,
+        request: &gateway_core::engine::ModelRequestId,
+        owner_scope_id: Option<&gateway_core::policy::OwnerScopeId>,
+    ) {
+        let _ = futures::FutureExt::now_or_never(self.release(key, request, owner_scope_id));
+    }
+
     fn admit(
         &self,
         _: ClientAdmissionRequest,

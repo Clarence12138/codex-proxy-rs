@@ -1,61 +1,57 @@
 <script setup lang="ts">
-import { storeToRefs } from 'pinia'
 import { computed, shallowRef } from 'vue'
 import { useRouter } from 'vue-router'
-
 import { ApiError } from '@/api/request'
 import { useAuthStore } from '@/stores/modules/auth'
 import { usePortalAuthStore } from '@/stores/modules/portal-auth'
-import { useThemeStore } from '@/stores/modules/theme'
+
 import { errorMessage } from '@/utils/async'
 
 import LoginBackground from './components/LoginBackground.vue'
 import LoginPanel from './components/LoginPanel.vue'
+import LoginThemeToggle from './components/LoginThemeToggle.vue'
+
+type LoginRealm = 'admin' | 'key'
 
 const router = useRouter()
 const authStore = useAuthStore()
 const portalAuth = usePortalAuthStore()
-const themeStore = useThemeStore()
-const { effectiveTheme } = storeToRefs(themeStore)
-const { toggleTheme } = themeStore
+const loginError = shallowRef<string | null>(null)
 
+const realm = shallowRef<LoginRealm>(normalizeRealm(window.history.state?.loginMode))
 const username = shallowRef('')
 const password = shallowRef('')
+const apiKey = shallowRef('')
 const loginPending = shallowRef(false)
-const loginError = shallowRef<string | null>(null)
-const canSubmit = computed<boolean>(() => !!username.value.trim() && !!password.value)
-const loginLoading = computed<boolean>(() => authStore.loading || portalAuth.loading || loginPending.value)
-const submitDisabled = computed<boolean>(() => loginLoading.value || !canSubmit.value)
 
-function isInvalidCredentials(cause: unknown): boolean {
-  // 两个认证接口均以 401 / 40102 表示凭据不匹配，不能把网络或服务故障当作身份判断。
-  return cause instanceof ApiError && cause.status === 401 && cause.code === 40102 && cause.kind === 'api'
-}
+const canSubmit = computed(() => realm.value === 'key'
+  ? Boolean(apiKey.value.trim())
+  : Boolean(username.value.trim() && password.value))
+const loginLoading = computed(() => authStore.loading || loginPending.value)
+const submitDisabled = computed(() => loginLoading.value || !canSubmit.value)
 
 async function handleSubmit(): Promise<void> {
   if (submitDisabled.value)
     return
-
   loginPending.value = true
   loginError.value = null
-  // 两次认证使用同一份快照；密码保留首尾空格，不写入持久化状态。
+  const selectedRealm = realm.value
   const payload = { username: username.value.trim(), password: password.value }
   try {
-    const adminResult = await authStore.login(payload, { silent: true })
-    if (adminResult.success) {
-      await router.replace('/')
+    const result = await authStore.login(selectedRealm === 'key'
+      ? { mode: 'key', apiKey: apiKey.value.trim() }
+      : { mode: 'admin', ...payload }, { silent: true })
+    if (result.success) {
+      await router.replace(result.session.role === 'admin' ? '/' : '/key-usage')
       return
     }
-    if (!isInvalidCredentials(adminResult.cause))
-      throw adminResult.cause
-
+    // 只在明确的凭据错误时尝试用户身份，不吞掉服务异常或限流。
+    const cause = result.cause
+    if (selectedRealm !== 'admin' || !(cause instanceof ApiError && cause.status === 401 && cause.code === 40102 && cause.kind === 'api'))
+      throw cause
     const portalResult = await portalAuth.login(payload, { silent: true })
-    if (!portalResult.success) {
-      loginError.value = isInvalidCredentials(portalResult.cause)
-        ? '账号或密码错误'
-        : errorMessage(portalResult.cause, '登录失败')
-      return
-    }
+    if (!portalResult.success)
+      throw portalResult.cause
     await router.replace('/portal')
   }
   catch (cause: unknown) {
@@ -65,26 +61,38 @@ async function handleSubmit(): Promise<void> {
     loginPending.value = false
   }
 }
+
+function normalizeRealm(value: unknown): LoginRealm {
+  return value === 'key' ? 'key' : 'admin'
+}
 </script>
 
 <template>
   <main class="login-page relative isolate min-h-dvh overflow-hidden text-(--cp-login-title-color)">
     <LoginBackground />
 
+    <div class="absolute top-5 right-5 z-20 max-[560px]:top-4 max-[560px]:right-4">
+      <LoginThemeToggle />
+    </div>
+
     <section
       class="grid min-h-dvh items-center justify-items-center px-5 py-[clamp(24px,5dvh,64px)] min-[980px]:justify-items-end min-[980px]:pr-[clamp(48px,17.3vw,332px)] max-[560px]:p-4.5"
       aria-label="Codex Proxy RS 登录"
     >
-      <LoginPanel
-        v-model:username="username"
-        v-model:password="password"
-        :error="loginError"
-        :loading="loginLoading"
-        :submit-disabled="submitDisabled"
-        :effective-theme="effectiveTheme"
-        @submit="handleSubmit"
-        @toggle-theme="toggleTheme"
-      />
+      <div class="min-h-120 w-[min(440px,100%)]">
+        <p v-if="loginError" role="alert" class="mb-3 rounded-cp-lg bg-cp-error-container p-3 text-cp-error-text">
+          {{ loginError }}
+        </p>
+        <LoginPanel
+          v-model:realm="realm"
+          v-model:username="username"
+          v-model:password="password"
+          v-model:api-key="apiKey"
+          :loading="loginLoading"
+          :submit-disabled="submitDisabled"
+          @submit="handleSubmit"
+        />
+      </div>
     </section>
   </main>
 </template>

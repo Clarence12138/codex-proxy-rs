@@ -1,45 +1,58 @@
+import type { AuthSession } from '@/api'
 import type { RequestOptions } from '@/api/request'
+
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { computed, shallowRef } from 'vue'
 
 import { login as apiLogin, logout as apiLogout, getAuthStatus } from '@/api'
 import { resetUnauthorizedHandling } from '@/api/request'
 
 export const useAuthStore = defineStore('auth', () => {
-  const isAuthenticated = ref(false)
-  const sessionChecked = ref(false)
-  const loading = ref(false)
+  const session = shallowRef<AuthSession | null>(null)
+  const isAuthenticated = computed(() => session.value !== null)
+  const isAdmin = computed(() => session.value?.role === 'admin')
+  const sessionChecked = shallowRef(false)
+  const loading = shallowRef(false)
+  let revision = 0
+  let pendingCheck: Promise<boolean> | undefined
 
-  async function checkAuth() {
-    try {
-      const status = await getAuthStatus({ silent: true })
-      isAuthenticated.value = status.authenticated
-      if (status.authenticated)
-        resetUnauthorizedHandling()
-      return status.authenticated
-    }
-    catch {
-      isAuthenticated.value = false
-      return false
-    }
-    finally {
-      sessionChecked.value = true
-    }
+  function checkAuth(): Promise<boolean> {
+    if (pendingCheck)
+      return pendingCheck
+    const currentRevision = revision
+    const check = getAuthStatus().then((status) => {
+      // 登录或退出之后到达的旧状态响应，不覆盖新会话。
+      if (currentRevision === revision) {
+        session.value = status.session
+        sessionChecked.value = true
+        if (status.authenticated)
+          resetUnauthorizedHandling()
+      }
+      return isAuthenticated.value
+    }).finally(() => {
+      if (pendingCheck === check)
+        pendingCheck = undefined
+    })
+    pendingCheck = check
+    return check
   }
 
   async function login(payload: Parameters<typeof apiLogin>[0], options: RequestOptions = {}) {
+    if (loading.value)
+      return { success: false, cause: new Error('正在登录') } as const
+    revision += 1
+    pendingCheck = undefined
+    loading.value = true
     try {
-      loading.value = true
-      await apiLogin(payload, options)
-
-      isAuthenticated.value = true
+      const result = await apiLogin(payload, options)
+      revision += 1
+      pendingCheck = undefined
+      session.value = result
       sessionChecked.value = true
       resetUnauthorizedHandling()
-
-      return { success: true } as const
+      return { success: true, session: result } as const
     }
     catch (cause: unknown) {
-      // 登录失败不会撤销服务端已有 Cookie，不在这里使旧会话失效。
       return { success: false, cause } as const
     }
     finally {
@@ -48,31 +61,32 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   async function logout() {
+    if (loading.value)
+      return false
+    loading.value = true
+    revision += 1
+    pendingCheck = undefined
     try {
-      await apiLogout({ silent: true })
+      await apiLogout()
+      invalidateSession()
+      return true
     }
     catch {
-      // 忽略登出错误
+      // 只有服务端确认撤销后才退出，避免刷新又恢复一个未撤销的会话。
+      return false
     }
     finally {
-      isAuthenticated.value = false
-      sessionChecked.value = true
+      loading.value = false
     }
   }
 
   function invalidateSession() {
-    isAuthenticated.value = false
+    revision += 1
+    pendingCheck = undefined
+    session.value = null
     sessionChecked.value = true
-    loading.value = false
+    resetUnauthorizedHandling()
   }
 
-  return {
-    isAuthenticated,
-    sessionChecked,
-    loading,
-    checkAuth,
-    login,
-    logout,
-    invalidateSession,
-  }
+  return { session, isAuthenticated, isAdmin, sessionChecked, loading, checkAuth, login, logout, invalidateSession }
 })

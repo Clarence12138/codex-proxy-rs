@@ -77,6 +77,19 @@ impl BufferedClientAdmissionPort {
 }
 
 impl ClientAdmissionPort for BufferedClientAdmissionPort {
+    fn abandon(
+        &self,
+        key: &ClientApiKeyId,
+        request: &ModelRequestId,
+        owner_scope_id: Option<&gateway_core::policy::OwnerScopeId>,
+    ) {
+        self.enqueue(AdmissionRelease {
+            client_api_key_id: key.clone(),
+            model_request_id: request.clone(),
+            owner_scope_id: owner_scope_id.cloned(),
+        });
+    }
+
     fn admit(
         &self,
         request: ClientAdmissionRequest,

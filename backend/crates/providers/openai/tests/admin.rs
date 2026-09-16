@@ -660,7 +660,7 @@ async fn openai_admin_provider_projects_cached_quota_models_and_canonical_export
     let Operation::Generate(request) = operation else {
         panic!("connection test must be a generate operation");
     };
-    let encoded = provider_openai::encode_generate_request(&request, "gpt-5.4")
+    let encoded = provider_openai::encode_generate_request(&request, "gpt-5.4", None)
         .expect("official OpenAI request");
     assert_eq!(
         encoded.body().get("model").and_then(Value::as_str),
@@ -1303,6 +1303,8 @@ fn provider_ports_with_catalog(
 fn account_record(account: &ProviderAccount) -> AccountRecord {
     let now = Utc::now();
     AccountRecord {
+        notes: None,
+        model_access: Default::default(),
         outbound_proxy: None,
         id: account.id().to_string(),
         provider_kind: account.provider().clone(),
@@ -1347,6 +1349,7 @@ fn valid_config() -> TestOpenAiConfig {
         arch: "arm64".to_owned(),
         terminal: "xterm-256color".to_owned(),
         residency: None,
+        location: Default::default(),
         verified_at: Utc
             .with_ymd_and_hms(2026, 7, 19, 0, 0, 0)
             .single()

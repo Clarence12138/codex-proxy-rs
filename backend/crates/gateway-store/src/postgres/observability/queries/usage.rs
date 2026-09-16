@@ -11,6 +11,14 @@ pub(crate) fn push_usage_filter(
     filter: &UsageRecordFilter,
     alias: &str,
 ) {
+    if filter.completed_only {
+        push_completed_usage_fact_filter(query, alias);
+    }
+    // 用户归属是请求冻结事实，不通过当前密钥关系推导历史范围。
+    if let Some(value) = &filter.owner_user_id {
+        query.push(format!(" and {alias}.owner_user_id = "));
+        query.push_bind(value.clone());
+    }
     if let Some(value) = &filter.client_api_key_ref {
         query.push(format!(" and {alias}.client_api_key_ref = "));
         query.push_bind(value.clone());

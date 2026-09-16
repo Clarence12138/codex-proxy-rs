@@ -185,6 +185,12 @@ pub trait PortalKeyStore: Send + Sync {
 /// 用户用量存储。
 #[async_trait]
 pub trait PortalUsageStore: Send + Sync {
+    async fn overview(
+        &self,
+        user_id: &str,
+        query: crate::model::usage::PortalOverviewQuery,
+        now: DateTime<Utc>,
+    ) -> PortalStoreResult<crate::model::usage::PortalUsageOverview>;
     async fn load_me(&self, user_id: &str, now: DateTime<Utc>) -> PortalStoreResult<PortalMe>;
     async fn list_records(
         &self,

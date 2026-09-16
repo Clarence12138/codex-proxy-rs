@@ -1,6 +1,6 @@
 import type { Ref } from 'vue'
 import type { PortalKeyRow } from '../constants'
-import type { ApiKeyFormValue } from '@/views/api-keys/composables/useApiKeyMutations'
+import type { ApiKeyFormValue } from '@/views/keys/composables/useApiKeyMutations'
 import { ref, shallowRef, watch } from 'vue'
 import {
   createPortalKey,

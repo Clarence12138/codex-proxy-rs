@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import type { AccountGroup } from '@/api'
+import type { AccountGroup, AccountModelAccess } from '@/api'
 import AccountGroupCheckboxGrid from '@/components/AccountGroupCheckboxGrid.vue'
 import BaseFormItem from '@/components/base/BaseForm/FormItem.vue'
 import BaseInput from '@/components/base/BaseInput.vue'
 import BaseSwitch from '@/components/base/BaseSwitch.vue'
+import AccountModelAccessField from './AccountModelAccessField.vue'
 import AccountProxyField from './AccountProxyField.vue'
 
 withDefaults(defineProps<{
@@ -13,9 +14,11 @@ withDefaults(defineProps<{
   endpoint?: string | null
   accountId?: string
   preserveProxy?: boolean
+  preserveModelAccess?: boolean
   proxyError?: string
 }>(), { preserveProxy: true })
 
+const modelAccess = defineModel<AccountModelAccess | undefined>('modelAccess', { required: true })
 const enabled = defineModel<boolean>('enabled', { required: true })
 const concurrencyLimit = defineModel<string>('concurrencyLimit', { required: true })
 const weight = defineModel<string>('weight', { required: true })
@@ -26,6 +29,7 @@ const selectedGroupIds = defineModel<string[]>('selectedGroupIds', { required: t
 
 <template>
   <div class="grid gap-5">
+    <AccountModelAccessField v-model="modelAccess" :account-id="accountId" :disabled="disabled" :allow-preserve="preserveModelAccess" />
     <div class="flex min-h-6 items-center justify-between gap-3">
       <span class="text-cp leading-none font-medium text-cp-text-secondary">调度</span>
       <BaseSwitch

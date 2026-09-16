@@ -12,16 +12,11 @@ async fn subscription_assignment_rejects_invalid_or_nonincreasing_times() {
     let app = portal_router().await;
     let login = app
         .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/admin/auth/login")
-                .header(header::CONTENT_TYPE, "application/json")
-                .body(Body::from(
-                    json!({"username":"admin_1","password":"strong-admin-password"}).to_string(),
-                ))
-                .unwrap(),
-        )
+        .oneshot(crate::support::json_request(
+            axum::http::Method::POST,
+            "/api/auth/login",
+            json!({"mode":"admin","username":"admin_1","password":"strong-admin-password"}),
+        ))
         .await
         .unwrap();
     assert_eq!(login.status(), StatusCode::OK);
@@ -55,16 +50,11 @@ async fn invalid_plan_names_return_input_errors_instead_of_dependency_failures()
     let app = portal_router().await;
     let login = app
         .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/admin/auth/login")
-                .header(header::CONTENT_TYPE, "application/json")
-                .body(Body::from(
-                    json!({"username":"admin_1","password":"strong-admin-password"}).to_string(),
-                ))
-                .unwrap(),
-        )
+        .oneshot(crate::support::json_request(
+            axum::http::Method::POST,
+            "/api/auth/login",
+            json!({"mode":"admin","username":"admin_1","password":"strong-admin-password"}),
+        ))
         .await
         .unwrap();
     assert_eq!(login.status(), StatusCode::OK);

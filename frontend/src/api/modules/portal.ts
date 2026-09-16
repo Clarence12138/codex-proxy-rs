@@ -165,11 +165,32 @@ export interface PortalUsageItem {
   keyName: string | null
 }
 
-export function listPortalUsage(params: { cursor?: string, pageSize?: number }) {
+export interface PortalUsageOverview {
+  asOf: string
+  startTime: string
+  endTime: string
+  user: Pick<PortalMe, 'userId' | 'username' | 'planName' | 'subscriptionEffective' | 'subscriptionEndsAt'>
+  budget: Omit<import('./key-usage').KeyUsageBudget, 'name' | 'prefix'>
+  summary: import('./key-usage').KeyUsageMetrics
+  trend: import('./key-usage').KeyUsageTrendPoint[]
+  healthTimeline: import('./dashboard').DashboardHealthTimeline
+}
+
+export function getPortalUsageOverview(params: import('./key-usage').KeyUsageQuery, options: RequestOptions = {}) {
+  return request<PortalUsageOverview>({
+    url: '/api/portal/usage/overview',
+    method: 'GET',
+    params,
+    ...options,
+  })
+}
+
+export function listPortalUsage(params: { cursor?: string, pageSize?: number, start?: string, end?: string, model?: string }, options: RequestOptions = {}) {
   return request<{ items: PortalUsageItem[], nextCursor: string | null }>({
     url: '/api/portal/usage/records',
     method: 'GET',
     params,
+    ...options,
   })
 }
 

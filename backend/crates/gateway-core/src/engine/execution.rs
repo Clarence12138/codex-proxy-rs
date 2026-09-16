@@ -11,6 +11,7 @@ use futures::{FutureExt, future::BoxFuture, pin_mut, select_biased};
 use futures_timer::Delay;
 use uuid::Uuid;
 
+use crate::concurrency::{CapacityWait, ConcurrencyWaitBudget, ConcurrencyWaitQueue};
 use crate::engine::admission::{
     ClientAdmissionDecision, ClientAdmissionPort, ClientAdmissionRejection, ClientAdmissionRequest,
 };
@@ -207,6 +208,16 @@ pub trait ExecutionService: Send + Sync {
     ) -> BoxFuture<'_, Result<StartedExecution, GatewayError>>;
 }
 
+/// 只验证 Client API Key 并返回稳定 Key ID，不产生请求使用事实。
+///
+/// 管理侧登录等非数据面场景必须使用该端口，避免把认证本身误记为一次 Key 使用。
+pub trait ClientKeyVerifier: Send + Sync {
+    fn verify_client_key(
+        &self,
+        plaintext: &str,
+    ) -> Result<ClientApiKeyId, ClientAuthenticationError>;
+}
+
 /// 成功认证后的 API Key 使用事实接收器。
 ///
 /// 认证仍是同步快照读取；实现必须自行异步、去重地持久化，不得阻塞客户端请求。
@@ -263,6 +274,7 @@ pub struct DefaultExecutionService {
     observations: Arc<dyn ExecutionStore>,
     providers: ProviderRegistry,
     admissions: Arc<dyn ClientAdmissionPort>,
+    admission_waiting: ConcurrencyWaitQueue<ClientApiKeyId>,
     circuits: Arc<dyn ProviderCircuitPort>,
     continuation: Arc<dyn NativeContinuationPort>,
     client_api_key_usage: Arc<dyn ClientApiKeyUsageSink>,
@@ -291,6 +303,7 @@ impl DefaultExecutionService {
             observations,
             providers,
             admissions,
+            admission_waiting: ConcurrencyWaitQueue::default(),
             circuits,
             continuation,
             client_api_key_usage,
@@ -302,6 +315,25 @@ impl DefaultExecutionService {
     pub fn with_budget(mut self, budget: Arc<dyn ClientBudgetPort>) -> Self {
         self.budget = Some(budget);
         self
+    }
+
+    fn authenticate_without_usage(
+        &self,
+        plaintext: &str,
+    ) -> Result<AuthenticatedClient, ClientAuthenticationError> {
+        let snapshot = self
+            .snapshots
+            .acquire()
+            .map_err(|_| ClientAuthenticationError::SnapshotUnavailable)?;
+        let policy = snapshot
+            .client_policies()
+            .filter(|policy| {
+                constant_time_equal(plaintext, policy.plaintext_key().expose_for_auth())
+            })
+            .find(|policy| policy.authorize().is_ok())
+            .cloned()
+            .ok_or(ClientAuthenticationError::InvalidKey)?;
+        Ok(AuthenticatedClient { snapshot, policy })
     }
 
     async fn start_inner(&self, request: StartExecution) -> Result<StartedExecution, GatewayError> {
@@ -497,46 +529,12 @@ impl DefaultExecutionService {
             operation,
             metadata,
         } = request;
-        let admission_request = ClientAdmissionRequest {
-            model_request_id: request_id.clone(),
-            client_api_key_id: client.policy.key_id().clone(),
-            lease_ttl: MODEL_REQUEST_DEADLINE,
-            limits: client.policy.limits(),
-            owner_scope_id: client.policy.owner().map(|owner| owner.id().clone()),
-            owner_limits: client
-                .policy
-                .owner()
-                .map_or_else(RateLimits::unlimited, |owner| owner.limits()),
-        };
         let admission_started_at = Instant::now();
-        match self
-            .admissions
-            .admit(admission_request)
-            .await
-            .map_err(|_| {
-                GatewayError::new(
-                    GatewayErrorKind::NoAvailableProvider,
-                    "request admission is temporarily unavailable",
-                )
-            })? {
-            ClientAdmissionDecision::Granted => {}
-            ClientAdmissionDecision::Rejected(
-                ClientAdmissionRejection::RateLimited
-                | ClientAdmissionRejection::ConcurrencyLimited,
-            ) => {
-                return Err(GatewayError::new(
-                    GatewayErrorKind::RateLimited,
-                    "request exceeds client API key limits",
-                ));
-            }
-        }
+        let concurrency_wait_budget = ConcurrencyWaitBudget::default();
+        let admission = self
+            .acquire_client_admission(&client, &request_id, deadline_at, &concurrency_wait_budget)
+            .await?;
         let admission_decision_ms = duration_ms(admission_started_at.elapsed());
-        let admission = AdmissionLease {
-            port: Arc::clone(&self.admissions),
-            client_api_key_id: client.policy.key_id().clone(),
-            model_request_id: request_id.clone(),
-            owner_scope_id: client.policy.owner().map(|owner| owner.id().clone()),
-        };
         if let Some(budget) = &self.budget
             && let Err(error) = budget.admit(client.policy.key_id().clone()).await
         {
@@ -590,7 +588,7 @@ impl DefaultExecutionService {
             )
             .await
         {
-            Ok(core) => core,
+            Ok(core) => core.with_concurrency_wait_budget(concurrency_wait_budget),
             Err(error) => {
                 if let Some(budget) = &self.budget {
                     settle_budget(
@@ -621,6 +619,91 @@ impl DefaultExecutionService {
                 self.budget.clone(),
             )),
         })
+    }
+
+    async fn acquire_client_admission(
+        &self,
+        client: &AuthenticatedClient,
+        request_id: &ModelRequestId,
+        deadline_at: SystemTime,
+        budget: &ConcurrencyWaitBudget,
+    ) -> Result<AdmissionLease, GatewayError> {
+        let policy = client.snapshot.client_queue_policy();
+        let limits = client.policy.limits();
+        let key = client.policy.key_id();
+        let mut waiting = CapacityWait::new(&self.admission_waiting, policy, deadline_at, budget);
+        let mut admission = AdmissionLease {
+            port: Arc::clone(&self.admissions),
+            client_api_key_id: key.clone(),
+            model_request_id: request_id.clone(),
+            owner_scope_id: client.policy.owner().map(|owner| owner.id().clone()),
+            armed: false,
+        };
+        loop {
+            let remaining = deadline_at
+                .duration_since(SystemTime::now())
+                .unwrap_or_default();
+            if remaining.is_zero() {
+                return Err(GatewayError::new(
+                    GatewayErrorKind::Timeout,
+                    "request deadline elapsed",
+                ));
+            }
+            // 在发送原子准入之前接管取消清理，覆盖 Redis 已取得租约但返回尚未被观察的窗口。
+            admission.armed = true;
+            let acquire = self
+                .admissions
+                .admit(ClientAdmissionRequest {
+                    model_request_id: request_id.clone(),
+                    client_api_key_id: key.clone(),
+                    lease_ttl: remaining,
+                    allow_concurrency_acquire: waiting.can_try(key),
+                    limits,
+                    owner_scope_id: client.policy.owner().map(|owner| owner.id().clone()),
+                    owner_limits: client
+                        .policy
+                        .owner()
+                        .map_or_else(RateLimits::unlimited, |owner| owner.limits()),
+                })
+                .fuse();
+            let timeout = Delay::new(remaining).fuse();
+            pin_mut!(acquire, timeout);
+            let decision = select_biased! {
+                result = acquire => result.map_err(|_| GatewayError::new(GatewayErrorKind::NoAvailableProvider, "request admission is temporarily unavailable"))?,
+                _ = timeout => return Err(GatewayError::new(GatewayErrorKind::Timeout, "request deadline elapsed")),
+            };
+            match decision {
+                ClientAdmissionDecision::Granted => {
+                    if !waiting.elapsed().is_zero() {
+                        tracing::info!(
+                            request_id = request_id.as_str(),
+                            queue_layer = "client_key",
+                            queue_wait_ms = duration_ms(waiting.elapsed()),
+                            "排队请求已取得 Key 并发槽位"
+                        );
+                    }
+                    return Ok(admission);
+                }
+                ClientAdmissionDecision::Rejected(reason) => {
+                    admission.armed = false;
+                    if reason == ClientAdmissionRejection::RateLimited || policy.max_waiting == 0 {
+                        return Err(GatewayError::new(
+                            GatewayErrorKind::RateLimited,
+                            "request exceeds client API key limits",
+                        ));
+                    }
+                    if waiting.elapsed().is_zero()
+                        && let Some(budget) = &self.budget
+                    {
+                        budget.admit(key.clone()).await?;
+                    }
+                    waiting.wait(std::slice::from_ref(key)).await.map_err(|error| {
+                        tracing::info!(request_id = request_id.as_str(), queue_layer = "client_key", queue_wait_ms = duration_ms(waiting.elapsed()), reason = %error, "Key 排队请求被拒绝");
+                        error.gateway_error()
+                    })?;
+                }
+            }
+        }
     }
 
     async fn route_context(
@@ -913,20 +996,10 @@ impl ExecutionService for DefaultExecutionService {
         &self,
         plaintext: &str,
     ) -> Result<AuthenticatedClient, ClientAuthenticationError> {
-        let snapshot = self
-            .snapshots
-            .acquire()
-            .map_err(|_| ClientAuthenticationError::SnapshotUnavailable)?;
-        let policy = snapshot
-            .client_policies()
-            .filter(|policy| {
-                constant_time_equal(plaintext, policy.plaintext_key().expose_for_auth())
-            })
-            .find(|policy| policy.authorize().is_ok())
-            .cloned()
-            .ok_or(ClientAuthenticationError::InvalidKey)?;
-        self.client_api_key_usage.record_used(policy.key_id());
-        Ok(AuthenticatedClient { snapshot, policy })
+        let client = self.authenticate_without_usage(plaintext)?;
+        self.client_api_key_usage
+            .record_used(client.policy().key_id());
+        Ok(client)
     }
 
     fn public_models(&self, client: &AuthenticatedClient) -> Vec<PublicModelId> {
@@ -952,6 +1025,12 @@ impl ExecutionService for DefaultExecutionService {
                     .await?
                 else {
                     for profile in client.snapshot.public_model_profiles_for_provider(kind) {
+                        if !scope.allows_provider_model(
+                            kind,
+                            &client.snapshot.mapped_model(profile.model().as_str()),
+                        ) {
+                            continue;
+                        }
                         if seen.insert(profile.model().clone()) {
                             result.push(PublicModelDescriptor::Adapted(profile));
                         }
@@ -965,6 +1044,9 @@ impl ExecutionService for DefaultExecutionService {
                     .collect::<std::collections::BTreeMap<_, _>>();
                 for entry in &models {
                     let target = client.snapshot.mapped_model(entry.model.as_str());
+                    if !scope.allows_provider_model(kind, &target) {
+                        continue;
+                    }
                     let Some(source) = by_id.get(target.as_str()) else {
                         continue;
                     };
@@ -986,6 +1068,9 @@ impl ExecutionService for DefaultExecutionService {
                 }
                 for model in client.snapshot.public_models_for_provider(kind) {
                     let target = client.snapshot.mapped_model(model.as_str());
+                    if !scope.allows_provider_model(kind, &target) {
+                        continue;
+                    }
                     if target == model.as_str() || seen.contains(&model) {
                         continue;
                     }
@@ -1029,6 +1114,27 @@ impl ExecutionService for DefaultExecutionService {
     }
 }
 
+impl ClientKeyVerifier for DefaultExecutionService {
+    fn verify_client_key(
+        &self,
+        plaintext: &str,
+    ) -> Result<ClientApiKeyId, ClientAuthenticationError> {
+        // 控制面只验证 Key 身份；订阅到期仍可查历史，推理授权保持独立。
+        let snapshot = self
+            .snapshots
+            .acquire()
+            .map_err(|_| ClientAuthenticationError::SnapshotUnavailable)?;
+        snapshot
+            .client_policies()
+            .find(|policy| {
+                policy.enabled()
+                    && constant_time_equal(plaintext, policy.plaintext_key().expose_for_auth())
+            })
+            .map(|policy| policy.key_id().clone())
+            .ok_or(ClientAuthenticationError::InvalidKey)
+    }
+}
+
 impl AccountProbe for DefaultExecutionService {
     fn probe(
         &self,
@@ -1039,6 +1145,7 @@ impl AccountProbe for DefaultExecutionService {
 }
 
 struct AdmissionLease {
+    armed: bool,
     port: Arc<dyn ClientAdmissionPort>,
     client_api_key_id: ClientApiKeyId,
     model_request_id: ModelRequestId,
@@ -1052,7 +1159,7 @@ async fn settle_budget(port: &dyn ClientBudgetPort, charge: ClientBudgetCharge) 
 }
 
 impl AdmissionLease {
-    async fn release(self) {
+    async fn release(mut self) {
         if let Err(error) = self
             .port
             .release(
@@ -1063,6 +1170,19 @@ impl AdmissionLease {
             .await
         {
             tracing::warn!(%error, "Client admission 释放失败，依赖租约 TTL 收敛");
+        }
+        self.armed = false;
+    }
+}
+
+impl Drop for AdmissionLease {
+    fn drop(&mut self) {
+        if self.armed {
+            self.port.abandon(
+                &self.client_api_key_id,
+                &self.model_request_id,
+                self.owner_scope_id.as_ref(),
+            );
         }
     }
 }

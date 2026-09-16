@@ -277,6 +277,21 @@ impl PortalKeyStore for MemoryAuth {
 
 #[async_trait]
 impl PortalUsageStore for MemoryAuth {
+    async fn overview(
+        &self,
+        _: &str,
+        _: gateway_portal::model::usage::PortalOverviewQuery,
+        _: chrono::DateTime<chrono::Utc>,
+    ) -> gateway_portal::ports::store::PortalStoreResult<
+        gateway_portal::model::usage::PortalUsageOverview,
+    > {
+        Err(gateway_portal::ports::store::PortalStoreError::new(
+            gateway_portal::ports::store::PortalStoreErrorKind::Unavailable,
+            "portal",
+            "overview fixture not configured",
+        ))
+    }
+
     async fn load_me(&self, _: &str, _: DateTime<Utc>) -> PortalStoreResult<PortalMe> {
         unavailable()
     }

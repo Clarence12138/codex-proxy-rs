@@ -111,10 +111,16 @@ export interface AccountUsage {
   models: AccountModelUsage[]
 }
 
+export interface AccountModelAccess {
+  mode: 'all' | 'allowlist' | 'denylist'
+  models: string[]
+}
+
 export interface Account {
   outboundProxyEndpoint: string | null
   id: string
   name: string
+  notes: string | null
   provider: string
   resourceRef: string
   email: string | null
@@ -131,6 +137,7 @@ export interface Account {
   enabled: boolean
   concurrencyLimit: number | null
   weight: number
+  modelAccess: AccountModelAccess
   accessTokenExpiresAt: string | null
   accessTokenExpiresAtDisplay: string | null
   refreshTokenExpiresAt: string | null
@@ -344,9 +351,11 @@ interface AccountUpdateParam {
   outboundProxyUrl?: string
   outboundProxyId?: string
   accountId: string
+  notes?: string
   enabled: boolean
   concurrencyLimit: number | null
   weight: number
+  modelAccess?: AccountModelAccess
   groupIds: string[]
 }
 
@@ -354,10 +363,11 @@ interface AccountBatchUpdateParam {
   outboundProxyUrl?: string
   outboundProxyId?: string
   accountIds: string[]
-  enabled: boolean
-  concurrencyLimit: number | null
-  weight: number
-  groupIds: string[]
+  enabled?: boolean
+  concurrencyLimit?: number | null
+  weight?: number
+  modelAccess?: AccountModelAccess
+  groupIds?: string[]
 }
 
 interface AccountDeleteParams {
@@ -366,9 +376,11 @@ interface AccountDeleteParams {
 }
 
 interface AccountImportSettings {
+  notes?: string
   enabled: boolean
   concurrencyLimit: number | null
   weight: number
+  modelAccess?: AccountModelAccess
   groupIds: string[]
 }
 
@@ -408,30 +420,27 @@ export function getAccounts(data: AccountListParams, options: RequestOptions = {
   })
 }
 
-export function exportAccounts(data: AccountExportParam, options: RequestOptions = {}) {
+export function exportAccounts(data: AccountExportParam) {
   return request<unknown>({
     url: '/api/admin/accounts/export',
     method: 'GET',
     params: data,
-    ...options,
   })
 }
 
-export function refreshAccount(data: AccountIdParam, options: RequestOptions = {}) {
+export function refreshAccount(data: AccountIdParam) {
   return request<AccountRefreshResponse>({
     url: '/api/admin/accounts/refresh',
     method: 'POST',
     data,
-    ...options,
   })
 }
 
-export function recoverAccount(data: AccountIdParam, options: RequestOptions = {}) {
+export function recoverAccount(data: AccountIdParam) {
   return request<AccountRefreshResponse>({
     url: '/api/admin/accounts/recover',
     method: 'POST',
     data,
-    ...options,
   })
 }
 
@@ -522,21 +531,19 @@ export function importAccounts(data: AccountImportParam, options: RequestOptions
   })
 }
 
-export function updateAccount(data: AccountUpdateParam, options: RequestOptions = {}) {
+export function updateAccount(data: AccountUpdateParam) {
   return request<AccountUpdateResponse>({
     url: '/api/admin/accounts/update',
     method: 'POST',
     data,
-    ...options,
   })
 }
 
-export function batchUpdateAccounts(data: AccountBatchUpdateParam, options: RequestOptions = {}) {
+export function batchUpdateAccounts(data: AccountBatchUpdateParam) {
   return request<AccountBatchUpdateResponse>({
     url: '/api/admin/accounts/batch-update',
     method: 'POST',
     data,
-    ...options,
   })
 }
 
@@ -549,20 +556,18 @@ export function deleteAccounts(data: AccountDeleteParams, options: RequestOption
   })
 }
 
-export function startAccountOAuth(data: AccountOAuthStartParam, options: RequestOptions = {}) {
+export function startAccountOAuth(data: AccountOAuthStartParam) {
   return request<AccountOAuthStartResponse>({
     url: '/api/admin/accounts/oauth/start',
     method: 'POST',
     data,
-    ...options,
   })
 }
 
-export function completeAccountOAuth(data: AccountOAuthCompleteParam, options: RequestOptions = {}) {
+export function completeAccountOAuth(data: AccountOAuthCompleteParam) {
   return request<AccountOAuthCompleteResponse>({
     url: '/api/admin/accounts/oauth/complete',
     method: 'POST',
     data,
-    ...options,
   })
 }

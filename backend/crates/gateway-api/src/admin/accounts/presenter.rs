@@ -75,6 +75,7 @@ pub(super) fn account_view(item: AccountDirectoryItem, now: DateTime<Utc>) -> Ac
     AccountView {
         id: account.id.clone(),
         name: account.name,
+        notes: account.notes,
         provider: account.provider_kind.to_string(),
         groups: account
             .groups
@@ -103,6 +104,7 @@ pub(super) fn account_view(item: AccountDirectoryItem, now: DateTime<Utc>) -> Ac
         enabled: account.enabled,
         concurrency_limit: account.concurrency_limit.map(|limit| limit.get()),
         weight: account.weight.get(),
+        model_access: account.model_access,
         outbound_proxy_endpoint: account
             .outbound_proxy
             .as_ref()

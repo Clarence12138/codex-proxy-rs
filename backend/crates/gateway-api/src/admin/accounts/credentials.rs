@@ -2,6 +2,18 @@
 
 use super::*;
 
+fn validate_account_notes(notes: Option<&str>) -> Result<(), WireValidationError> {
+    if notes.is_some_and(|notes| {
+        notes.chars().count() > 500
+            || notes
+                .chars()
+                .any(|ch| ch.is_control() && !matches!(ch, '\n' | '\r' | '\t'))
+    }) {
+        return Err(WireValidationError::new("notes"));
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum AccountProvider {
     OpenAi,
@@ -18,19 +30,22 @@ impl AccountProvider {
     }
 }
 
-/// 导入统一设置，复用编辑账号的调度和分组约束。
+/// 导入统一设置，复用编辑账号的备注、调度和分组约束。
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AccountImportSettingsRequest {
+    pub notes: Option<String>,
     pub enabled: bool,
     #[serde(deserialize_with = "deserialize_required_nullable")]
     pub concurrency_limit: Option<u64>,
     pub weight: u64,
+    pub model_access: Option<gateway_core::account::AccountModelAccess>,
     pub group_ids: Vec<String>,
 }
 
 impl AccountImportSettingsRequest {
     fn validate(&self) -> Result<(), WireValidationError> {
+        validate_account_notes(self.notes.as_deref())?;
         parse_concurrency_limit(self.concurrency_limit)?;
         parse_account_weight(self.weight)?;
         validate_wire_group_ids(&self.group_ids)?;
@@ -41,9 +56,11 @@ impl AccountImportSettingsRequest {
         self,
     ) -> Result<gateway_admin::model::accounts::AccountImportSettings, WireValidationError> {
         Ok(gateway_admin::model::accounts::AccountImportSettings {
+            notes: self.notes,
             enabled: self.enabled,
             concurrency_limit: parse_concurrency_limit(self.concurrency_limit)?,
             weight: parse_account_weight(self.weight)?,
+            model_access: self.model_access,
             group_ids: validate_wire_group_ids(&self.group_ids)?,
         })
     }
@@ -200,16 +217,19 @@ pub struct UpdateAccountRequest {
     pub outbound_proxy_id: Option<String>,
     pub outbound_proxy_url: Option<super::wire::AccountProxyUpdate>,
     pub account_id: String,
+    pub notes: Option<String>,
     pub enabled: bool,
     #[serde(deserialize_with = "deserialize_required_nullable")]
     pub concurrency_limit: Option<u64>,
     pub weight: u64,
+    pub model_access: Option<gateway_core::account::AccountModelAccess>,
     pub group_ids: Vec<String>,
 }
 
 impl UpdateAccountRequest {
     pub fn validate(&self) -> Result<(), WireValidationError> {
         require_account_id(&self.account_id, "accountId")?;
+        validate_account_notes(self.notes.as_deref())?;
         parse_concurrency_limit(self.concurrency_limit)?;
         parse_account_weight(self.weight)?;
         validate_wire_group_ids(&self.group_ids)?;
@@ -224,9 +244,11 @@ impl UpdateAccountRequest {
                 self.outbound_proxy_url,
             )?,
             account_id: self.account_id,
+            notes: self.notes,
             enabled: self.enabled,
             concurrency_limit: parse_concurrency_limit(self.concurrency_limit)?,
             weight: parse_account_weight(self.weight)?,
+            model_access: self.model_access,
             group_ids: validate_wire_group_ids(&self.group_ids)?,
         })
     }

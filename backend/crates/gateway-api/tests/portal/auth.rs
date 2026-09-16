@@ -20,7 +20,7 @@ impl gateway_api::portal::PortalSessionState for AuthenticatedState {
     }
 }
 
-impl gateway_api::admin::AdminSessionState for AuthenticatedState {
+impl gateway_api::auth::SessionState for AuthenticatedState {
     fn admin_services(&self) -> &gateway_admin::AdminServices {
         unreachable!("password tests never access admin services")
     }

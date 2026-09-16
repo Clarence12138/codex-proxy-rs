@@ -38,12 +38,25 @@ use super::{
 #[derive(Clone)]
 pub struct PgPortalStore {
     pool: PgPool,
+    observations: super::PgObservabilityRepository,
 }
 
 impl PgPortalStore {
     #[must_use]
-    pub const fn new(pool: PgPool) -> Self {
-        Self { pool }
+    pub fn new(pool: PgPool) -> Self {
+        Self::with_query_budget(
+            pool,
+            super::ObservabilityQueryBudget::try_new(1, std::time::Duration::from_secs(3))
+                .expect("positive query budget"),
+        )
+    }
+
+    #[must_use]
+    pub fn with_query_budget(pool: PgPool, budget: super::ObservabilityQueryBudget) -> Self {
+        Self {
+            observations: super::PgObservabilityRepository::new(pool.clone(), None, budget),
+            pool,
+        }
     }
 }
 
@@ -1326,8 +1339,122 @@ impl PortalKeyStore for PgPortalStore {
     }
 }
 
+fn portal_metrics(
+    metrics: &super::RequestMetrics,
+    costs: &[super::CurrencyCostTotal],
+    coverage: &super::CostCoverage,
+) -> gateway_portal::model::usage::PortalUsageMetrics {
+    gateway_portal::model::usage::PortalUsageMetrics {
+        requests: metrics.request_count,
+        input_tokens: metrics.input_tokens,
+        output_tokens: metrics.output_tokens,
+        cached_tokens: metrics.cached_tokens,
+        cache_write_tokens: metrics.cache_write_tokens,
+        reasoning_tokens: metrics.reasoning_tokens,
+        total_tokens: metrics.total_tokens,
+        cost_usd: costs
+            .iter()
+            .find(|cost| cost.currency.eq_ignore_ascii_case("USD"))
+            .map(|cost| cost.amount.as_str().to_owned())
+            .or_else(|| (metrics.request_count == 0).then(|| "0".to_owned())),
+        cost_incomplete: coverage.unavailable_count > 0,
+    }
+}
+
 #[async_trait]
 impl PortalUsageStore for PgPortalStore {
+    async fn overview(
+        &self,
+        user_id: &str,
+        query: gateway_portal::model::usage::PortalOverviewQuery,
+        now: DateTime<Utc>,
+    ) -> PortalStoreResult<gateway_portal::model::usage::PortalUsageOverview> {
+        use super::{ObservabilityRange, ObservabilityRepository as _, UsageRecordFilter};
+        use gateway_portal::model::usage::{
+            PortalHealthPoint, PortalTrendPoint, PortalUsageOverview,
+        };
+        let range = ObservabilityRange::new(query.start, query.end)
+            .map_err(|_| store_error(PortalStoreErrorKind::Invalid, "时间范围不合法"))?;
+        let filter = UsageRecordFilter {
+            owner_user_id: Some(user_id.to_owned()),
+            model: query.model.clone(),
+            completed_only: true,
+            ..UsageRecordFilter::default()
+        };
+        let summary = self
+            .observations
+            .usage_summary(range, filter.clone())
+            .await
+            .map_err(|_| unavailable("portal overview summary"))?;
+        let trend = self
+            .observations
+            .usage_trend(range, filter)
+            .await
+            .map_err(|_| unavailable("portal overview trend"))?;
+        let day_start = DateTime::from_timestamp(
+            (now.timestamp() + 8 * 3600).div_euclid(86400) * 86400 - 8 * 3600,
+            0,
+        )
+        .ok_or_else(|| unavailable("portal day range"))?;
+        let health = self
+            .observations
+            .usage_trend(
+                ObservabilityRange {
+                    start: day_start,
+                    end: now,
+                },
+                UsageRecordFilter {
+                    owner_user_id: Some(user_id.to_owned()),
+                    ..UsageRecordFilter::default()
+                },
+            )
+            .await
+            .map_err(|_| unavailable("portal health"))?;
+        let resets = sqlx::query(
+            "select daily_end, weekly_end from portal_user_budget_windows where user_id = $1",
+        )
+        .bind(user_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|error| map_sqlx(error, "portal budget resets"))?;
+        Ok(PortalUsageOverview {
+            as_of: now,
+            query,
+            me: self.load_me(user_id, now).await?,
+            daily_resets_at: resets
+                .as_ref()
+                .and_then(|row| row.get::<Option<DateTime<Utc>>, _>("daily_end"))
+                .filter(|end| *end > now),
+            weekly_resets_at: resets
+                .as_ref()
+                .and_then(|row| row.get::<Option<DateTime<Utc>>, _>("weekly_end"))
+                .filter(|end| *end > now),
+            summary: portal_metrics(
+                &summary.requests,
+                &summary.attempts.costs,
+                &summary.attempts.cost_coverage,
+            ),
+            trend: trend
+                .into_iter()
+                .map(|point| PortalTrendPoint {
+                    time: point.bucket_start,
+                    bucket_seconds: point.granularity.seconds(),
+                    metrics: portal_metrics(&point.metrics, &point.costs, &point.cost_coverage),
+                })
+                .collect(),
+            health: health
+                .into_iter()
+                .map(|point| PortalHealthPoint {
+                    time: point.bucket_start,
+                    success: point.metrics.success_count,
+                    failed: point.metrics.failure_count,
+                    cancelled: point.metrics.cancelled_count,
+                    incomplete: point.metrics.incomplete_count,
+                    caller_error: point.metrics.caller_error_count,
+                })
+                .collect(),
+        })
+    }
     async fn load_me(&self, user_id: &str, now: DateTime<Utc>) -> PortalStoreResult<PortalMe> {
         let user = sqlx::query("select id, username from portal_users where id = $1")
             .bind(user_id)
@@ -1429,6 +1556,7 @@ impl PortalUsageStore for PgPortalStore {
              where mr.owner_user_id = $1
                and ($2::timestamptz is null or mr.started_at >= $2)
                and ($3::timestamptz is null or mr.started_at < $3)
+               and ($7::text is null or mr.requested_model_id = $7)
                and (
                  $4::timestamptz is null
                  or mr.started_at < $4
@@ -1443,6 +1571,7 @@ impl PortalUsageStore for PgPortalStore {
         .bind(cursor_started_at)
         .bind(cursor_id)
         .bind(page_size + 1)
+        .bind(query.model)
         .fetch_all(&self.pool)
         .await
         .map_err(|error| map_sqlx(error, "list portal usage"))?;

@@ -1,15 +1,12 @@
 import type {
-  AxiosError,
   AxiosInstance,
   AxiosRequestConfig,
-  AxiosResponse,
 } from 'axios'
-import type { ApiError } from './error'
 
 import axios from 'axios'
 import { toast } from '@/components/base/BaseToast'
 import { API_BASE_URL, API_TIMEOUT_MS } from './constants'
-import { normalizeApiError, normalizeApiResponseError } from './error'
+import { ApiError, normalizeApiError, normalizeApiResponseError } from './error'
 
 export { ApiError } from './error'
 
@@ -28,6 +25,9 @@ const http: AxiosInstance = axios.create({
   withCredentials: true,
 })
 
+// 会话失效是后端业务事实；登录凭据错误和 403 不清除已有会话。
+const SESSION_REQUIRED = 40101
+let sessionGeneration = 0
 let unauthorizedHandled = false
 let unauthorizedHandler: ((url?: string) => void | Promise<void>) | undefined
 
@@ -36,13 +36,14 @@ export function setUnauthorizedHandler(handler: (url?: string) => void | Promise
 }
 
 export function resetUnauthorizedHandling() {
+  sessionGeneration += 1
   unauthorizedHandled = false
 }
 
 function isAuthenticationRequest(url?: string) {
   return Boolean(
-    url?.includes('/api/admin/auth/login')
-    || url?.includes('/api/admin/auth/status')
+    url?.includes('/api/auth/login')
+    || url?.includes('/api/auth/status')
     || url?.includes('/api/portal/auth/login')
     || url?.includes('/api/portal/auth/status'),
   )
@@ -57,23 +58,11 @@ function handleUnauthorizedOnce(url?: string) {
   })
 }
 
-http.interceptors.response.use(
-  (response: AxiosResponse<unknown>) => {
-    const error = normalizeApiResponseError(response)
-    if (error)
-      return rejectRequest(error, response.config)
-    return response
-  },
-  (error: AxiosError<unknown>) => {
-    return rejectRequest(normalizeApiError(error), error.config)
-  },
-)
-
-function rejectRequest(error: ApiError, config?: AxiosRequestConfig & Pick<RequestOptions, 'silent'>) {
-  if (error.kind === 'cancelled' || config?.signal?.aborted)
+function rejectRequest(error: ApiError, config: RequestConfig, generation: number) {
+  if (error.kind === 'cancelled' || config.signal?.aborted || generation !== sessionGeneration)
     return Promise.reject(error)
 
-  const sessionExpired = error.status === 401 && !isAuthenticationRequest(config?.url)
+  const sessionExpired = error.status === 401 && error.code === SESSION_REQUIRED && !isAuthenticationRequest(config.url)
   const alreadyHandled = sessionExpired && unauthorizedHandled
   if (sessionExpired)
     handleUnauthorizedOnce(config?.url)
@@ -99,13 +88,19 @@ function isApiEnvelope(value: unknown): value is ApiEnvelope {
 }
 
 export default async function request<T = unknown>(config: RequestConfig): Promise<T> {
-  const response = await http.request<unknown>({
-    ...config,
-  })
-
-  if (isApiEnvelope(response.data)) {
-    return response.data.data as T
+  const generation = sessionGeneration
+  try {
+    const response = await http.request<unknown>(config)
+    const error = normalizeApiResponseError(response)
+    if (error)
+      throw error
+    return (isApiEnvelope(response.data) ? response.data.data : response.data) as T
   }
-
-  return response.data as T
+  catch (error) {
+    if (error instanceof ApiError)
+      return rejectRequest(error, config, generation)
+    if (axios.isAxiosError(error))
+      return rejectRequest(normalizeApiError(error), config, generation)
+    throw error
+  }
 }

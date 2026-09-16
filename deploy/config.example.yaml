@@ -55,8 +55,12 @@ admin:
   # 仅首次创建管理员时使用；至少 12 个字符且不能包含 `$`。
   default_password: ''
 
+client:
+  # 统一登录中密钥身份的固定会话有效期。
+  session_ttl_minutes: 1440
+
 api:
-  # Portal 登录仅信任这些 TCP 对端提供的 X-Forwarded-For；填写实际反代 IP，不支持 CIDR。
+  # 控制面登录仅信任这些 TCP 对端提供的 X-Forwarded-For；填写实际反代 IP，不支持 CIDR。
   trusted_proxy_ips: []
   # Docker 内由 CPR_WEB_DIST_DIR 覆盖。
   asset_directory: '../frontend/dist'
@@ -79,6 +83,9 @@ openai:
     terminal: 'unknown'
     # 部署选择的 US residency；省略或 null 时使用官方无地域约束的默认分支。
     residency: us
+    # 请求地区覆盖；省略或留空（location: / location: null）时透传客户端原值。
+    # 配置时完整填写四个字段；时区同时用于环境日期，不改变 epoch 时间戳。
+    location: null
     verified_at: '2026-09-06T11:26:12.084+08:00'
 
 xai:

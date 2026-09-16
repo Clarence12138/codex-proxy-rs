@@ -1,5 +1,7 @@
 //! Client API Key 管理 wire contract。
 
+use crate::auth::SessionState;
+
 use std::fmt;
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -27,7 +29,7 @@ use axum::{
 };
 
 use super::{
-    AdminAuth, AdminEnvelope, AdminError, AdminJson, AdminQuery, AdminResponse, AdminSessionState,
+    AdminAuth, AdminEnvelope, AdminError, AdminJson, AdminQuery, AdminResponse,
     WireValidationError, wire::map_admin_service_error,
 };
 
@@ -695,7 +697,7 @@ fn validate_optional_text(
 /// 构造固定 GET/POST 且 ID 仅位于 query/body 的 Client API Key 路由。
 pub fn router<S>() -> Router<S>
 where
-    S: AdminSessionState + Clone + Send + Sync + 'static,
+    S: SessionState + Clone + Send + Sync + 'static,
 {
     Router::new()
         .route("/api/admin/client-keys", get(list_client_keys::<S>))
@@ -728,7 +730,7 @@ async fn list_client_keys<S>(
     AdminQuery(query): AdminQuery<ListClientKeysQuery>,
 ) -> Result<impl IntoResponse, AdminError>
 where
-    S: AdminSessionState + Send + Sync,
+    S: SessionState + Send + Sync,
 {
     let result = state
         .admin_services()
@@ -746,7 +748,7 @@ async fn create_client_key<S>(
     AdminJson(payload): AdminJson<CreateClientKeyRequest>,
 ) -> Result<impl IntoResponse, AdminError>
 where
-    S: AdminSessionState + Send + Sync,
+    S: SessionState + Send + Sync,
 {
     let command = payload.into_command().map_err(map_wire_error)?;
     let result = state
@@ -767,7 +769,7 @@ async fn reveal_client_key<S>(
     AdminQuery(query): AdminQuery<ClientKeyIdQuery>,
 ) -> Result<Response, AdminError>
 where
-    S: AdminSessionState + Send + Sync,
+    S: SessionState + Send + Sync,
 {
     let id = query.into_domain_id().map_err(map_wire_error)?;
     let result = state
@@ -793,7 +795,7 @@ async fn update_client_key<S>(
     AdminJson(payload): AdminJson<UpdateClientKeyRequest>,
 ) -> Result<impl IntoResponse, AdminError>
 where
-    S: AdminSessionState + Send + Sync,
+    S: SessionState + Send + Sync,
 {
     let command = payload.into_command().map_err(map_wire_error)?;
     mutation_response(
@@ -811,7 +813,7 @@ async fn disable_client_key<S>(
     AdminJson(payload): AdminJson<ClientKeyMutationRequest>,
 ) -> Result<impl IntoResponse, AdminError>
 where
-    S: AdminSessionState + Send + Sync,
+    S: SessionState + Send + Sync,
 {
     let id = payload.into_domain_id().map_err(map_wire_error)?;
     mutation_response(
@@ -832,7 +834,7 @@ async fn enable_client_key<S>(
     AdminJson(payload): AdminJson<ClientKeyMutationRequest>,
 ) -> Result<impl IntoResponse, AdminError>
 where
-    S: AdminSessionState + Send + Sync,
+    S: SessionState + Send + Sync,
 {
     let id = payload.into_domain_id().map_err(map_wire_error)?;
     mutation_response(
@@ -853,7 +855,7 @@ async fn delete_client_key<S>(
     AdminJson(payload): AdminJson<ClientKeyMutationRequest>,
 ) -> Result<impl IntoResponse, AdminError>
 where
-    S: AdminSessionState + Send + Sync,
+    S: SessionState + Send + Sync,
 {
     let id = payload.into_domain_id().map_err(map_wire_error)?;
     mutation_response(

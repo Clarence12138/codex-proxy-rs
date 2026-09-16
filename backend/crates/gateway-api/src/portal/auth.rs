@@ -2,6 +2,8 @@
 
 use std::net::{IpAddr, SocketAddr};
 
+use crate::auth::client_ip;
+
 use axum::{
     Router,
     extract::{FromRequestParts, State, connect_info::ConnectInfo},
@@ -237,49 +239,6 @@ fn session_cookie(headers: &HeaderMap) -> Option<String> {
         let (name, value) = part.trim().split_once('=')?;
         (name == SESSION_COOKIE).then(|| value.to_owned())
     })
-}
-
-fn client_ip(headers: &HeaderMap, peer: Option<SocketAddr>, trusted: &[IpAddr]) -> String {
-    let Some(peer) = peer.map(|address| address.ip().to_canonical()) else {
-        return "unknown".to_owned();
-    };
-    let is_trusted = |ip: IpAddr| trusted.iter().any(|proxy| proxy.to_canonical() == ip);
-    if !is_trusted(peer) {
-        return peer.to_string();
-    }
-    // 先完整校验有界链，避免从损坏或截断的头部猜测地址；重复头按到达顺序组合。
-    let Some(chain) = forwarded_chain(headers) else {
-        return peer.to_string();
-    };
-    let mut client = peer;
-    for address in chain.into_iter().rev() {
-        // 与 Nginx real_ip_recursive 一致：只有当前一跳可信，才采纳其左侧地址。
-        if !is_trusted(client) {
-            break;
-        }
-        client = address;
-    }
-    client.to_string()
-}
-
-fn forwarded_chain(headers: &HeaderMap) -> Option<Vec<IpAddr>> {
-    const MAX_BYTES: usize = 8 * 1024;
-    const MAX_HOPS: usize = 32;
-    let mut bytes = 0_usize;
-    let mut chain = Vec::new();
-    for header in headers.get_all("x-forwarded-for") {
-        bytes = bytes.checked_add(header.as_bytes().len())?;
-        if bytes > MAX_BYTES {
-            return None;
-        }
-        for part in header.to_str().ok()?.split(',') {
-            if chain.len() >= MAX_HOPS {
-                return None;
-            }
-            chain.push(part.trim().parse::<IpAddr>().ok()?.to_canonical());
-        }
-    }
-    Some(chain)
 }
 
 fn reject_cross_site(headers: &HeaderMap) -> Result<(), PortalError> {

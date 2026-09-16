@@ -35,6 +35,8 @@ openssl rand -hex 24
 - `store.redis.password`
 
 另行设置 `admin.default_password`。它至少需要 12 个字符，不能是常见弱口令，也不能包含 `$`。
+`client.session_ttl_minutes` 控制统一登录中密钥身份的固定会话有效期，默认 1440 分钟；管理员有效期仍由
+`admin.session_ttl_minutes` 控制。两种身份共用一个 Cookie，成功登录替换旧会话；不改变 `/v1/*` 鉴权和限额。
 
 PostgreSQL 与 Redis 密码必须是 48 位十六进制字符。Compose 通过 `config.yaml` 的凭据桥接区
 引用同一密码；三个值都不需要额外导出为环境变量，数据库和 Redis 密码也不能嵌入连接 URL。
@@ -47,6 +49,13 @@ Linux 上应用容器以 `10001:10001` 运行。上述命令将应用数据和�
 与 OAuth 设置，以及 xAI 的 OAuth、额度和模型目录策略，均由各自 Provider 使用代码内默认值管理；
 模板不重复列出这些默认项。运行后，Provider 检查官方版本并更新运行时请求画像，
 不回写 `config.yaml`；检查失败时继续使用上一份有效画像。版本检查不等于重新核验 TLS。
+
+`openai.wire_profile.location` 可选覆盖请求地区。省略、留空（`location:`）或设为 `null` 时，
+透传客户端原有的 Web Search `user_location`、环境日期和时区；客户端未提供的字段也不会补写。
+模板显式填写 `US / Ohio / Piketon / America/New_York`，需要透传时清空或删除该配置项。
+自定义时完整填写 `country`（两位大写国家代码）、`region`、`city` 和 `timezone`（IANA 时区）；修改后重启生效。
+它统一 Responses 的 Web Search 地区与带环境标记的日期、时区，不修改普通聊天内容或 epoch 时间戳，
+也不替代 `residency` 约束或随官方版本检查变化。
 
 ## 启动
 
@@ -73,7 +82,7 @@ PostgreSQL/Redis 启动密码。日常校验使用 `config --quiet`。
 Compose 默认只绑定 `127.0.0.1`。从其他设备访问时，在应用前配置反向代理，
 不要把 PostgreSQL 或 Redis 暴露到公网。
 
-同源管理端支持 HTTP 和 HTTPS 登录。反向代理应原样保留浏览器的 `Origin`，
+同源登录页的管理员与 API Key 登录都支持 HTTP 和 HTTPS 登录。反向代理应原样保留浏览器的 `Origin`，
 不要清除它或改写 Cookie 的 `Secure` 属性；HTTPS 反代可以使用 HTTP 回源。
 HTTP 传输不加密，公网部署仍建议使用 HTTPS。
 会话 Cookie 合同见 [管理接口鉴权](../docs/api.md#管理接口)。
@@ -361,6 +370,8 @@ OpenAI 主动额度重置卡及其消费结果由上游持有，不写入 Postgr
 > 以下命令只适用于同一大版本内的升级，不支持跨大版本在线升级。跨大版本请使用全新的
 > `.runtime/` 数据目录重新部署，并重新导入或重新授权 Provider 账号与客户端 Key。
 
+本 fork 从 v3.7.0 同步 v3.8.0 时保留 Portal 独立迁移与已有用户/订阅数据，上游新增迁移为 `0007`–`0009`，不得修改旧迁移或使用上游镜像直接替换 custom。升级前备份数据库；新排队默认关闭、账号模型默认不限制。管理员/Key 浏览器认证使用 `/api/auth/*` 与 `cpr_session`，旧管理员 Cookie 失效后重新登录；Portal 保持原 Cookie 和接口。位置覆盖默认使用 `location: null`，自定义计费仍沿用本 fork 规则。
+
 本 fork 的 custom 镜像入口为 `ghcr.io/clarence12138/codex-proxy-rs`，自动构建、首次公开和验证要求见 [二开镜像交付](../docs/fork.md#镜像交付)。生产无需源码编译，使用成功工作流摘要中的 `ghcr.io/clarence12138/codex-proxy-rs@sha256:<manifest digest>` 固定部署版本；SHA tag 用于定位源码，不保证重建后的产物不变。
 
 部署前记录前一镜像引用，确认备份及数据库迁移兼容性；仅更新应用，不顺带重启数据库、Redis 或共享反代。已有 Compose 覆盖文件必须同时使用：若覆盖文件写死 `image`，应更新实际生效的字段，不能仅设置 `CPR_IMAGE` 就假定已覆盖。以 `config --quiet` 校验配置，避免输出含凭据的完整配置；拉取已验证镜像后使用 `up -d --no-build --no-deps --wait codex-proxy-rs` 仅重建应用，再验证健康及受影响业务。`--no-deps` 不启动依赖，执行前须确认数据库和 Redis 已正常运行。
@@ -368,6 +379,13 @@ OpenAI 主动额度重置卡及其消费结果由上游持有，不写入 Postgr
 下面保留通用基础 Compose 示例（没有环境专用覆盖文件时适用）；未指定 `CPR_IMAGE` 时仍使用上游默认镜像，不是 custom 的部署入口。管理端的上游在线更新也不是 custom 镜像更新入口，不应借此覆盖二开产物。
 
 Docker 安装从安装目录拉取发布镜像并重建应用容器：
+每个 Release 独立提供 `config.example.yaml`、默认镜像固定到该版本的 `compose.yaml` 和校验和；
+各平台归档也包含 `deploy/config.example.yaml`。配置模板来自构建该版本的同一提交。
+使用二进制归档手动部署时，将模板中的 `api.asset_directory` 改为 `../web/dist`，指向归档内的静态资源。
+升级时先阅读目标版本说明，下载同一 Release 的部署附件，对比模板并合并必要配置，保留已有凭据
+和 Compose 自定义项。不要用模板覆盖 `config.yaml`，也不要从 `main` 下载模板搭配旧镜像。
+
+更新部署文件后，从安装目录拉取目标版本镜像并重建应用容器：
 
 ```bash
 docker compose -f deploy/compose.yaml pull codex-proxy-rs

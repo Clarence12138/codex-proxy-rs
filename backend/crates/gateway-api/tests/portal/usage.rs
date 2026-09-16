@@ -32,7 +32,7 @@ impl gateway_api::portal::PortalSessionState for UsageState {
     }
 }
 
-impl gateway_api::admin::AdminSessionState for UsageState {
+impl gateway_api::auth::SessionState for UsageState {
     fn admin_services(&self) -> &gateway_admin::AdminServices {
         unreachable!("usage tests never access admin services")
     }
@@ -85,6 +85,56 @@ impl PortalAuthStore for UsageStore {
 
 #[async_trait]
 impl PortalUsageStore for UsageStore {
+    async fn overview(
+        &self,
+        user_id: &str,
+        query: gateway_portal::model::usage::PortalOverviewQuery,
+        now: DateTime<Utc>,
+    ) -> PortalStoreResult<gateway_portal::model::usage::PortalUsageOverview> {
+        use gateway_portal::model::usage::{
+            PortalHealthPoint, PortalUsageMetrics, PortalUsageOverview,
+        };
+        assert_eq!(user_id, "usr_usage");
+        assert_eq!(query.model.as_deref(), Some("gpt-5.5"));
+        Ok(PortalUsageOverview {
+            as_of: now,
+            query,
+            me: PortalMe {
+                user_id: user_id.to_owned(),
+                username: "usage-user".to_owned(),
+                plan_name: Some("共享套餐".to_owned()),
+                subscription_ends_at: Some(now),
+                subscription_effective: false,
+                daily_limit_usd: "10".to_owned(),
+                weekly_limit_usd: "50".to_owned(),
+                daily_used_usd: "3".to_owned(),
+                weekly_used_usd: "9".to_owned(),
+                max_concurrency: 2,
+                requests_per_minute: 60,
+                max_keys: 5,
+                key_count: 2,
+            },
+            daily_resets_at: None,
+            weekly_resets_at: None,
+            summary: PortalUsageMetrics {
+                requests: 2,
+                total_tokens: 15,
+                cost_usd: None,
+                cost_incomplete: true,
+                ..PortalUsageMetrics::default()
+            },
+            trend: Vec::new(),
+            health: vec![PortalHealthPoint {
+                time: now,
+                success: 1,
+                failed: 1,
+                cancelled: 0,
+                incomplete: 0,
+                caller_error: 0,
+            }],
+        })
+    }
+
     async fn load_me(&self, _: &str, _: DateTime<Utc>) -> PortalStoreResult<PortalMe> {
         unreachable!()
     }
@@ -142,6 +192,75 @@ impl PortalUsageStore for UsageStore {
     ) -> PortalStoreResult<PortalUsageSummary> {
         unreachable!()
     }
+}
+
+#[tokio::test]
+async fn overview_uses_session_owner_and_preserves_budget_and_unknown_cost() {
+    let store = Arc::new(UsageStore);
+    let state = UsageState(crate::support::services_with_auth_and_usage(
+        store.clone(),
+        store,
+    ));
+    let app = gateway_api::portal::router().with_state(state);
+    let uri = "/api/portal/usage/overview?startTime=2026-09-01T00:00:00Z&endTime=2026-09-02T00:00:00Z&model=gpt-5.5";
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(uri)
+                .header(header::COOKIE, "cpr_portal_session=test-session")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+    let value: serde_json::Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 64 * 1024).await.unwrap()).unwrap();
+    assert_eq!(value["data"]["user"]["userId"], "usr_usage");
+    assert_eq!(value["data"]["user"]["subscriptionEffective"], false);
+    assert_eq!(value["data"]["budget"]["dailyUsedUsd"], "3");
+    assert!(value["data"]["summary"]["costUsd"].is_null());
+    assert_eq!(value["data"]["summary"]["costIncomplete"], true);
+    assert_eq!(
+        value["data"]["healthTimeline"]["points"]
+            .as_array()
+            .unwrap()
+            .len(),
+        96
+    );
+    assert_eq!(value["data"]["healthTimeline"]["successRequests"], 1);
+    assert!(value.to_string().find("providerAccount").is_none());
+    for bad in [
+        format!("{uri}&ownerUserId=other"),
+        uri.replace("2026-09-02", "2026-11-02"),
+        uri.replace("2026-09-02", "2026-08-02"),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(bad)
+                    .header(header::COOKIE, "cpr_portal_session=test-session")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri(uri)
+                .header(header::COOKIE, "cpr_session=key-session")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]

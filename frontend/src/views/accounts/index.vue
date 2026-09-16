@@ -128,6 +128,9 @@ const {
   schedulingEnabled: batchSchedulingEnabled,
   concurrencyLimit: batchConcurrencyLimit,
   weight: batchWeight,
+  modelAccess: batchModelAccess,
+  hasChanges: batchHasChanges,
+  catalogAccountId: batchCatalogAccountId,
   proxyMode: batchProxyMode,
   proxyId: batchProxyId,
   selectedGroupIds: batchGroupIds,
@@ -144,9 +147,11 @@ const {
 const {
   showEditModal,
   editingAccount,
+  notes: editingNotes,
   schedulingEnabled,
   concurrencyLimit: editingConcurrencyLimit,
   weight: editingWeight,
+  modelAccess: editingModelAccess,
   proxyMode: editingProxyMode,
   proxyId: editingProxyId,
   selectedGroupIds: editingGroupIds,
@@ -236,7 +241,7 @@ const {
             </template>
 
             <template #identity="{ row }">
-              <AccountIdentityCell :account="row" />
+              <AccountIdentityCell :account="row" show-notes />
             </template>
 
             <template #provider="{ row }">
@@ -349,9 +354,11 @@ const {
 
     <AccountEditModal
       v-model="showEditModal"
+      v-model:notes="editingNotes"
       v-model:enabled="schedulingEnabled"
       v-model:concurrency-limit="editingConcurrencyLimit"
       v-model:weight="editingWeight"
+      v-model:model-access="editingModelAccess"
       v-model:proxy-mode="editingProxyMode"
       v-model:proxy-id="editingProxyId"
       v-model:selected-group-ids="editingGroupIds"
@@ -367,13 +374,16 @@ const {
       v-model:enabled="batchSchedulingEnabled"
       v-model:concurrency-limit="batchConcurrencyLimit"
       v-model:weight="batchWeight"
+      v-model:model-access="batchModelAccess"
       v-model:proxy-mode="batchProxyMode"
       v-model:proxy-id="batchProxyId"
       v-model:selected-group-ids="batchGroupIds"
+      :catalog-account-id="batchCatalogAccountId"
       :selected-count="selectedIds.size"
       :groups="groups"
       :groups-loading="groupsLoading"
       :saving="savingBatchEdit"
+      :has-changes="batchHasChanges"
       @save="saveBatchEdit"
     />
 

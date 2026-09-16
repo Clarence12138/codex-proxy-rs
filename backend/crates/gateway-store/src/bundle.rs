@@ -115,27 +115,28 @@ pub async fn initialize(mut config: StoreConfig) -> StoreResult<StoreBundle> {
             Arc::new(postgres::PgAccountGroupRepository::new(pool.clone())),
             Arc::new(postgres::PgProxyRepository::new(pool.clone())),
         ),
-        Arc::new(AdminAuthStoreAdapter {
+        Arc::new(AuthStoreAdapter {
+            keys: postgres::PgAdminClientKeyStore::new(pool.clone()),
             security: postgres::PgAdminSecurityAuditRepository::new(pool.clone()),
             settings: postgres::PgRuntimeSettingsRepository::new(pool.clone()),
-            state: redis::RedisAdminAuthStateRepository::new(
-                redis_connection.clone(),
-                REDIS_NAMESPACE,
-            )?,
+            state: redis::RedisAuthStateRepository::new(redis_connection.clone(), REDIS_NAMESPACE)?,
         }),
         Arc::new(postgres::PgAdminClientKeyStore::new(pool.clone())),
         Arc::new(postgres::PgAdminObservabilityStore::new(
             pool.clone(),
             Some(credential_leases.clone()),
             Some(Arc::clone(&cooldowns) as Arc<dyn ProviderCooldownPort>),
-            observability_query_budget,
+            observability_query_budget.clone(),
         )),
         Arc::new(AdminSettingsStoreAdapter {
             control_plane: postgres::PgControlPlaneRepository::new(pool.clone()),
         }),
         backup_ports(pool.clone(), &config)?,
     );
-    let portal_store = Arc::new(postgres::PgPortalStore::new(pool.clone()));
+    let portal_store = Arc::new(postgres::PgPortalStore::with_query_budget(
+        pool.clone(),
+        observability_query_budget,
+    ));
     let portal_ports = PortalStorePorts::new(
         portal_store.clone(),
         portal_store.clone(),

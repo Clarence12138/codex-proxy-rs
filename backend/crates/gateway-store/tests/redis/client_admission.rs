@@ -10,6 +10,82 @@ use gateway_store::redis::{
 use redis::aio::ConnectionManager;
 use uuid::Uuid;
 
+#[tokio::test]
+async fn owned_queue_checks_both_rpm_limits_before_waiting_without_consuming_them() {
+    let Some((repository, mut connection, namespace)) = repository().await else {
+        return;
+    };
+    let mut waiting = admission_request("owned-wait", "owned-key", Duration::from_secs(30));
+    waiting.owner_scope_id = Some("shared-owner".to_owned());
+    waiting.owner_limits.requests_per_minute = 1;
+    waiting.owner_limits.max_concurrency = 1;
+    waiting.allow_concurrency_acquire = false;
+    for _ in 0..3 {
+        assert_eq!(
+            repository.admit_client_request(&waiting).await.unwrap(),
+            ClientAdmissionDecision::Rejected(ClientAdmissionRejection::ConcurrencyLimited)
+        );
+    }
+    assert!(namespace_keys(&mut connection, &namespace).await.is_empty());
+    waiting.allow_concurrency_acquire = true;
+    assert_eq!(
+        repository.admit_client_request(&waiting).await.unwrap(),
+        ClientAdmissionDecision::Granted
+    );
+    let mut other = waiting.clone();
+    other.client_api_key_ref = "other-owned-key".to_owned();
+    other.model_request_id = "other-request".to_owned();
+    other.allow_concurrency_acquire = false;
+    assert_eq!(
+        repository.admit_client_request(&other).await.unwrap(),
+        ClientAdmissionDecision::Rejected(ClientAdmissionRejection::RateLimited)
+    );
+    delete_namespace_keys(&mut connection, &namespace).await;
+}
+
+#[tokio::test]
+async fn abandoning_owned_admission_releases_the_shared_owner_slot() {
+    use gateway_core::{
+        engine::{ModelRequestId, admission::ClientAdmissionPort},
+        policy::{ClientApiKeyId, OwnerScopeId},
+    };
+    let Some((repository, mut connection, namespace)) = repository().await else {
+        return;
+    };
+    let mut first = admission_request("req_cancel", "cancel-key", Duration::from_secs(30));
+    first.owner_scope_id = Some("cancel-owner".to_owned());
+    first.owner_limits.max_concurrency = 1;
+    assert_eq!(
+        repository.admit_client_request(&first).await.unwrap(),
+        ClientAdmissionDecision::Granted
+    );
+    let mut second = first.clone();
+    second.client_api_key_ref = "second-key".to_owned();
+    second.model_request_id = "second-request".to_owned();
+    assert_eq!(
+        repository.admit_client_request(&second).await.unwrap(),
+        ClientAdmissionDecision::Rejected(ClientAdmissionRejection::ConcurrencyLimited)
+    );
+    repository.abandon(
+        &ClientApiKeyId::new("cancel-key").unwrap(),
+        &ModelRequestId::new("req_cancel").unwrap(),
+        Some(&OwnerScopeId::new("cancel-owner").unwrap()),
+    );
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if repository.admit_client_request(&second).await.unwrap()
+                == ClientAdmissionDecision::Granted
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("owner slot released before lease TTL");
+    delete_namespace_keys(&mut connection, &namespace).await;
+}
+
 #[test]
 fn client_admission_rejects_zero_ttl() {
     let request = admission_request("request-1", "key-1", Duration::ZERO);
@@ -256,6 +332,7 @@ fn admission_request(
     lease_ttl: Duration,
 ) -> ClientAdmissionRequest {
     ClientAdmissionRequest {
+        allow_concurrency_acquire: true,
         model_request_id: model_request_id.to_owned(),
         client_api_key_ref: client_api_key_ref.to_owned(),
         lease_ttl,
@@ -455,6 +532,36 @@ async fn owned_keys_share_user_rpm_after_release() {
             .await
             .expect("ownerless"),
         ClientAdmissionDecision::Granted
+    );
+    delete_namespace_keys(&mut connection, &namespace).await;
+}
+
+#[tokio::test]
+async fn queued_admission_checks_rpm_without_consuming_it_or_overtaking_the_head() {
+    let Some((repository, mut connection, namespace)) = repository().await else {
+        return;
+    };
+    let mut request = admission_request("waiting", "key_queue", Duration::from_secs(30));
+    request.limits.requests_per_minute = 1;
+    request.allow_concurrency_acquire = false;
+    for _ in 0..3 {
+        assert_eq!(
+            repository.admit_client_request(&request).await.unwrap(),
+            ClientAdmissionDecision::Rejected(ClientAdmissionRejection::ConcurrencyLimited)
+        );
+    }
+    assert!(namespace_keys(&mut connection, &namespace).await.is_empty());
+    request.allow_concurrency_acquire = true;
+    assert_eq!(
+        repository.admit_client_request(&request).await.unwrap(),
+        ClientAdmissionDecision::Granted
+    );
+    let mut later = request.clone();
+    later.model_request_id = "later".to_owned();
+    later.allow_concurrency_acquire = false;
+    assert_eq!(
+        repository.admit_client_request(&later).await.unwrap(),
+        ClientAdmissionDecision::Rejected(ClientAdmissionRejection::RateLimited)
     );
     delete_namespace_keys(&mut connection, &namespace).await;
 }
