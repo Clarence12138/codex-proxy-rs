@@ -24,7 +24,6 @@ use thiserror::Error;
 use url::Url;
 
 use super::affinity::{CODEX_ROOT_SESSION_TTL, CodexSessionAffinity};
-use super::catalog::CodexCredentialCatalogService;
 use super::cookie::CodexCookiePolicy;
 use super::quota::CodexCredentialQuotaService;
 use super::refresh::refresh_recovery_deadline;
@@ -101,6 +100,7 @@ pub(crate) struct SelectCodexProviderEndpointCredential<'a> {
 }
 
 struct CredentialSelectionInput<'a> {
+    requires_websocket: bool,
     request_url: &'a Url,
     attempt: &'a AttemptContext,
     session_affinity_key: Option<&'a ProviderSessionAffinityKey>,
@@ -120,7 +120,6 @@ pub struct CodexCredentialSelector {
     leases: Arc<dyn ProviderLeasePort>,
     session_affinity: Arc<dyn ProviderSessionAffinityPort>,
     session_exclusions: Arc<dyn ProviderSessionExclusionPort>,
-    catalog: Arc<CodexCredentialCatalogService>,
     quota: Arc<CodexCredentialQuotaService>,
     cookie_policy: CodexCookiePolicy,
     risk_recovery: Mutex<HashMap<String, RiskRecoveryState>>,
@@ -256,12 +255,6 @@ struct AffinityTelemetry {
     account_switch: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ModelCatalogEligibility<'a> {
-    Required(&'a str),
-    NotApplicable,
-}
-
 impl CodexCredentialSelector {
     #[must_use]
     // 选择器显式持有各能力边界，避免把 Provider 私有服务重新包装成通用容器。
@@ -272,7 +265,6 @@ impl CodexCredentialSelector {
         leases: Arc<dyn ProviderLeasePort>,
         session_affinity: Arc<dyn ProviderSessionAffinityPort>,
         session_exclusions: Arc<dyn ProviderSessionExclusionPort>,
-        catalog: Arc<CodexCredentialCatalogService>,
         quota: Arc<CodexCredentialQuotaService>,
         account_feedback: Arc<AccountFeedbackStats>,
         cookie_policy: CodexCookiePolicy,
@@ -283,7 +275,6 @@ impl CodexCredentialSelector {
             leases,
             session_affinity,
             session_exclusions,
-            catalog,
             quota,
             cookie_policy,
             risk_recovery: Mutex::new(HashMap::new()),
@@ -297,17 +288,14 @@ impl CodexCredentialSelector {
         request: &SelectCodexCredential<'_>,
     ) -> Result<CodexCredentialLease, CredentialSelectionError> {
         let input = CredentialSelectionInput {
+            requires_websocket: false,
             request_url: request.request_url,
             attempt: request.attempt,
             session_affinity_key: request.session_affinity_key,
             session_affinity_observation: None,
         };
-        self.select_inner(
-            &input,
-            None,
-            ModelCatalogEligibility::Required(request.upstream_model),
-        )
-        .await
+        self.select_inner(&input, None, Some(request.upstream_model))
+            .await
     }
 
     pub(crate) async fn select_with_cyber_policy(
@@ -315,8 +303,10 @@ impl CodexCredentialSelector {
         request: &SelectCodexCredential<'_>,
         cyber_policy_session_key: Option<&ProviderSessionAffinityKey>,
         session_affinity_observation: Option<&CodexSessionAffinity>,
+        requires_websocket: bool,
     ) -> Result<CodexCredentialLease, CredentialSelectionError> {
         let input = CredentialSelectionInput {
+            requires_websocket,
             request_url: request.request_url,
             attempt: request.attempt,
             session_affinity_key: request.session_affinity_key,
@@ -325,7 +315,7 @@ impl CodexCredentialSelector {
         self.select_inner(
             &input,
             cyber_policy_session_key,
-            ModelCatalogEligibility::Required(request.upstream_model),
+            Some(request.upstream_model),
         )
         .await
     }
@@ -333,26 +323,26 @@ impl CodexCredentialSelector {
     /// 为不属于 Responses 文本模型目录的 Provider 原生端点选择账号。
     ///
     /// 账号范围、健康度、配额、并发租约、cookie 与认证准备仍走同一套选择链路；
-    /// 唯一差异是不能用文本模型目录成员关系淘汰账号。
+    /// 原生端点没有 Responses 模型，不套用管理员配置的文本模型权限。
     pub(crate) async fn select_for_provider_endpoint(
         &self,
         request: &SelectCodexProviderEndpointCredential<'_>,
     ) -> Result<CodexCredentialLease, CredentialSelectionError> {
         let input = CredentialSelectionInput {
+            requires_websocket: false,
             request_url: request.request_url,
             attempt: request.attempt,
             session_affinity_key: request.session_affinity.map(CodexSessionAffinity::key),
             session_affinity_observation: request.session_affinity,
         };
-        self.select_inner(&input, None, ModelCatalogEligibility::NotApplicable)
-            .await
+        self.select_inner(&input, None, None).await
     }
 
     async fn select_inner(
         &self,
         request: &CredentialSelectionInput<'_>,
         cyber_policy_session_key: Option<&ProviderSessionAffinityKey>,
-        model_catalog_eligibility: ModelCatalogEligibility<'_>,
+        upstream_model: Option<&str>,
     ) -> Result<CodexCredentialLease, CredentialSelectionError> {
         let queue_policy = request.attempt.account_selection_policy().queue_policy();
         let mut waiting = CapacityWait::new(
@@ -363,7 +353,21 @@ impl CodexCredentialSelector {
         );
         'capacity: loop {
             let diagnostic = request.attempt.is_diagnostic_required_account();
-            let accounts = self.repository.list_for_provider().await?;
+            let mut accounts = self.repository.list_for_provider().await?;
+            // store 侧常规调度列表不包含停用账号；管理端诊断要对固定账号执行真实上游
+            // 验证，先补回 required 账号，再统一检查认证类型和传输能力。
+            if diagnostic
+                && let Some(required) = request.attempt.required_account()
+                && !accounts.iter().any(|account| account.id() == required)
+                && let Some(account) = self
+                    .repository
+                    .store()
+                    .get_account(required)
+                    .await
+                    .map_err(|_| CredentialSelectionError::Store)?
+            {
+                accounts.push(account);
+            }
             let mut model_access_rejected = 0_usize;
             let accounts = accounts
                 .into_iter()
@@ -375,23 +379,33 @@ impl CodexCredentialSelector {
                                 .account_scope()
                                 .is_some_and(|scope| scope.allows(account.id())))
                         && (diagnostic
-                            || match model_catalog_eligibility {
-                                ModelCatalogEligibility::NotApplicable => true,
-                                ModelCatalogEligibility::Required(upstream_model) => {
-                                    if !request.attempt.account_scope().is_some_and(|scope| {
+                            || upstream_model.is_none_or(|upstream_model| {
+                                let allowed =
+                                    request.attempt.account_scope().is_some_and(|scope| {
                                         scope.allows_model(account.id(), upstream_model)
-                                    }) {
-                                        model_access_rejected += 1;
-                                        return false;
-                                    }
-                                    let observed_support = self
-                                        .catalog
-                                        .observed_model_support(account, upstream_model);
-                                    matches!(observed_support, Ok(None | Some(true)))
+                                    });
+                                if !allowed {
+                                    model_access_rejected += 1;
                                 }
-                            })
+                                allowed
+                            }))
                 })
                 .collect::<Vec<_>>();
+            let mut eligible = Vec::with_capacity(accounts.len());
+            for account in accounts {
+                if request.requires_websocket
+                    && account.authentication_kind() == super::CODEX_AUTHENTICATION_KIND_API_KEY
+                {
+                    let runtime = self.repository.load_runtime_credential(&account).await?;
+                    if !matches!(runtime.authentication, CodexRuntimeAuthentication::ApiKey(ref auth)
+                        if auth.configuration.transport == super::ApiKeyTransport::PreferWebsocket)
+                    {
+                        continue;
+                    }
+                }
+                eligible.push(account);
+            }
+            let accounts = eligible;
             if model_access_rejected > 0 && request.attempt.trace().is_enabled() {
                 request.attempt.trace().record(
                     "account.model_access",
@@ -404,11 +418,7 @@ impl CodexCredentialSelector {
             let mut rate_limits = HashMap::with_capacity(accounts.len());
             if !diagnostic {
                 for account in &accounts {
-                    let until = self
-                        .quota
-                        .rate_limited_until(account.id())
-                        .await
-                        .unwrap_or(None);
+                    let until = self.quota.cooldown(account.id()).await.unwrap_or(None);
                     rate_limits.insert(account.id().clone(), until);
                 }
             }
@@ -440,7 +450,7 @@ impl CodexCredentialSelector {
                             last_started_at: None,
                             quota_reset_at: None,
                             quota_remaining_rank: None,
-                            rate_limited_until: None,
+                            cooldown: None,
                             failure_rate_basis_points: None,
                             first_output_latency_ms: None,
                         })
@@ -1151,6 +1161,12 @@ impl CodexCredentialSelector {
         response_origin: &Url,
         headers: &[String],
     ) -> Result<CodexCookieCaptureOutcome, CredentialSelectionError> {
+        if account.authentication_kind() != CODEX_AUTHENTICATION_KIND_OAUTH {
+            return Ok(CodexCookieCaptureOutcome {
+                credential_revision: None,
+                rejected: headers.len(),
+            });
+        }
         let parsed = self.cookie_policy.parse_response_headers(
             account.id().as_str(),
             account.revision().get(),
@@ -1165,7 +1181,12 @@ impl CodexCredentialSelector {
             });
         }
         let mut data = self.repository.load_complete_data(account).await?;
-        let cookies = data.cookies_mut();
+        let Some(cookies) = data.cookies_mut() else {
+            return Ok(CodexCookieCaptureOutcome {
+                credential_revision: None,
+                rejected: headers.len(),
+            });
+        };
         for input in parsed.inputs {
             let scope = self.cookie_policy.validate_capture(
                 &input.response_origin,
@@ -1238,10 +1259,13 @@ impl CodexCredentialSelector {
         if data.cookies().is_empty() {
             return Ok(());
         }
+        let Some(cookies) = data.cookies_mut() else {
+            return Ok(());
+        };
         match recovery {
             CookieRecovery::ExpireAt(expires_at) => {
                 let expires_at = chrono::DateTime::<chrono::Utc>::from(expires_at);
-                for cookie in data.cookies_mut() {
+                for cookie in cookies {
                     cookie.expires_at = Some(
                         cookie
                             .expires_at
@@ -1249,7 +1273,7 @@ impl CodexCredentialSelector {
                     );
                 }
             }
-            CookieRecovery::Clear => data.cookies_mut().clear(),
+            CookieRecovery::Clear => cookies.clear(),
         }
         self.repository.compare_and_swap_data(account, data).await?;
         Ok(())
@@ -1269,7 +1293,7 @@ fn affinity_selection_for_bound_account(
     };
     match candidate
         .account
-        .status_projection(now, candidate.signals.rate_limited_until)
+        .status_projection(now, candidate.signals.cooldown)
         .status
     {
         AccountStatus::Normal => AffinitySelection::preferred(account_id),
@@ -1288,7 +1312,7 @@ fn affinity_unavailable_reason(
 ) -> AffinityEscapeReason {
     match candidate
         .account
-        .status_projection(now, candidate.signals.rate_limited_until)
+        .status_projection(now, candidate.signals.cooldown)
         .status
     {
         AccountStatus::QuotaExhausted => AffinityEscapeReason::QuotaExhausted,
@@ -1322,7 +1346,6 @@ impl fmt::Debug for CodexCredentialSelector {
             .debug_struct("CodexCredentialSelector")
             .field("repository", &"ProviderAccountStore")
             .field("leases", &"ProviderLeasePort")
-            .field("catalog", &"CodexCredentialCatalogService")
             .field("quota", &"CodexCredentialQuotaService")
             .field("cookie_policy", &self.cookie_policy)
             .finish()

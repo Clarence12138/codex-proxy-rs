@@ -20,11 +20,11 @@ use gateway_core::error::{StoreError, StoreErrorKind};
 use gateway_core::policy::ClientApiKeyId;
 use gateway_core::provider_ports::{
     ProviderCatalogCacheKey, ProviderCatalogCachePort, ProviderCooldown, ProviderCooldownPort,
-    ProviderCooldownScope, ProviderLeaseAcquisition, ProviderLeasePort, ProviderLeaseRequest,
-    ProviderRefreshPolicy, ProviderRuntimePolicyPort, ProviderSchedulingLeaseRequest,
-    ProviderSchedulingState, ProviderScopedCooldown, ProviderSessionAffinityKey,
-    ProviderSessionAffinityPort, ProviderSessionExclusionPort, ProviderSessionExclusions,
-    ProviderStoreError,
+    ProviderCooldownScope, ProviderFreezePolicy, ProviderLeaseAcquisition, ProviderLeasePort,
+    ProviderLeaseRequest, ProviderRefreshPolicy, ProviderRuntimePolicyPort,
+    ProviderSchedulingLeaseRequest, ProviderSchedulingState, ProviderScopedCooldown,
+    ProviderSessionAffinityKey, ProviderSessionAffinityPort, ProviderSessionExclusionPort,
+    ProviderSessionExclusions, ProviderStoreError,
 };
 use gateway_core::routing::ProviderKind;
 use provider_openai::credential::{
@@ -62,6 +62,49 @@ impl MemoryAccountStore {
             .expect("seed test OAuth credential");
     }
 
+    pub(crate) async fn seed_api_key(
+        &self,
+        id: &str,
+        base_url: String,
+        transport: provider_openai::credential::ApiKeyTransport,
+    ) {
+        let credential = provider_openai::credential::CodexCredentialCodec::encode_complete(
+            provider_openai::credential::CodexCredentialData::ApiKey(
+                provider_openai::credential::ApiKeyCredentialData {
+                    schema_version: 1,
+                    installation_id: uuid::Uuid::new_v4().to_string(),
+                    base_url,
+                    api_key: "sk-api-test-only".to_owned(),
+                    transport,
+                },
+            ),
+        )
+        .expect("API Key schema");
+        let account = ProviderAccount::new(
+            ProviderAccountId::new(id).expect("id"),
+            ProviderKind::new("openai").expect("kind"),
+            id.to_owned(),
+            None,
+            "api_key".to_owned(),
+            CredentialRevision::new(1).expect("revision"),
+            None,
+        )
+        .with_account_facts(
+            true,
+            CredentialState::Ready,
+            QuotaState::unknown(),
+            None,
+            None,
+        );
+        self.create_account(NewProviderAccount {
+            account,
+            credential,
+            model_access: None,
+        })
+        .await
+        .expect("seed API account");
+    }
+
     pub(crate) fn account(&self, id: &str) -> Option<ProviderAccount> {
         let id = ProviderAccountId::new(id).ok()?;
         self.accounts
@@ -84,6 +127,22 @@ impl MemoryAccountStore {
             .account
             .clone()
             .with_scheduling(concurrency_limit, weight);
+    }
+
+    pub(crate) fn set_egress(
+        &self,
+        id: &str,
+        proxy: Option<gateway_core::account::OutboundProxy>,
+        location: Option<gateway_core::account::RequestLocation>,
+    ) {
+        let id = ProviderAccountId::new(id).expect("account ID");
+        let mut accounts = self.accounts.lock().expect("account store lock");
+        let stored = accounts.get_mut(&id).expect("seeded account");
+        stored.account = stored
+            .account
+            .clone()
+            .with_outbound_proxy(proxy)
+            .with_request_location(location);
     }
 
     pub(crate) fn quota_reads(&self) -> usize {
@@ -166,12 +225,13 @@ impl ProviderAccountStore for MemoryAccountStore {
         if self.fail_provider_listing.load(Ordering::SeqCst) {
             return Err(store_error(StoreErrorKind::Unavailable));
         }
+        // 与 Postgres 实现的调度列表语义一致：停用账号不进入常规候选。
         Ok(self
             .accounts
             .lock()
             .expect("account store lock")
             .values()
-            .filter(|stored| stored.account.provider() == provider)
+            .filter(|stored| stored.account.provider() == provider && stored.account.enabled())
             .map(|stored| stored.account.clone())
             .collect())
     }
@@ -235,6 +295,7 @@ impl ProviderAccountStore for MemoryAccountStore {
             account_id,
             expected_revision,
             profile,
+            preserve_profile,
             credential,
             has_refresh_token,
             access_token_expires_at,
@@ -277,7 +338,11 @@ impl ProviderAccountStore for MemoryAccountStore {
                 access_token_expires_at,
                 has_refresh_token,
                 next_refresh_at,
-                profile: Some((profile.name, profile.email, profile.plan_type)),
+                profile: (!preserve_profile).then_some((
+                    profile.name,
+                    profile.email,
+                    profile.plan_type,
+                )),
             },
         );
         stored.credential = credential;
@@ -319,11 +384,16 @@ impl ProviderAccountStore for MemoryAccountStore {
             return Ok(QuotaWriteOutcome::Conflict);
         }
         let quota = observation.state;
+        let mut replacement = AccountRebuild::preserving(&stored.account).with_quota(quota);
+        if let Some(plan_type) = &observation.plan_type {
+            replacement.profile = Some((
+                stored.account.name().to_owned(),
+                stored.account.email().map(str::to_owned),
+                Some(plan_type.clone()),
+            ));
+        }
         stored.quota = Some(observation);
-        stored.account = rebuild_account(
-            &stored.account,
-            AccountRebuild::preserving(&stored.account).with_quota(quota),
-        );
+        stored.account = rebuild_account(&stored.account, replacement);
         Ok(QuotaWriteOutcome::Updated)
     }
 
@@ -561,7 +631,7 @@ impl ProviderLeasePort for TestLeaseCoordinator {
                             last_started_at: None,
                             quota_reset_at: None,
                             quota_remaining_rank: None,
-                            rate_limited_until: None,
+                            cooldown: None,
                             failure_rate_basis_points: None,
                             first_output_latency_ms: None,
                         },
@@ -902,6 +972,36 @@ pub(crate) fn runtime_policy() -> Arc<dyn ProviderRuntimePolicyPort> {
     Arc::new(StaticRuntimePolicy)
 }
 
+/// 冻结策略可配置的运行时策略 fake；容量熔断触发测试用。
+pub(crate) struct StaticFreezePolicy(ProviderFreezePolicy);
+
+impl StaticFreezePolicy {
+    /// 构造带固定冻结策略的端口句柄；命名沿用测试构造器语义。
+    #[must_use]
+    pub(crate) fn policy_port(policy: ProviderFreezePolicy) -> Arc<dyn ProviderRuntimePolicyPort> {
+        Arc::new(Self(policy))
+    }
+}
+
+impl ProviderRuntimePolicyPort for StaticFreezePolicy {
+    fn load_refresh_policy(
+        &self,
+    ) -> BoxFuture<'_, Result<ProviderRefreshPolicy, ProviderStoreError>> {
+        Box::pin(async {
+            ProviderRefreshPolicy::try_new(
+                Duration::from_secs(60 * 60),
+                NonZeroU32::new(2).expect("positive concurrency"),
+            )
+        })
+    }
+
+    fn load_freeze_policy(
+        &self,
+    ) -> BoxFuture<'_, Result<ProviderFreezePolicy, ProviderStoreError>> {
+        Box::pin(async { Ok(self.0.clone()) })
+    }
+}
+
 pub(crate) fn secret(access_token: &str) -> CodexOAuthSecret {
     CodexOAuthSecret {
         access_token: SecretString::from(access_token.to_owned()),
@@ -918,17 +1018,29 @@ pub(crate) fn account_policy() -> gateway_core::account::AccountSelectionPolicy 
     )
 }
 
-/// 内存 `ProviderCooldownPort`：只实现 `read`/`put_if_later`（openai selector
-/// 429 冷却路径用），其余 scope 变体测试不涉及，返回占位。
+/// 内存 `ProviderCooldownPort`：实现 `read`/`put_if_later` 与容量失败计数
+/// 证据（openai selector 429 冷却与容量熔断路径用），scope 变体测试不涉及，
+/// 返回占位。
 #[derive(Clone, Default)]
 pub(crate) struct MemoryCooldownPort {
     pub(crate) cooldowns: Arc<Mutex<BTreeMap<ProviderAccountId, ProviderCooldown>>>,
+    capacity_failures: Arc<Mutex<BTreeMap<ProviderAccountId, (u32, u32)>>>,
 }
 
 impl MemoryCooldownPort {
     #[must_use]
     pub(crate) fn new() -> Self {
         Self::default()
+    }
+
+    /// 测试断言用：窗口内累计失败次数与在途峰值。
+    #[must_use]
+    pub(crate) fn capacity_evidence(&self, account_id: &ProviderAccountId) -> Option<(u32, u32)> {
+        self.capacity_failures
+            .lock()
+            .expect("capacity failures lock")
+            .get(account_id)
+            .copied()
     }
 }
 
@@ -1002,5 +1114,58 @@ impl ProviderCooldownPort for MemoryCooldownPort {
         _account_id: &'a ProviderAccountId,
     ) -> BoxFuture<'a, Result<bool, ProviderStoreError>> {
         Box::pin(async { Ok(false) })
+    }
+
+    fn record_capacity_failure<'a>(
+        &'a self,
+        account_id: &'a ProviderAccountId,
+        _window: Duration,
+        in_flight: u32,
+    ) -> BoxFuture<'a, Result<u32, ProviderStoreError>> {
+        Box::pin(async move {
+            let mut failures = self
+                .capacity_failures
+                .lock()
+                .expect("capacity failures lock");
+            let entry = failures.entry(account_id.clone()).or_insert((0, 0));
+            entry.0 = entry.0.saturating_add(1);
+            entry.1 = entry.1.max(in_flight);
+            Ok(entry.0)
+        })
+    }
+
+    fn clear_after_success<'a>(
+        &'a self,
+        account_id: &'a ProviderAccountId,
+        _through_revision: gateway_core::account::CredentialRevision,
+    ) -> BoxFuture<'a, Result<(), ProviderStoreError>> {
+        Box::pin(async move {
+            let mut cooldowns = self.cooldowns.lock().expect("cooldown lock");
+            if cooldowns.get(account_id).is_some_and(|value| {
+                value.kind().is_capacity_freeze() || value.credential_revision() > _through_revision
+            }) {
+                return Ok(());
+            }
+            cooldowns.remove(account_id);
+            self.capacity_failures
+                .lock()
+                .expect("capacity failures lock")
+                .remove(account_id);
+            Ok(())
+        })
+    }
+
+    fn capacity_peak_in_flight<'a>(
+        &'a self,
+        account_id: &'a ProviderAccountId,
+    ) -> BoxFuture<'a, Result<Option<u32>, ProviderStoreError>> {
+        Box::pin(async move {
+            Ok(self
+                .capacity_failures
+                .lock()
+                .expect("capacity failures lock")
+                .get(account_id)
+                .map(|(_, peak)| *peak))
+        })
     }
 }

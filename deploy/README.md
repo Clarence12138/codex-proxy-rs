@@ -11,16 +11,35 @@
 
 项目不使用 `.env` 配置文件。Compose 环境变量用于容器地址、镜像选择和构建发布；
 应用设置与凭据保存在 `config.yaml` 中。已有部署不要重新复制模板覆盖配置。
+配置加载会忽略未知或已移除的字段，并在启动控制台提示字段名；不输出对应值。缺少必填字段时会指出缺项并停止启动，
+已知字段的类型和取值仍需合法；可选字段省略时使用默认值。
 
-## 准备
+## 手动安装
 
-按快速开始下载部署文件后，从安装目录执行：
+本节适用于 Linux amd64/arm64，需准备 Docker Engine、Docker Compose Plugin、curl 和 OpenSSL，
+并确保当前用户能访问 Docker、可通过 `sudo` 或 root 设置目录权限。一键安装入口见
+[快速开始](../README.md#一键安装)，脚本会自动完成本节准备和服务启动。
+
+下载同一正式 Release 的部署文件并设置目录权限：
 
 ```bash
+mkdir -p codex-proxy-rs/deploy && cd codex-proxy-rs
+
+# 只解析一次最新正式版本，确保两个文件来自同一 Release。
+CPR_RELEASE_URL="$(curl -fsSL -o /dev/null -w '%{url_effective}' https://github.com/zyycn/codex-proxy-rs/releases/latest)"
+CPR_RELEASE_TAG="${CPR_RELEASE_URL##*/}"
+curl -fsSL "https://github.com/zyycn/codex-proxy-rs/releases/download/${CPR_RELEASE_TAG}/compose.yaml" \
+  -o deploy/compose.yaml
+curl -fsSL "https://github.com/zyycn/codex-proxy-rs/releases/download/${CPR_RELEASE_TAG}/config.example.yaml" \
+  -o deploy/config.example.yaml
+
 install -d -m 0750 .runtime/postgres .runtime/redis
 sudo install -d -m 0770 -o "$(id -u)" -g 10001 .runtime/data .runtime/logs
 sudo install -m 0640 -o "$(id -u)" -g 10001 deploy/config.example.yaml deploy/config.yaml
 ```
+
+也可将 `CPR_RELEASE_TAG` 设置为指定的发布标签。Release 附带的 `compose.yaml` 默认使用该版本镜像，
+配置模板和部署文件均包含在 `checksums.txt` 中；不要混用 `main` 分支模板与已发布镜像。
 
 为 PostgreSQL 与 Redis 分别生成一个密码：
 
@@ -50,12 +69,13 @@ Linux 上应用容器以 `10001:10001` 运行。上述命令将应用数据和�
 模板不重复列出这些默认项。运行后，Provider 检查官方版本并更新运行时请求画像，
 不回写 `config.yaml`；检查失败时继续使用上一份有效画像。版本检查不等于重新核验 TLS。
 
-`openai.wire_profile.location` 可选覆盖请求地区。省略、留空（`location:`）或设为 `null` 时，
-透传客户端原有的 Web Search `user_location`、环境日期和时区；客户端未提供的字段也不会补写。
-模板显式填写 `US / Ohio / Piketon / America/New_York`，需要透传时清空或删除该配置项。
-自定义时完整填写 `country`（两位大写国家代码）、`region`、`city` 和 `timezone`（IANA 时区）；修改后重启生效。
-它统一 Responses 的 Web Search 地区与带环境标记的日期、时区，不修改普通聊天内容或 epoch 时间戳，
-也不替代 `residency` 约束或随官方版本检查变化。
+全局请求位置在管理端「系统设置 → 运行设置 → 请求时区与位置」配置，默认关闭，保留客户端原有位置和时区。
+开启后使用自定义位置，关闭时保留已保存的自定义值。「代理管理」设置的自定义位置优先于全局设置，
+全局关闭时代理自定义仍生效。保存后新请求生效，无需重启；关闭代理自定义后恢复全局继承。
+该设置统一 OpenAI Responses 的 Web Search 位置与带来源标记的环境日期、时区，不修改 epoch 时间戳、
+真实出口 IP 或服务系统时区。字段约束见 [运行设置](../docs/api.md#8-运行设置)。
+
+请求位置由管理端设置，数据库初始化不从 `config.yaml` 导入位置值。
 
 ## 启动
 
@@ -192,8 +212,8 @@ goals = true
 }
 ```
 
-这份文件可以保留，用于兼容已有客户端和 CCSwitch。新配置从 `experimental_bearer_token`
-读取代理密钥，不会因为仅含 API Key 的 `auth.json` 存在而关闭生图。
+使用 `auth.json` 读取密钥的客户端或 CCSwitch 可保留这份文件。上述 Provider 配置从
+`experimental_bearer_token` 读取代理密钥，可与仅含 API Key 的 `auth.json` 共存。
 真实 OpenAI OAuth 账号文件用于管理端账号导入，不要当作代理配置分发给客户端。
 
 ### 生图和 WebSocket
@@ -203,14 +223,13 @@ goals = true
 需要支持该能力的客户端、支持图片输入的对话模型，以及有生图权限和额度的 OpenAI 账号。
 代理不会增加上游权限，xAI 账号不能承接这些 Images 请求。
 
-本项目已用 Codex CLI 0.153.4 验证过原生生图，这不是最低支持版本声明。
 生图不要求开启 WebSocket。要启用客户端 WebSocket，把当前 Provider 的
 `supports_websockets` 改为 `true`，并检查反向代理是否允许 Upgrade。
 
 客户端到代理、代理到上游是两段独立连接。客户端关闭 WebSocket 后，
 服务端仍可能用 WebSocket 访问上游；客户端开关不控制服务端连接池和 HTTP 回退策略。
 
-### 旧版配置
+### 客户端配置兼容
 
 仅含代理密钥的 `auth.json` 配合 `requires_openai_auth = true` 仍可用于已有请求，
 但 API Key 登录本身不会启用原生生图。需要生图时换用上述 Provider 配置。
@@ -240,6 +259,28 @@ goals = true
 
 其他客户端使用 Responses API、`/v1` Base URL 和代理密钥即可，不需要 Actor 标记。
 路由与请求格式见 [API 参考](../docs/api.md#3-openai-数据面与模型目录)。
+
+### Pi 接入与提示词边界
+
+Pi 接入使用网关 Client Key、`/v1` Base URL 和 `openai-responses` 协议，不使用本项目未提供的
+`openai-completions`。Pi 的 Codex OAuth 专用 provider 与普通 Responses provider 是不同路径，
+不能直接把网关 Key 当成 ChatGPT JWT，也不要为接入网关向客户端分发服务端的 OAuth 凭据。
+
+网关会过滤下游 SDK/浏览器环境头，并重建上游画像和账号认证；但不会删除系统提示词、工具 schema、
+项目指令或工具结果里的客户端信息。Pi 0.85.1 的默认系统说明包含 Pi 品牌和本机 Pi 文档路径。
+如希望减少这部分信息，可在选好网关 provider 后，显式替换默认系统说明，例如：
+
+```bash
+pi --system-prompt 'You are a coding assistant. Use the provided tools according to their schemas. Inspect relevant files before editing, preserve existing user changes, and report verification results and limitations honestly. Never reveal credentials.'
+```
+
+也可自行维护 Pi 的项目级 `.pi/SYSTEM.md`。这是 opt-in：自定义说明会替代默认说明，需自行保留所需的
+工具使用规则；`--append-system-prompt` 只是追加，不会移除原有 Pi 品牌块。
+项目指令、技能及当前工作目录仍可被追加，工具名称和工具结果也可能透露运行环境，不能据此承诺匿名化。
+不要在网关里全文删除 `pi` 字符串或强行换成 Codex 提示词，这会破坏正常内容和工具合同。
+
+无真实凭据的捕获与回放方式见 [客户端请求 fixtures](../backend/apps/gateway/tests/fixtures/client_requests/README.md)。
+这些测试覆盖协议和本地 HTTP/WS 出站，不代表所有 Pi 参数已在真实上游获得兼容性验收。
 
 ## 优雅关停
 
@@ -302,7 +343,7 @@ OpenAI 主动额度重置卡及其消费结果由上游持有，不写入 Postgr
 文件名统一为 `codex-proxy-rs-<类别>.YYYY-MM-DD[.N].log[.gz]`，类别分别为
 `application`、`oauth-recovery`、`request-dump`。专用 tracing target 为 `oauth_recovery` 和
 `request_dump`；普通日志保留各 Rust 模块的 target，便于按模块过滤。
-程序只管理上述规范名称的日志，旧命名文件由运维手动清理。
+程序只管理上述规范名称的日志，其他命名的文件由运维手动清理。
 普通日志未配置 `retention_days` 时默认使用 7 天，显式配置优先。
 
 按 UTC 日期整组保留：例如 9 月 8 日配置 1 天，会保留 9 月 7 日全天及 9 月 8 日的所有分片，
@@ -312,13 +353,12 @@ OpenAI 主动额度重置卡及其消费结果由上游持有，不写入 Postgr
 关闭的分片压缩为 `.log.gz`；成功压缩、同步并发布归档后才删除原文件，保留原修改时间。
 清理发生在启动和轮转时；空闲期间过期文件可能暂时多保留。检索时须同时读取 `.log` 与 `.log.gz`。
 
-升级旧配置时删除 `host.logging.file.max_files`；该字段已移除，旧配置会校验失败而不会继续按数量删日志。
-报文开关仍为 `host.logging.request_dump`，默认关闭；开启时原始报文按块完整写入独立文件，
+报文开关为 `host.logging.request_dump`，默认关闭；开启时原始报文按块完整写入独立文件，
 数据库请求诊断仍是有界摘要，不能用摘要事件数代替全量报文完整性。
 
 文件写入使用有界队列背压，正常退出会排空队列并同步文件。`file_logging` 健康探针在写入/同步失败后
 报告 `Unhealthy`，本次进程内恢复写入也不会清除已有缺口；压缩或清理失败报告 `Degraded`。
-这不是断电、强杀或磁盘故障下的零丢失承诺；已删除的历史文件也不能靠升级恢复。
+断电、强杀或磁盘故障可能造成日志丢失；需要恢复已删除文件时，应使用独立备份。
 容量不足时不会提前删除保留窗口内日志，必须根据完整日期的压缩后实际用量规划空间，并监控磁盘余量和
 健康探针。Docker stdout 的独立轮转不承担应用文件日志的完整保留承诺。
 
@@ -350,7 +390,7 @@ OpenAI 主动额度重置卡及其消费结果由上游持有，不写入 Postgr
    按配置的保留窗口及组织的数据处理要求管理已生成文件。不要为普通请求排查开启 OAuth 恢复记录，
    也不要直接上传整个日志目录或完整转储。
 
-反馈入口见 [Issue 表单](../.github/ISSUE_TEMPLATE/bug_report.yml)；错误诊断与查询合同见
+请求问题反馈使用 [接口问题反馈表单](../.github/ISSUE_TEMPLATE/api-bug-report.yml)；错误诊断与查询合同见
 [API 文档](../docs/api.md#10-dashboard用量与错误)。
 
 ## 密码语义
@@ -370,7 +410,7 @@ OpenAI 主动额度重置卡及其消费结果由上游持有，不写入 Postgr
 > 以下命令只适用于同一大版本内的升级，不支持跨大版本在线升级。跨大版本请使用全新的
 > `.runtime/` 数据目录重新部署，并重新导入或重新授权 Provider 账号与客户端 Key。
 
-本 fork 从 v3.7.0 同步 v3.8.0 时保留 Portal 独立迁移与已有用户/订阅数据，上游新增迁移为 `0007`–`0009`，不得修改旧迁移或使用上游镜像直接替换 custom。升级前备份数据库；新排队默认关闭、账号模型默认不限制。管理员/Key 浏览器认证使用 `/api/auth/*` 与 `cpr_session`，旧管理员 Cookie 失效后重新登录；Portal 保持原 Cookie 和接口。位置覆盖默认使用 `location: null`，自定义计费仍沿用本 fork 规则。
+本 fork 从 v3.7.0 同步 v3.8.0 时保留 Portal 独立迁移与已有用户/订阅数据，上游新增迁移为 `0007`–`0009`，不得修改旧迁移或使用上游镜像直接替换 custom。升级前备份数据库；新排队默认关闭、账号模型默认不限制。管理员/Key 浏览器认证使用 `/api/auth/*` 与 `cpr_session`，旧管理员 Cookie 失效后重新登录；Portal 保持原 Cookie 和接口。位置覆盖默认关闭，自定义计费仍沿用本 fork 规则。
 
 本 fork 的 custom 镜像入口为 `ghcr.io/clarence12138/codex-proxy-rs`，自动构建、首次公开和验证要求见 [二开镜像交付](../docs/fork.md#镜像交付)。生产无需源码编译，使用成功工作流摘要中的 `ghcr.io/clarence12138/codex-proxy-rs@sha256:<manifest digest>` 固定部署版本；SHA tag 用于定位源码，不保证重建后的产物不变。
 
@@ -382,8 +422,17 @@ Docker 安装从安装目录拉取发布镜像并重建应用容器：
 每个 Release 独立提供 `config.example.yaml`、默认镜像固定到该版本的 `compose.yaml` 和校验和；
 各平台归档也包含 `deploy/config.example.yaml`。配置模板来自构建该版本的同一提交。
 使用二进制归档手动部署时，将模板中的 `api.asset_directory` 改为 `../web/dist`，指向归档内的静态资源。
+在线更新默认使用同一目录；如显式设置 `host.system_update.web_dist_dir`，应确保它指向实际提供页面的目录。
 升级时先阅读目标版本说明，下载同一 Release 的部署附件，对比模板并合并必要配置，保留已有凭据
 和 Compose 自定义项。不要用模板覆盖 `config.yaml`，也不要从 `main` 下载模板搭配旧镜像。
+
+按现有配置和接入方式检查以下升级条件：
+
+| 适用条件 | 升级操作 |
+| --- | --- |
+| `config.yaml` 含 `openai.wire_profile.location` | 该字段会被忽略，可删除；如需继续覆盖请求位置，将值填入管理端全局请求位置并开启开关，数据库初始化不会自动导入 |
+| `config.yaml` 含 `host.logging.file.max_files` | 该字段会被忽略，可删除；日志按 `retention_days` 保留，`max_file_size_mb` 只控制分片大小 |
+| 使用旧管理员认证接口或 Cookie | 改用 `/api/auth/*` 并重新登录；会话合同见 [认证 API](../docs/api.md#4-浏览器认证) |
 
 更新部署文件后，从安装目录拉取目标版本镜像并重建应用容器：
 
@@ -399,12 +448,9 @@ docker compose -f deploy/compose.yaml build codex-proxy-rs
 docker compose -f deploy/compose.yaml up -d --no-build --wait
 ```
 
-源码提交、仓库发版和运行实例升级是三种独立状态：本地 commit 不等于 Release，Release/tag 和镜像
-已生成也不等于实例已升级。判断某项修复是否在线前，应先通过管理端版本接口或容器 image digest
-确认运行实例的实际 revision；实例只有在执行上面的 Compose pull/up，或成功完成管理端在线更新后
-才会改变。
+升级后通过管理端版本接口或容器 image digest 确认运行实例的版本和 revision。
 
-构建元数据仍可作为一次性进程环境传入，不需要 `.env` 文件：
+构建元数据通过一次性进程环境传入：
 
 ```bash
 CPR_VERSION="$(ruby -ryaml -e 'puts YAML.load_file("release/version.yaml").fetch("version").delete_prefix("v")')" \
@@ -415,12 +461,13 @@ docker compose -f deploy/compose.yaml build codex-proxy-rs
 
 ### 管理端在线更新
 
-Compose 已显式装配正式发布构建所需的运行参数：
+Compose 提供以下在线更新运行参数：
 
 - `CPR_UPDATE_REPOSITORY`：只接受 `owner/repository`；默认 `zyycn/codex-proxy-rs`。
 - `CPR_GITHUB_API_BASE`：正式环境必须为 `https://api.github.com/repos`。
 - `CPR_UPDATE_CHANNEL`：`stable` 会拒绝 prerelease。
-- `CPR_UPDATE_EXE_PATH`、`CPR_WEB_DIST_DIR`：分别指向容器内二进制和前端静态目录。
+- `CPR_UPDATE_EXE_PATH`、`CPR_WEB_DIST_DIR`：分别指向容器内二进制和前端静态目录；
+  `CPR_WEB_DIST_DIR` 同时供页面服务与更新器使用，相对路径以 `deploy/config.yaml` 所在目录为基准。
 - 更新临时目录、状态文件和锁文件默认由 `host.runtime_data_dir` 派生；
   `CPR_UPDATE_TEMP_DIR`、`CPR_UPDATE_STATE_FILE`、`CPR_UPDATE_LOCK_FILE` 仅用于显式覆盖。
 - `CPR_ENABLE_SELF_RESTART=true`：更新或回滚完成后允许管理端请求重启；Docker 进程退出后由

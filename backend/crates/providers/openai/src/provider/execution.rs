@@ -124,9 +124,13 @@ impl CodexProvider {
             crate::transport::request::scope_turn_metadata(metadata, lease.installation_id(), true)
         });
         let events = cold_json_response_stream(ColdJsonResponse {
-            client: self.client.for_account(lease.account()).map_err(|_| {
-                provider_error(ProviderErrorKind::Unavailable, UpstreamSendState::NotSent)
-            })?,
+            client: self
+                .client
+                .for_account(lease.account())
+                .map_err(|_| {
+                    provider_error(ProviderErrorKind::Unavailable, UpstreamSendState::NotSent)
+                })?
+                .with_authentication(lease.authentication()),
             response_origin: request.response_origin,
             endpoint_path: request.endpoint_path,
             body: request.body,
@@ -198,6 +202,8 @@ pub(super) struct ColdJsonResponse {
 #[derive(Clone, Serialize, Deserialize)]
 pub(super) struct OpenAiSessionState {
     pub(super) account_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) credential_revision: Option<u64>,
     pub(super) conversation_id: Option<String>,
     #[serde(default)]
     pub(super) turn_state: Option<String>,
@@ -216,6 +222,7 @@ pub(super) enum OpenAiContinuationScope {
 
 pub(super) struct OpenAiSessionCapture {
     pub(super) account_id: String,
+    pub(super) credential_revision: Option<u64>,
     pub(super) conversation_id: Option<String>,
     pub(super) turn_state: Option<String>,
     pub(super) client_turn_id: Option<String>,
@@ -261,6 +268,7 @@ fn encode_openai_session_capture(
     };
     encode_openai_session_state(OpenAiSessionState {
         account_id: capture.account_id.clone(),
+        credential_revision: capture.credential_revision,
         conversation_id: capture.conversation_id.clone(),
         turn_state: capture.turn_state.clone(),
         client_turn_id: capture.client_turn_id.clone(),
@@ -399,6 +407,7 @@ pub(super) fn cold_json_response_stream(request: ColdJsonResponse) -> EventStrea
             response_origin: &request.response_origin,
             cyber_policy_scope: None,
             allows_account_state_mutation,
+            allows_capacity_feedback: !request.context.is_diagnostic_required_account(),
         };
         let active_account = request.lease.account().clone();
         let cookie_header = build_cookie_header(request.lease.cookies())?;
@@ -573,6 +582,7 @@ pub(super) fn cold_response_stream(response: ColdResponse) -> EventStream {
             response_origin: &response_origin,
             cyber_policy_scope: cyber_policy_scope.as_ref(),
             allows_account_state_mutation,
+            allows_capacity_feedback: !context.is_diagnostic_required_account(),
         };
         let mut active_account = lease.account().clone();
         let cookie_header = build_cookie_header(lease.cookies())?;

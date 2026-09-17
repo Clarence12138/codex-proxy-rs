@@ -731,6 +731,7 @@ name = "codex-proxy-rs"
 version = "0.0.0"
 dependencies = [
  "config",
+ "futures",
  "gateway-admin",
  "gateway-api",
  "gateway-core",
@@ -746,6 +747,8 @@ dependencies = [
  "thiserror",
  "tokio",
  "tokio-rustls",
+ "tokio-tungstenite 0.28.0",
+ "zstd",
 ]
 
 [[package]]
@@ -1493,6 +1496,7 @@ dependencies = [
  "secrecy",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
  "thiserror",
  "tokio",
  "tokio-tungstenite 0.29.0",
@@ -1511,6 +1515,7 @@ dependencies = [
  "async-trait",
  "base64 0.23.1",
  "bytes",
+ "chrono-tz",
  "futures",
  "futures-timer",
  "semver",
@@ -1541,6 +1546,7 @@ dependencies = [
  "scraper",
  "semver",
  "serde",
+ "serde_ignored",
  "serde_json",
  "sha2 0.11.0",
  "tar",
@@ -3367,6 +3373,16 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.5",
+]
+
+[[package]]
+name = "serde_ignored"
+version = "0.1.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "115dffd5f3853e06e746965a20dcbae6ee747ae30b543d91b0e089668bb07798"
+dependencies = [
+ "serde",
+ "serde_core",
 ]
 
 [[package]]

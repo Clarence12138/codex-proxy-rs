@@ -18,6 +18,8 @@ pub use gateway_core::account::RotationStrategy;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeSettings {
     pub config_revision: Revision,
+    pub request_location_enabled: bool,
+    pub request_location: gateway_core::account::RequestLocation,
     pub model_mappings: ModelMappings,
     pub refresh_margin_seconds: u64,
     pub refresh_concurrency: u32,
@@ -32,12 +34,21 @@ pub struct RuntimeSettings {
     pub usage_retention_days: u32,
     pub ops_event_retention_days: u32,
     pub audit_retention_days: u32,
+    pub account_auto_freeze_enabled: bool,
+    pub account_auto_freeze_threshold: u32,
+    pub account_auto_freeze_window_seconds: u64,
+    pub account_auto_freeze_duration_seconds: u64,
+    pub account_auto_freeze_probe_enabled: bool,
+    pub account_auto_freeze_probe_model: Option<String>,
+    pub account_auto_freeze_adaptive_concurrency: bool,
     pub updated_at: DateTime<Utc>,
 }
 
 /// 原子替换运行设置的命令。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReplaceRuntimeSettings {
+    pub request_location_enabled: bool,
+    pub request_location: gateway_core::account::RequestLocation,
     pub model_mappings: ModelMappings,
     pub refresh_margin_seconds: u64,
     pub refresh_concurrency: u32,
@@ -52,6 +63,13 @@ pub struct ReplaceRuntimeSettings {
     pub usage_retention_days: u32,
     pub ops_event_retention_days: u32,
     pub audit_retention_days: u32,
+    pub account_auto_freeze_enabled: bool,
+    pub account_auto_freeze_threshold: u32,
+    pub account_auto_freeze_window_seconds: u64,
+    pub account_auto_freeze_duration_seconds: u64,
+    pub account_auto_freeze_probe_enabled: bool,
+    pub account_auto_freeze_probe_model: Option<String>,
+    pub account_auto_freeze_adaptive_concurrency: bool,
 }
 
 /// 明文管理员 API Key；按产品约束明文落库，但禁止 Debug 泄漏。

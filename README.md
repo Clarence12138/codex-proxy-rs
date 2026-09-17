@@ -25,63 +25,55 @@
 以下命令适用于 Linux amd64/arm64，需要 Docker Engine、Docker Compose Plugin、curl 和 OpenSSL。已有部署请先看
 [升级说明](deploy/README.md#镜像升级与源码构建)，不要覆盖原配置。
 
-### 1. 下载部署文件并配置
+### 一键安装
+
+请确保当前用户能访问 Docker，并可通过 `sudo` 或 root 设置目录权限。
 
 ```bash
-mkdir -p codex-proxy-rs/deploy && cd codex-proxy-rs
-
-# 只解析一次最新正式版本，确保两个文件来自同一 Release。
-CPR_RELEASE_URL="$(curl -fsSL -o /dev/null -w '%{url_effective}' https://github.com/zyycn/codex-proxy-rs/releases/latest)"
-CPR_RELEASE_TAG="${CPR_RELEASE_URL##*/}"
-curl -fsSL "https://github.com/zyycn/codex-proxy-rs/releases/download/${CPR_RELEASE_TAG}/compose.yaml" \
-  -o deploy/compose.yaml
-curl -fsSL "https://github.com/zyycn/codex-proxy-rs/releases/download/${CPR_RELEASE_TAG}/config.example.yaml" \
-  -o deploy/config.example.yaml
-
-install -d -m 0750 .runtime/postgres .runtime/redis
-sudo install -d -m 0770 -o "$(id -u)" -g 10001 .runtime/data .runtime/logs
-sudo install -m 0640 -o "$(id -u)" -g 10001 deploy/config.example.yaml deploy/config.yaml
+curl -fsSL https://raw.githubusercontent.com/zyycn/codex-proxy-rs/main/deploy/install.sh -o install.sh && bash install.sh
 ```
 
-也可将 `CPR_RELEASE_TAG` 设置为指定的发布标签。Release 附带的 `compose.yaml` 默认使用该版本镜像，
-配置模板和部署文件均包含在 `checksums.txt` 中；不要混用 `main` 分支模板与已发布镜像。
+[安装脚本](deploy/install.sh) 默认安装到当前目录下的 `codex-proxy-rs/`，下载同一正式 Release 的部署文件，
+自动生成密码、设置目录权限并启动服务。完成后会显示访问地址和管理员密码，请保存密码，再按下方步骤
+[添加账号与客户端密钥](#添加账号与客户端密钥)。
 
-分别生成数据库和 Redis 密码：
+可在执行 `bash install.sh` 时传入环境变量：
+
+| 变量 | 用途 | 默认值 |
+| --- | --- | --- |
+| `INSTALL_DIR` | 安装目录，建议使用绝对路径 | 当前目录下的 `codex-proxy-rs/` |
+| `CPR_RELEASE_TAG` | 指定发布标签 | 最新正式版本 |
+| `ADMIN_PASSWORD` | 管理员初始密码，至少 12 位，不能包含 `$`，不能使用常见弱口令 | 随机生成 |
+
+例如，自定义安装目录：
 
 ```bash
-openssl rand -hex 24
-openssl rand -hex 24
+INSTALL_DIR="$HOME/services/codex-proxy-rs" bash install.sh
 ```
 
-编辑 `deploy/config.yaml`，填好以下三项：
+重复运行时请使用同一安装目录。检测到 `deploy/config.yaml` 后，脚本保留现有配置和部署文件，
+忽略传入的管理员密码，也不执行版本升级。
 
-| 配置项 | 填写内容 |
-| --- | --- |
-| `store.database.password` | 第一个生成的 48 位十六进制密码 |
-| `store.redis.password` | 第二个生成的 48 位十六进制密码 |
-| `admin.default_password` | 管理员初始密码，至少 12 位，不能包含 `$` |
+### 手动安装
 
-### 2. 启动服务
+自行下载部署文件、配置密码和启动服务的完整步骤见 [部署文档](deploy/README.md#手动安装)。
 
-```bash
-docker compose -f deploy/compose.yaml config --quiet
-docker compose -f deploy/compose.yaml pull
-docker compose -f deploy/compose.yaml up -d --no-build --wait
-curl -i http://127.0.0.1:8080/healthz
-```
+### 登录管理端
 
-健康检查返回 `204 No Content` 后，打开 `http://127.0.0.1:8080`，
-使用 `admin@cpr.local` 和刚设置的管理员密码登录。
+部署完成后，打开 `http://127.0.0.1:8080`，使用 `admin@cpr.local` 和管理员密码登录。
 API Key 持有者可在同一登录页切换登录身份，进入 `/key-usage` 查看自己的用量、趋势、请求日志、额度与健康时间线；不能访问管理员页面。
 
 默认地址只能在服务器本机访问。从其他设备使用时，需要配置
 [HTTPS 反向代理](deploy/README.md#公网访问)。
 
-### 3. 添加账号与客户端密钥
+### 添加账号与客户端密钥
 
 1. 在「账号」中添加账号，完成授权或导入。
 2. 按需建立账号分组，再创建客户端密钥并选择可用分组。**不选分组表示可使用全部账号**。
 3. 打开密钥的「使用密钥」，复制客户端配置。
+
+账号自动冻结默认关闭，可在「系统设置 → 运行参数」中启用。启用后，账号频繁命中上游容量错误时
+会暂停调度并显示为限流中；若开启恢复前探测，冷却到期后需探测成功才恢复。
 
 ## 客户端接入
 

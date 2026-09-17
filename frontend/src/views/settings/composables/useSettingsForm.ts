@@ -1,4 +1,5 @@
 import type { rotationOptions } from '../constants'
+import type { RequestLocation } from '@/api'
 import { computed, reactive, ref, shallowRef } from 'vue'
 
 import { getSettings, updateSettings } from '@/api'
@@ -6,6 +7,7 @@ import { ApiError } from '@/api/request'
 import { toast } from '@/components/base/BaseToast'
 import { useAsyncAction } from '@/composables/useAsyncAction'
 import { errorMessage } from '@/utils/async'
+import { normalizeRequestLocation, requestLocationError } from '@/utils/request-location'
 
 type RotationStrategy = (typeof rotationOptions)[number]['value']
 
@@ -15,7 +17,10 @@ export function useSettingsForm() {
   const saving = saveAction.loading
   const error = shallowRef('')
   const mappings = ref<Array<{ requestedModel: string, upstreamModel: string }>>([])
+  const savedRequestLocation = shallowRef<RequestLocation>()
   const form = reactive({
+    requestLocationEnabled: false,
+    requestLocation: { country: '', region: '', city: '', timezone: '' },
     refreshMarginSeconds: null as number | null,
     refreshConcurrency: null as number | null,
     maxConcurrentPerAccount: null as number | null,
@@ -30,9 +35,17 @@ export function useSettingsForm() {
     usageRetentionDays: 31,
     opsEventRetentionDays: 30,
     auditRetentionDays: 90,
+
+    accountAutoFreezeEnabled: false,
+    accountAutoFreezeThreshold: null as number | null,
+    accountAutoFreezeWindowSeconds: null as number | null,
+    accountAutoFreezeDurationSeconds: null as number | null,
+    accountAutoFreezeProbeEnabled: true,
+    accountAutoFreezeProbeModel: '',
+    accountAutoFreezeAdaptiveConcurrency: true,
   })
 
-  function numericModel(key: 'refreshMarginSeconds' | 'refreshConcurrency' | 'maxConcurrentPerAccount' | 'requestIntervalMs' | 'maxWaitingPerKey' | 'maxWaitingPerAccount' | 'concurrencyWaitTimeoutSeconds') {
+  function numericModel(key: 'refreshMarginSeconds' | 'refreshConcurrency' | 'maxConcurrentPerAccount' | 'requestIntervalMs' | 'maxWaitingPerKey' | 'maxWaitingPerAccount' | 'concurrencyWaitTimeoutSeconds' | 'accountAutoFreezeThreshold' | 'accountAutoFreezeWindowSeconds' | 'accountAutoFreezeDurationSeconds') {
     return computed({
       get: () => (form[key] === null ? '' : String(form[key])),
       set: (value: string) => {
@@ -53,6 +66,9 @@ export function useSettingsForm() {
   const maxWaitingPerKeyValue = numericModel('maxWaitingPerKey')
   const maxWaitingPerAccountValue = numericModel('maxWaitingPerAccount')
   const concurrencyWaitTimeoutSecondsValue = numericModel('concurrencyWaitTimeoutSeconds')
+  const accountAutoFreezeThresholdValue = numericModel('accountAutoFreezeThreshold')
+  const accountAutoFreezeWindowSecondsValue = numericModel('accountAutoFreezeWindowSeconds')
+  const accountAutoFreezeDurationSecondsValue = numericModel('accountAutoFreezeDurationSeconds')
 
   const minCodexDesktopVersionError = computed(() => versionError(form.minCodexDesktopVersion))
   const minCodexCliVersionError = computed(() => versionError(form.minCodexCliVersion))
@@ -63,6 +79,9 @@ export function useSettingsForm() {
   }
 
   function applySettings(data: Awaited<ReturnType<typeof getSettings>>) {
+    savedRequestLocation.value = { ...data.requestLocation }
+    form.requestLocationEnabled = data.requestLocationEnabled
+    form.requestLocation = { ...data.requestLocation }
     form.refreshMarginSeconds = data.refreshMarginSeconds
     form.refreshConcurrency = data.refreshConcurrency
     form.maxConcurrentPerAccount = data.maxConcurrentPerAccount
@@ -77,6 +96,13 @@ export function useSettingsForm() {
     form.usageRetentionDays = data.usageRetentionDays
     form.opsEventRetentionDays = data.opsEventRetentionDays
     form.auditRetentionDays = data.auditRetentionDays
+    form.accountAutoFreezeEnabled = data.accountAutoFreezeEnabled
+    form.accountAutoFreezeThreshold = data.accountAutoFreezeThreshold
+    form.accountAutoFreezeWindowSeconds = data.accountAutoFreezeWindowSeconds
+    form.accountAutoFreezeDurationSeconds = data.accountAutoFreezeDurationSeconds
+    form.accountAutoFreezeProbeEnabled = data.accountAutoFreezeProbeEnabled
+    form.accountAutoFreezeProbeModel = data.accountAutoFreezeProbeModel ?? ''
+    form.accountAutoFreezeAdaptiveConcurrency = data.accountAutoFreezeAdaptiveConcurrency
     mappings.value = Object.entries(data.modelMappings || {}).map(([requestedModel, upstreamModel]) => ({
       requestedModel,
       upstreamModel: String(upstreamModel),
@@ -130,9 +156,9 @@ export function useSettingsForm() {
   }
 
   async function saveSettings() {
-    if (saving.value || loading.value)
+    if (saving.value || loading.value || !savedRequestLocation.value)
       return
-    const { refreshMarginSeconds, refreshConcurrency, maxConcurrentPerAccount, requestIntervalMs, rotationStrategy, maxWaitingPerKey, maxWaitingPerAccount, concurrencyWaitTimeoutSeconds } = form
+    const { refreshMarginSeconds, refreshConcurrency, maxConcurrentPerAccount, requestIntervalMs, rotationStrategy, maxWaitingPerKey, maxWaitingPerAccount, concurrencyWaitTimeoutSeconds, accountAutoFreezeThreshold, accountAutoFreezeWindowSeconds, accountAutoFreezeDurationSeconds } = form
     if (refreshMarginSeconds === null || refreshConcurrency === null || maxConcurrentPerAccount === null || requestIntervalMs === null || !rotationStrategy || maxWaitingPerKey === null || maxWaitingPerAccount === null || concurrencyWaitTimeoutSeconds === null) {
       toast.warning('请完整填写运行参数和调度策略')
       return
@@ -146,8 +172,34 @@ export function useSettingsForm() {
       toast.warning('请修正客户端最低版本格式')
       return
     }
+    // 关闭时保留已保存的自定义值，未完成的草稿不阻止停止覆盖。
+    const requestLocation = form.requestLocationEnabled
+      ? normalizeRequestLocation(form.requestLocation)
+      : savedRequestLocation.value
+    const locationError = requestLocationError(requestLocation)
+    if (locationError) {
+      toast.warning(locationError)
+      return
+    }
+    if (accountAutoFreezeThreshold === null || accountAutoFreezeWindowSeconds === null || accountAutoFreezeDurationSeconds === null) {
+      toast.warning('请完整填写账号自动冻结参数')
+      return
+    }
+    if (!Number.isInteger(accountAutoFreezeThreshold) || accountAutoFreezeThreshold < 2 || accountAutoFreezeThreshold > 1000
+      || !Number.isInteger(accountAutoFreezeWindowSeconds) || accountAutoFreezeWindowSeconds < 60 || accountAutoFreezeWindowSeconds > 3600
+      || !Number.isInteger(accountAutoFreezeDurationSeconds) || accountAutoFreezeDurationSeconds < 300 || accountAutoFreezeDurationSeconds > 604800) {
+      toast.warning('自动冻结阈值应为 2～1000，统计窗口为 60～3600 秒，冻结时长为 300～604800 秒')
+      return
+    }
+    const probeModel = form.accountAutoFreezeProbeModel.trim()
+    if (probeModel && (probeModel.length > 128 || probeModel !== probeModel.trim())) {
+      toast.warning('探测模型名称不能超过 128 个字符')
+      return
+    }
     await saveAction.run(async () => {
       const result = await updateSettings({
+        requestLocationEnabled: form.requestLocationEnabled,
+        requestLocation,
         modelMappings: mappingPayload(),
         refreshMarginSeconds,
         refreshConcurrency,
@@ -162,6 +214,13 @@ export function useSettingsForm() {
         usageRetentionDays: form.usageRetentionDays,
         opsEventRetentionDays: form.opsEventRetentionDays,
         auditRetentionDays: form.auditRetentionDays,
+        accountAutoFreezeEnabled: form.accountAutoFreezeEnabled,
+        accountAutoFreezeThreshold,
+        accountAutoFreezeWindowSeconds,
+        accountAutoFreezeDurationSeconds,
+        accountAutoFreezeProbeEnabled: form.accountAutoFreezeProbeEnabled,
+        accountAutoFreezeProbeModel: probeModel || null,
+        accountAutoFreezeAdaptiveConcurrency: form.accountAutoFreezeAdaptiveConcurrency,
       })
       applySettings(result)
       toast.success('设置已保存')
@@ -189,6 +248,9 @@ export function useSettingsForm() {
     maxWaitingPerKeyValue,
     maxWaitingPerAccountValue,
     concurrencyWaitTimeoutSecondsValue,
+    accountAutoFreezeThresholdValue,
+    accountAutoFreezeWindowSecondsValue,
+    accountAutoFreezeDurationSecondsValue,
     minCodexDesktopVersionError,
     minCodexCliVersionError,
     saveSettings,

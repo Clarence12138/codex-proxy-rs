@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { OutboundProxyRecord } from '@/api'
-import { LockKeyhole, Pencil, Plus, Search, Trash2, Users, Wifi } from '@lucide/vue'
+import { LockKeyhole, MapPin, Pencil, Plus, Search, Trash2, Users, Wifi } from '@lucide/vue'
 import { watchDebounced } from '@vueuse/core'
 import { computed, onMounted, reactive, ref, shallowRef, watch } from 'vue'
 import { createProxy, deleteProxy, getProxies, probeProxy, testProxy, updateProxy } from '@/api'
@@ -17,6 +17,7 @@ import { toast } from '@/components/base/BaseToast'
 import { useAsyncAction } from '@/composables/useAsyncAction'
 import { usePagedQuery } from '@/composables/usePagedQuery'
 import { formatDateTime } from '@/utils/date'
+import { normalizeRequestLocation, requestLocationError } from '@/utils/request-location'
 import ProxyAccountsModal from './components/ProxyAccountsModal.vue'
 import ProxyFormModal from './components/ProxyFormModal.vue'
 
@@ -28,7 +29,8 @@ const query = usePagedQuery({
 const { items: proxies, loading } = query
 const pagination = computed(() => ({ currentPage: query.page.value, pageSize: query.pageSize.value, total: query.total.value }))
 const columns = defineTableColumns<OutboundProxyRecord>([
-  { key: 'identity', label: '代理', kind: 'identity', size: 'xl' },
+  { key: 'name', label: '代理名称', kind: 'identity', size: 'lg' },
+  { key: 'address', label: '代理地址', kind: 'identity', size: 'xl' },
   { key: 'exitIp', label: '出口 IP', kind: 'custom' },
   { key: 'latency', label: '耗时', kind: 'custom', size: 'sm' },
   { key: 'accounts', label: '关联账号', kind: 'custom', size: 'sm' },
@@ -37,7 +39,7 @@ const columns = defineTableColumns<OutboundProxyRecord>([
 ])
 const showForm = shallowRef(false)
 const editing = shallowRef<OutboundProxyRecord | null>(null)
-const form = reactive({ name: '', proxyUrl: '' })
+const form = reactive({ name: '', proxyUrl: '', customLocation: false, location: { country: '', region: '', city: '', timezone: '' } })
 const saveAction = useAsyncAction()
 const { loading: saving } = saveAction
 const deleteAction = useAsyncAction()
@@ -54,6 +56,8 @@ function openForm(proxy: OutboundProxyRecord | null = null) {
   editing.value = proxy
   form.name = proxy?.name ?? ''
   form.proxyUrl = ''
+  form.customLocation = proxy?.location != null
+  form.location = proxy?.location ? { ...proxy.location } : { country: '', region: '', city: '', timezone: '' }
   showForm.value = true
 }
 
@@ -106,11 +110,19 @@ async function save() {
     toast.warning('请填写代理名称和连接地址')
     return
   }
+  const location = form.customLocation
+    ? normalizeRequestLocation(form.location)
+    : null
+  const locationError = location ? requestLocationError(location) : ''
+  if (locationError) {
+    toast.warning(locationError)
+    return
+  }
   await saveAction.run(async () => {
     // 编辑时留空保留已保存的地址和认证，不能用脱敏地址覆盖原连接。
     await (editing.value
-      ? updateProxy({ id: editing.value.id, revision: editing.value.revision, name, proxyUrl: proxyUrl || undefined })
-      : createProxy({ name, proxyUrl }))
+      ? updateProxy({ id: editing.value.id, revision: editing.value.revision, name, proxyUrl: proxyUrl || undefined, location })
+      : createProxy({ name, proxyUrl, location }))
     showForm.value = false
     form.proxyUrl = ''
     toast.success('代理已保存')
@@ -184,12 +196,18 @@ onMounted(() => void query.execute())
       <template #body>
         <div class="flex h-full min-h-0 flex-col">
           <BaseTable class="min-h-0 flex-1" :columns="columns" :rows="proxies" :loading="loading" :empty-text="search.trim() ? '没有找到匹配的代理，请尝试其他名称' : '暂无代理，请点击新增代理添加'">
-            <template #identity="{ row }">
+            <template #name="{ row }">
+              <strong class="block truncate text-cp text-cp-text" :title="row.name">{{ row.name }}</strong>
+            </template>
+            <template #address="{ row }">
               <div class="grid min-w-0 gap-1">
-                <strong class="truncate text-cp text-cp-text" :title="row.name">{{ row.name }}</strong>
                 <span class="flex min-w-0 items-center gap-1 text-cp-xs font-emphasis text-cp-text-quaternary">
                   <LockKeyhole v-if="row.hasAuthentication" class="size-3 shrink-0" aria-label="已保存代理认证" />
                   <span class="truncate font-mono" :title="row.endpoint">{{ row.endpoint }}</span>
+                </span>
+                <span v-if="row.location" class="flex min-w-0 items-center gap-1 text-cp-xs text-cp-text-secondary" :title="`${row.location.country} / ${row.location.region} / ${row.location.city} · ${row.location.timezone}`">
+                  <MapPin class="size-3 shrink-0" aria-hidden="true" />
+                  <span class="truncate">{{ row.location.city }} · {{ row.location.timezone }}</span>
                 </span>
               </div>
             </template>
@@ -236,6 +254,8 @@ onMounted(() => void query.execute())
       v-model="showForm"
       v-model:name="form.name"
       v-model:proxy-url="form.proxyUrl"
+      v-model:custom-location="form.customLocation"
+      v-model:location="form.location"
       :proxy="editing"
       :saving="saving"
       :testing="testingForm"

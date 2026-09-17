@@ -10,14 +10,15 @@ use gateway_core::{
     routing::ProviderKind,
     runtime::SnapshotControl,
     task::{
-        DaemonRestartPolicy, WorkerContribution, WorkerId, WorkerKind, WorkerRegistration,
-        WorkerRunnable,
+        DaemonRestartPolicy, WorkerContribution, WorkerId, WorkerKind, WorkerLeaseRequest,
+        WorkerRegistration, WorkerRunnable, WorkerSchedule,
     },
 };
 use secrecy::{ExposeSecret as _, SecretString};
 use serde::Deserialize;
 
 pub mod backup;
+pub mod freeze_recovery;
 pub mod model;
 pub mod ports;
 mod use_case;
@@ -31,6 +32,7 @@ pub use use_case::{
     backup::BackupService,
     client_distribution::ClientDistributionService,
     client_keys::ClientKeyService,
+    import_tasks::ImportTasksService,
     observability::{ObservabilityService, health_timeline_at},
     openai::OpenAiService,
     proxies::ProxiesService,
@@ -103,7 +105,6 @@ impl fmt::Debug for InitialAdminPassword {
 
 /// 管理控制面的启动配置。
 #[derive(Clone, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
 pub struct AdminConfig {
     pub session_ttl_minutes: u64,
     pub default_username: String,
@@ -112,7 +113,6 @@ pub struct AdminConfig {
 
 /// Client 登录域的通用启动配置。
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
 pub struct ClientConfig {
     pub session_ttl_minutes: u64,
 }
@@ -203,12 +203,24 @@ pub struct AdminServices {
     openai: Arc<dyn OpenAiService>,
     xai: Arc<dyn XaiService>,
     backups: Arc<dyn BackupService>,
+    import_tasks: Arc<dyn ImportTasksService>,
 }
 
 impl AdminServices {
     #[must_use]
+    pub fn import_tasks(&self) -> &dyn ImportTasksService {
+        self.import_tasks.as_ref()
+    }
+
+    #[must_use]
     pub fn key_usage(&self) -> &dyn KeyUsageService {
         self.key_usage.as_ref()
+    }
+
+    /// 取得账号服务的共享句柄；后台编排（冻结恢复 worker）需要持有 Arc。
+    #[must_use]
+    pub fn accounts_handle(&self) -> Arc<dyn AccountsService> {
+        Arc::clone(&self.accounts)
     }
 
     #[must_use]
@@ -291,7 +303,7 @@ impl AdminBundle {
         self.services.clone()
     }
 
-    /// 取出 Backup Worker 贡献；只能调用一次，与其它 Bundle 的贡献一并交给 Host。
+    /// 取出 Admin Worker 贡献；只能调用一次，与其它 Bundle 的贡献一并交给 Host。
     pub fn take_worker_contributions(&mut self) -> Vec<WorkerContribution> {
         std::mem::take(&mut self.worker_contributions)
     }
@@ -376,6 +388,21 @@ pub async fn initialize(
         store.client_keys(),
         store.observability(),
     ));
+    let openai = Arc::new(DefaultOpenAiService::new(
+        openai,
+        store.accounts(),
+        store.proxies(),
+        snapshot.clone(),
+    ));
+    let xai = Arc::new(DefaultXaiService::new(
+        xai,
+        store.accounts(),
+        store.proxies(),
+        snapshot.clone(),
+    ));
+    let import_tasks =
+        use_case::import_tasks::DefaultImportTasksService::new(openai.clone(), xai.clone());
+    let import_task = use_case::import_tasks::ImportTaskWorker(import_tasks.clone());
     let services = AdminServices {
         key_usage,
         proxies: Arc::new(use_case::proxies::DefaultProxiesService::new(
@@ -385,7 +412,7 @@ pub async fn initialize(
             registry.clone(),
         )),
         auth,
-        accounts,
+        accounts: accounts.clone(),
         account_groups: Arc::new(DefaultAccountGroupService::new(
             store.account_groups(),
             store.account_runtime(),
@@ -407,21 +434,33 @@ pub async fn initialize(
             snapshot.clone(),
         )),
         system: Arc::new(DefaultSystemService::new(system)),
-        openai: Arc::new(DefaultOpenAiService::new(
-            openai,
-            store.accounts(),
-            store.proxies(),
-            snapshot.clone(),
-        )),
-        xai: Arc::new(DefaultXaiService::new(
-            xai,
-            store.accounts(),
-            store.proxies(),
-            snapshot.clone(),
-        )),
+        openai,
+        xai,
+        import_tasks,
         backups,
     };
-    let worker_contributions = backup_worker_contribution(backup_task)?;
+    let freeze_recovery =
+        freeze_recovery::FreezeRecoveryTask::new(freeze_recovery::FreezeRecoveryDeps {
+            accounts: Arc::clone(&accounts) as Arc<dyn AccountsService>,
+            store: store.accounts(),
+            runtime: store.account_runtime(),
+            settings: store.settings(),
+        });
+    let mut worker_contributions = backup_worker_contribution(backup_task)?;
+    let id = WorkerId::try_new(WorkerKind::AccountImport, "admin")
+        .map_err(|_| AdminError::internal("导入 Worker ID 不合法"))?;
+    let restart = DaemonRestartPolicy::try_new(Duration::from_secs(1), Duration::from_secs(60))
+        .map_err(|_| AdminError::internal("导入 Worker 重启策略不合法"))?;
+    let registration = WorkerRegistration::try_new(
+        id,
+        WorkerRunnable::Daemon {
+            restart,
+            task: Box::new(import_task),
+        },
+    )
+    .map_err(|_| AdminError::internal("导入 Worker 注册信息不合法"))?;
+    worker_contributions.push(WorkerContribution::Registration(registration));
+    worker_contributions.extend(freeze_recovery_worker_contribution(freeze_recovery)?);
     Ok(AdminBundle {
         services,
         billing: Arc::new(registry),
@@ -445,6 +484,37 @@ fn backup_worker_contribution(
         },
     )
     .map_err(|_| AdminError::internal("备份 Worker 注册信息不合法"))?;
+    Ok(vec![WorkerContribution::Registration(registration)])
+}
+
+/// 冻结恢复 Worker 注册：按固定周期扫描活跃冻结，owner 固定。
+fn freeze_recovery_worker_contribution(
+    task: freeze_recovery::FreezeRecoveryTask,
+) -> Result<Vec<WorkerContribution>, AdminError> {
+    let id = WorkerId::try_new(
+        WorkerKind::AccountFreezeRecovery,
+        freeze_recovery::FREEZE_RECOVERY_WORKER_OWNER,
+    )
+    .map_err(|_| AdminError::internal("冻结恢复 Worker ID 不合法"))?;
+    let schedule = WorkerSchedule::try_new(
+        freeze_recovery::FREEZE_RECOVERY_INTERVAL,
+        freeze_recovery::WORKER_INITIAL_BACKOFF,
+        freeze_recovery::WORKER_MAXIMUM_BACKOFF,
+        freeze_recovery::WORKER_LEASE_TTL,
+        freeze_recovery::WORKER_LEASE_RENEWAL,
+    )
+    .map_err(|_| AdminError::internal("冻结恢复 Worker 调度配置不合法"))?;
+    let lease = WorkerLeaseRequest::try_new(id.clone(), freeze_recovery::WORKER_LEASE_TTL)
+        .map_err(|_| AdminError::internal("冻结恢复 Worker 租约配置不合法"))?;
+    let registration = WorkerRegistration::try_new(
+        id,
+        WorkerRunnable::Scheduled {
+            schedule,
+            lease: Some(lease),
+            task: Box::new(task),
+        },
+    )
+    .map_err(|_| AdminError::internal("冻结恢复 Worker 注册信息不合法"))?;
     Ok(vec![WorkerContribution::Registration(registration)])
 }
 

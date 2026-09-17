@@ -583,6 +583,72 @@ impl AccountErrorReason {
     }
 }
 
+/// 账号冷却的原因与恢复方式。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AccountCooldownKind {
+    /// 上游 429 临时限流；默认类别，兼容升级前未标记的存量 key。
+    #[default]
+    RateLimit,
+    /// 容量类错误高频触发后由熔断策略写入的自动冻结。
+    CapacityFreeze,
+    /// 到期后仍阻止调度，必须由恢复探测成功或管理员恢复解除。
+    CapacityFreezeProbe,
+}
+
+impl AccountCooldownKind {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::RateLimit => "rate_limit",
+            Self::CapacityFreeze => "capacity_freeze",
+            Self::CapacityFreezeProbe => "capacity_freeze_probe",
+        }
+    }
+
+    #[must_use]
+    pub const fn is_capacity_freeze(self) -> bool {
+        matches!(self, Self::CapacityFreeze | Self::CapacityFreezeProbe)
+    }
+
+    #[must_use]
+    pub const fn requires_probe(self) -> bool {
+        matches!(self, Self::CapacityFreezeProbe)
+    }
+
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "rate_limit" => Some(Self::RateLimit),
+            "capacity_freeze" => Some(Self::CapacityFreeze),
+            "capacity_freeze_probe" => Some(Self::CapacityFreezeProbe),
+            _ => None,
+        }
+    }
+}
+
+/// 账号级冷却投影；探测冻结的 until 是下次探测时间，不是自动放行时间。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AccountCooldown {
+    pub until: SystemTime,
+    pub kind: AccountCooldownKind,
+}
+
+impl AccountCooldown {
+    #[must_use]
+    pub fn is_active(self, now: SystemTime) -> bool {
+        self.kind.requires_probe() || self.until > now
+    }
+}
+
+impl From<SystemTime> for AccountCooldown {
+    fn from(until: SystemTime) -> Self {
+        Self {
+            until,
+            kind: AccountCooldownKind::RateLimit,
+        }
+    }
+}
+
 /// 唯一状态解析器的完整输入事实。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AccountStatusFacts {
@@ -590,7 +656,7 @@ pub struct AccountStatusFacts {
     pub credential_state: CredentialState,
     pub access_token_expires_at: Option<SystemTime>,
     pub quota: QuotaState,
-    pub rate_limited_until: Option<SystemTime>,
+    pub cooldown: Option<AccountCooldown>,
     pub last_error_reason: Option<AccountErrorReason>,
     pub last_error_message: Option<String>,
 }
@@ -601,8 +667,8 @@ pub struct AccountStatusProjection {
     pub status: AccountStatus,
     pub error_reason: Option<AccountErrorReason>,
     pub error_message: Option<String>,
-    /// 仅 `rate_limited` 状态携带仍有效的运行时冷却截止时间。
-    pub rate_limited_until: Option<SystemTime>,
+    /// 仅 `rate_limited` 状态携带仍有效的运行时冷却事实。
+    pub cooldown: Option<AccountCooldown>,
 }
 
 /// 从独立事实派生唯一、互斥的对外状态。
@@ -625,21 +691,21 @@ pub fn resolve_account_status(
             status: AccountStatus::Error,
             error_reason: Some(facts.last_error_reason.unwrap_or(default_reason)),
             error_message: facts.last_error_message.clone(),
-            rate_limited_until: None,
+            cooldown: None,
         };
     }
     if facts.quota.is_exhausted() {
         return status_projection(AccountStatus::QuotaExhausted);
     }
     if facts
-        .rate_limited_until
-        .is_some_and(|rate_limited_until| rate_limited_until > now)
+        .cooldown
+        .is_some_and(|cooldown| cooldown.is_active(now))
     {
         return AccountStatusProjection {
             status: AccountStatus::RateLimited,
             error_reason: None,
             error_message: None,
-            rate_limited_until: facts.rate_limited_until,
+            cooldown: facts.cooldown,
         };
     }
     status_projection(AccountStatus::Normal)
@@ -650,7 +716,7 @@ const fn status_projection(status: AccountStatus) -> AccountStatusProjection {
         status,
         error_reason: None,
         error_message: None,
-        rate_limited_until: None,
+        cooldown: None,
     }
 }
 
@@ -678,6 +744,7 @@ pub struct ProviderAccount {
     next_refresh_at: Option<SystemTime>,
     has_refresh_token: bool,
     outbound_proxy: Option<super::OutboundProxy>,
+    request_location: Option<super::RequestLocation>,
 }
 
 impl ProviderAccount {
@@ -714,6 +781,7 @@ impl ProviderAccount {
             next_refresh_at: None,
             has_refresh_token: false,
             outbound_proxy: None,
+            request_location: None,
         }
     }
 
@@ -743,6 +811,8 @@ impl ProviderAccount {
 
     #[must_use]
     pub fn with_outbound_proxy(mut self, proxy: Option<super::OutboundProxy>) -> Self {
+        // 出口变化后不能沿用旧出口的位置；存储投影应在绑定出口后设置位置。
+        self.request_location = None;
         self.outbound_proxy = proxy;
         self
     }
@@ -750,6 +820,17 @@ impl ProviderAccount {
     #[must_use]
     pub const fn outbound_proxy(&self) -> Option<&super::OutboundProxy> {
         self.outbound_proxy.as_ref()
+    }
+
+    #[must_use]
+    pub fn with_request_location(mut self, location: Option<super::RequestLocation>) -> Self {
+        self.request_location = self.outbound_proxy.as_ref().and(location);
+        self
+    }
+
+    #[must_use]
+    pub const fn request_location(&self) -> Option<&super::RequestLocation> {
+        self.request_location.as_ref()
     }
 
     #[must_use]
@@ -762,11 +843,8 @@ impl ProviderAccount {
         last_error_message: Option<String>,
     ) -> Self {
         self.enabled = enabled;
-        self.credential_state = if self.upstream_user_id.is_some() {
-            credential_state
-        } else {
-            CredentialState::Unknown
-        };
+        // 凭据是否可用由 Provider 判断；API Key 等认证不要求上游用户身份。
+        self.credential_state = credential_state;
         self.quota = quota;
         self.last_error_reason = last_error_reason;
         self.last_error_message = last_error_message;
@@ -908,7 +986,7 @@ impl ProviderAccount {
     pub fn status_projection(
         &self,
         now: SystemTime,
-        rate_limited_until: Option<SystemTime>,
+        cooldown: Option<AccountCooldown>,
     ) -> AccountStatusProjection {
         resolve_account_status(
             &AccountStatusFacts {
@@ -916,7 +994,7 @@ impl ProviderAccount {
                 credential_state: self.credential_state,
                 access_token_expires_at: self.access_token_expires_at,
                 quota: self.quota,
-                rate_limited_until,
+                cooldown,
                 last_error_reason: self.last_error_reason,
                 last_error_message: self.last_error_message.clone(),
             },
@@ -1068,6 +1146,7 @@ pub struct CredentialCasUpdateParts {
     pub account_id: ProviderAccountId,
     pub expected_revision: CredentialRevision,
     pub profile: ProviderAccountUpdate,
+    pub preserve_profile: bool,
     pub credential: PlaintextCredential,
     pub has_refresh_token: bool,
     pub access_token_expires_at: Option<SystemTime>,
@@ -1081,6 +1160,7 @@ pub struct CredentialCasUpdate {
     account_id: ProviderAccountId,
     expected_revision: CredentialRevision,
     profile: ProviderAccountUpdate,
+    preserve_profile: bool,
     credential: PlaintextCredential,
     has_refresh_token: bool,
     access_token_expires_at: Option<SystemTime>,
@@ -1095,6 +1175,7 @@ impl fmt::Debug for CredentialCasUpdate {
             .field("account_id", &self.account_id)
             .field("expected_revision", &self.expected_revision)
             .field("profile", &self.profile)
+            .field("preserve_profile", &self.preserve_profile)
             .field("credential", &self.credential)
             .field("has_refresh_token", &self.has_refresh_token)
             .field("access_token_expires_at", &self.access_token_expires_at)
@@ -1129,12 +1210,20 @@ impl CredentialCasUpdate {
             account_id,
             expected_revision,
             profile,
+            preserve_profile: false,
             credential,
             has_refresh_token,
             access_token_expires_at,
             next_refresh_at,
             account_state: None,
         })
+    }
+
+    /// 仅轮换凭据，保留提交时的账号资料，避免覆盖并发额度观测更新的套餐。
+    #[must_use]
+    pub const fn preserving_profile(mut self) -> Self {
+        self.preserve_profile = true;
+        self
     }
 
     /// 将刷新调度与账号错误事实放入同一个 revision CAS。
@@ -1202,6 +1291,7 @@ impl CredentialCasUpdate {
             account_id: self.account_id,
             expected_revision: self.expected_revision,
             profile: self.profile,
+            preserve_profile: self.preserve_profile,
             credential: self.credential,
             has_refresh_token: self.has_refresh_token,
             access_token_expires_at: self.access_token_expires_at,
@@ -1224,6 +1314,8 @@ pub struct QuotaObservation {
     pub account_id: ProviderAccountId,
     pub expected_revision: CredentialRevision,
     pub quota: OpaqueProviderData,
+    /// Provider 确认的账号套餐，与额度原子写入；`None` 保留已有套餐。
+    pub plan_type: Option<String>,
     /// Provider 原始 quota document 的观察时间；不代表访问结论发生变化。
     pub observed_at: SystemTime,
     /// Provider 已从私有 JSON 归一化出的额度访问事实。
@@ -1237,6 +1329,7 @@ impl fmt::Debug for QuotaObservation {
             .field("account_id", &self.account_id)
             .field("expected_revision", &self.expected_revision)
             .field("quota", &self.quota)
+            .field("plan_type", &self.plan_type)
             .field("observed_at", &self.observed_at)
             .field("state", &self.state)
             .finish()

@@ -37,6 +37,7 @@ export interface AccountStatusPresentation {
   errorText: string | null
   nextRefreshDisplay: string | null
   rateLimitRecovery: string | null
+  recoveryTimeLabel: string
   triggerLabel: string
 }
 
@@ -45,6 +46,8 @@ export interface AccountStatusPresentationInput {
   errorReason: AccountErrorReason | null
   errorMessage: string | null
   rateLimitedUntil: string | null
+  rateLimitReason: 'upstream_rate_limit' | 'capacity_freeze' | null
+  recoveryProbeRequired: boolean
   nextRefreshAt: string | null
   now: number
 }
@@ -146,19 +149,32 @@ export function resolveAccountStatusPresentation(
     && nextRefreshTimestamp !== null
     && nextRefreshTimestamp > input.now
   const mode: AccountStatusDisplayMode = isBackoff ? 'refresh_backoff' : input.status
-  const definition = displayDefinitions[mode]
+  const isFreeze = mode === 'rate_limited' && input.rateLimitReason === 'capacity_freeze'
+  const waitsForProbe = isFreeze && input.recoveryProbeRequired
+  const definition = isFreeze
+    ? {
+        ...displayDefinitions.rate_limited,
+        description: '容量类请求失败累计达到阈值，系统已暂停该账号的调度。',
+        recoveryHint: waitsForProbe
+          ? '冷却结束后进行恢复探测，成功后恢复调度；也可手动恢复账号。'
+          : '冷却结束后自动恢复调度，也可手动恢复账号。',
+      }
+    : displayDefinitions[mode]
   const nextRefreshDisplay = isBackoff ? formatDateTime(nextRefreshTimestamp) : null
   const reasonLabel = input.errorReason ? errorReasonLabels[input.errorReason] : null
   const title = definition.title ?? reasonLabel ?? definition.label
-  const rateLimitRecovery = input.status === 'rate_limited'
-    ? remainingTime(input.rateLimitedUntil, input.now)
+  const until = input.rateLimitedUntil ? parseTimestamp(input.rateLimitedUntil) : null
+  const rateLimitRecovery = mode === 'rate_limited'
+    ? waitsForProbe && until !== null && until <= input.now
+      ? '等待探测成功'
+      : remainingTime(input.rateLimitedUntil, input.now)
     : null
   const recoveryHint = mode !== 'refresh_backoff'
     && mode !== 'rate_limited'
     && input.errorReason
     ? errorRecoveryHints[input.errorReason]
     : definition.recoveryHint
-  const hasDetail = input.status === 'error' || rateLimitRecovery !== null || isBackoff
+  const hasDetail = input.status === 'error' || mode === 'rate_limited' || isBackoff
   const retry = nextRefreshDisplay ? ` 下次尝试：${nextRefreshDisplay}。` : ''
   const triggerLabel = `${title}。${definition.description}${retry} 点击或聚焦查看详情。`
 
@@ -174,6 +190,7 @@ export function resolveAccountStatusPresentation(
     errorText: input.errorMessage || null,
     nextRefreshDisplay,
     rateLimitRecovery,
+    recoveryTimeLabel: waitsForProbe ? '恢复探测' : '预计恢复',
     triggerLabel,
   }
 }

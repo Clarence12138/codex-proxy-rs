@@ -1,0 +1,1729 @@
+{
+  "source": {
+    "desktop_version": "26.908.40834",
+    "desktop_build": "8881",
+    "core_version": "0.154.0-alpha.6.2",
+    "core_sha256": "ecad78dbf98adb89ec475edac86630406cbe59d9f3070b17d88065f136b94bcb",
+    "asar_sha256": "bb40cd8811887363104a19291346af9595632e0e956316a1086b274fb8e3eafc",
+    "core_source_commit": "b5bffd3ec4db487e7e3dec59663875b0ef7b72ca",
+    "artifact_url": "https://persistent.oaistatic.com/codex-app-prod/ChatGPT-darwin-arm64-26.908.40834.zip",
+    "generator": "capture_desktop.py",
+    "evidence": "bundled app-server, not full GUI App",
+    "isolation": "fresh HOME/CODEX_HOME, explicit openai_base_url and chatgpt_base_url, loopback-only sandbox and rejecting proxy",
+    "test_overrides": "synthetic external ChatGPT tokens, analytics/feedback disabled, requestAttestation false, synthetic instructions, empty local model catalog; SSE via intentional WS 426",
+    "normalization": "decompressed HTTP body; generated workspace/home paths, host port and WebSocket key normalized; generated UUIDs retained"
+  },
+  "profile": {
+    "originator": "Codex Desktop",
+    "codex_version": "0.154.0-alpha.6.2",
+    "desktop_version": "26.908.40834",
+    "desktop_build": "8881",
+    "os_type": "Mac OS",
+    "os_version": "27.0.0",
+    "arch": "arm64",
+    "terminal": "unknown",
+    "residency": null,
+    "location": null,
+    "verified_at": "2026-09-16T07:59:17.659124+00:00"
+  },
+  "samples": [
+    {
+      "name": "desktop-bundled-core-sse",
+      "api": "openai-codex-responses",
+      "transport": "sse",
+      "prompt_kind": "desktop",
+      "rejected_auxiliary_destinations": [
+        "api.github.com:443",
+        "chatgpt.com:443",
+        "github.com:443"
+      ],
+      "turns": [
+        {
+          "headers": [
+            [
+              "version",
+              "0.154.0-alpha.6.2"
+            ],
+            [
+              "x-codex-beta-features",
+              "remote_compaction_v2"
+            ],
+            [
+              "x-codex-window-id",
+              "01a0a93a-2971-7681-bd32-956efada378c:0"
+            ],
+            [
+              "x-codex-turn-metadata",
+              "{\"installation_id\":\"2163d1e6-db73-4862-8fbd-c4088c2ff0a1\",\"session_id\":\"01a0a93a-2971-7681-bd32-956efada378c\",\"thread_id\":\"01a0a93a-2971-7681-bd32-956efada378c\",\"agent_name\":\"/root\",\"turn_id\":\"01a0a93a-2983-7303-bd65-f7f09fac9bc3\",\"window_id\":\"01a0a93a-2971-7681-bd32-956efada378c:0\",\"window_number\":0,\"context_window_id\":\"01a0a93a-2971-7681-bd32-957b9625bbe6\",\"request_kind\":\"turn\",\"root_turn_id\":\"01a0a93a-2983-7303-bd65-f7f09fac9bc3\",\"sandbox\":\"seatbelt\",\"sandbox_mode\":\"read-only\",\"auto_review_enabled\":false,\"node_repl_auto_review_required\":false,\"node_repl_disabled\":false,\"turn_started_at_unix_ms\":1789545556356}"
+            ],
+            [
+              "x-codex-routing-hint",
+              "model=gpt-5.5"
+            ],
+            [
+              "x-client-request-id",
+              "01a0a93a-2971-7681-bd32-956efada378c"
+            ],
+            [
+              "session-id",
+              "01a0a93a-2971-7681-bd32-956efada378c"
+            ],
+            [
+              "thread-id",
+              "01a0a93a-2971-7681-bd32-956efada378c"
+            ],
+            [
+              "accept",
+              "text/event-stream"
+            ],
+            [
+              "content-encoding",
+              "zstd"
+            ],
+            [
+              "content-type",
+              "application/json"
+            ],
+            [
+              "authorization",
+              "Bearer eyJhbGciOiJub25lIn0.eyJzdWIiOiAic3ludGhldGljLXVzZXIiLCAiZXhwIjogNDEwMjQ0NDgwMCwgImh0dHBzOi8vYXBpLm9wZW5haS5jb20vYXV0aCI6IHsiY2hhdGdwdF9hY2NvdW50X2lkIjogInN5bnRoZXRpYy1hY2NvdW50IiwgImNoYXRncHRfcGxhbl90eXBlIjogInBsdXMiLCAiY2hhdGdwdF91c2VyX2lkIjogInN5bnRoZXRpYy11c2VyIn19.synthetic"
+            ],
+            [
+              "chatgpt-account-id",
+              "synthetic-account"
+            ],
+            [
+              "originator",
+              "Codex Desktop"
+            ],
+            [
+              "user-agent",
+              "Codex Desktop/0.154.0-alpha.6.2 (Mac OS 27.0.0; arm64) unknown (Codex Desktop; 26.908.40834)"
+            ],
+            [
+              "host",
+              "127.0.0.1:1"
+            ],
+            [
+              "content-length",
+              "7881"
+            ]
+          ],
+          "body": {
+            "model": "gpt-5.5",
+            "instructions": "Synthetic coding assistant.",
+            "input": [
+              {
+                "type": "message",
+                "id": "msg_01a0a93a-29e1-77a3-8f8a-bfbbccad56c9",
+                "role": "developer",
+                "content": [
+                  {
+                    "type": "input_text",
+                    "text": "Synthetic audit; use no tools."
+                  },
+                  {
+                    "type": "input_text",
+                    "text": "<skills_instructions>\n## Skills\nA skill is a set of local instructions to follow that is stored in a `SKILL.md` file. Below is the list of skills that can be used. Each entry includes a name, description, and a short path that can be expanded into an absolute path using the skill roots table.\n### Skill roots\n- `r0` = `/synthetic/codex-home/skills/.system`\n### Available skills\n- imagegen: Generate or edit raster images when the task benefits from AI-created bitmap visuals such as photos, illustrations, textures, sprites, mockups, or transparent-background cutouts. Use when Codex should create a brand-new image, transform an existing image, or derive visual variants from references, and the output should be a bitmap asset rather than repo-native code or vector. Do not use when the task is better handled by editing existing SVG/vector/code-native assets, extending an established icon or logo system, or building the visual directly in HTML/CSS/canvas. (file: r0/imagegen/SKILL.md)\n- openai-docs: Use for Codex models/pricing, scheduled tasks, skills, settings, setup, troubleshooting, customization, automations, and self-knowledge—including 'you,' 'your,' 'this app,' or 'this coding agent' when they refer to Codex—and for OpenAI APIs/products and ChatGPT Work. Also use for model choice/migration, prompting, SDKs, Responses, Realtime, agents, evals, and Chat/Work/Codex comparisons. Do not use for generic app/software tasks that merely mention Codex. (file: r0/openai-docs/SKILL.md)\n- plugin-creator: Create and scaffold plugin directories for Codex with a required `.codex-plugin/plugin.json`, optional plugin folders/files, valid manifest defaults, and personal-marketplace entries by default. Use when Codex needs to create a new personal plugin, add optional plugin structure, generate or update marketplace entries for plugin ordering and availability metadata, or update an existing local plugin during development with the CLI-driven cachebuster and reinstall flow. (file: r0/plugin-creator/SKILL.md)\n- skill-creator: Create or update a Codex skill with appropriately scoped instructions and any needed supporting resources. (file: r0/skill-creator/SKILL.md)\n- skill-installer: Install Codex skills into $CODEX_HOME/skills from a curated list or a GitHub repo path. Use when a user asks to list installable skills, install a curated skill, or install a skill from another repo (including private repos). (file: r0/skill-installer/SKILL.md)\n### How to use skills\n- Discovery: The list above is the skills available in this session (name + description + short path). Skill bodies live on disk at the listed paths after expanding the matching alias from `### Skill roots`.\n- Trigger rules: If the user names a skill (with `$SkillName` or plain text) OR the task clearly matches a skill's description shown above, you must use that skill for that turn. Multiple mentions mean use them all. Do not carry skills across turns unless re-mentioned.\n- Missing/blocked: If a named skill isn't in the list or the path can't be read, say so briefly and continue with the best fallback.\n- How to use a skill (progressive disclosure):\n  1) After deciding to use a skill, the main agent must expand the listed short `path` with the matching alias from `### Skill roots`, then open and read its `SKILL.md` completely before taking task actions. If a read is truncated or paginated, continue until EOF.\n  2) When `SKILL.md` references relative paths (e.g., `scripts/foo.py`), resolve them relative to the directory containing that expanded `SKILL.md` first, and only consider other paths if needed.\n  3) If `SKILL.md` points to extra folders such as `references/`, use its routing instructions to identify the files required for the task. The main agent must read each required instruction or reference file itself before acting on it. Do not delegate reading, summarizing, or interpreting skill instructions to a subagent. Subagents may still perform task work when the selected skill allows it.\n  4) If `scripts/` exist, prefer running or patching them instead of retyping large code blocks.\n  5) If `assets/` or templates exist, reuse them instead of recreating from scratch.\n- Coordination and sequencing:\n  - If multiple skills apply, choose the minimal set that covers the request and state the order you'll use them.\n  - Announce which skill(s) you're using and why (one short line). If you skip an obvious skill, say why.\n- Context hygiene:\n  - Progressive disclosure applies to selecting relevant files, not partially reading a selected instruction file. Do not load unrelated references, scripts, or assets.\n  - Avoid deep reference-chasing: prefer opening only files directly linked from `SKILL.md` unless you're blocked.\n  - When variants exist (frameworks, providers, domains), pick only the relevant reference file(s) and note that choice.\n- Safety and fallback: If a skill can't be applied cleanly (missing files, unclear instructions), state the issue, pick the next-best approach, and continue.\n</skills_instructions>"
+                  },
+                  {
+                    "type": "input_text",
+                    "text": "<permissions instructions>\nFilesystem sandboxing defines which files can be read or written. `sandbox_mode` is `read-only`: The sandbox only permits reading files. Network access is restricted.\nApproval policy is currently never. Do not provide the `sandbox_permissions` for any reason, commands will be rejected.\n</permissions instructions>"
+                  }
+                ],
+                "internal_chat_message_metadata_passthrough": {
+                  "turn_id": "01a0a93a-2983-7303-bd65-f7f09fac9bc3",
+                  "create_time": 1789545556.449251,
+                  "content_item_kinds": [
+                    "generic.developer_instructions",
+                    "host_skills.instructions",
+                    "permissions.instructions"
+                  ]
+                }
+              },
+              {
+                "type": "message",
+                "id": "msg_01a0a93a-29e1-77a3-8f8a-bfc2f1f17466",
+                "role": "user",
+                "content": [
+                  {
+                    "type": "input_text",
+                    "text": "<environment_context>\n  <cwd>/synthetic/workspace</cwd>\n  <shell>zsh</shell>\n  <current_date>2026-09-16</current_date>\n  <timezone>Asia/Shanghai</timezone>\n  <filesystem><workspace_roots><root>/synthetic/workspace</root></workspace_roots><permission_profile type=\"managed\"><file_system type=\"restricted\"><entry access=\"read\"><special>:root</special></entry></file_system></permission_profile></filesystem>\n</environment_context>"
+                  }
+                ],
+                "internal_chat_message_metadata_passthrough": {
+                  "turn_id": "01a0a93a-2983-7303-bd65-f7f09fac9bc3",
+                  "create_time": 1789545556.449251,
+                  "content_item_kinds": [
+                    "environments.environment_context"
+                  ]
+                }
+              },
+              {
+                "type": "message",
+                "id": "msg_01a0a93a-29e7-7233-a832-8a52cb7ca62b",
+                "role": "user",
+                "content": [
+                  {
+                    "type": "input_text",
+                    "text": "中文合成测试，请回答完成。"
+                  }
+                ],
+                "internal_chat_message_metadata_passthrough": {
+                  "turn_id": "01a0a93a-2983-7303-bd65-f7f09fac9bc3",
+                  "create_time": 1789545556.455722,
+                  "content_item_kinds": [
+                    "user.text"
+                  ]
+                }
+              }
+            ],
+            "tools": [
+              {
+                "type": "function",
+                "name": "exec_command",
+                "description": "Runs a command in a PTY, returning output or a session ID for ongoing interaction.",
+                "strict": false,
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "cmd": {
+                      "type": "string",
+                      "description": "Shell command to execute."
+                    },
+                    "justification": {
+                      "type": "string",
+                      "description": "User-facing approval question for `require_escalated`; omit otherwise."
+                    },
+                    "login": {
+                      "type": "boolean",
+                      "description": "True runs the shell with -l/-i semantics; false disables them. Defaults to true."
+                    },
+                    "max_output_tokens": {
+                      "type": "number",
+                      "description": "Output token budget. Defaults to 10000 tokens; larger requests may be capped by policy."
+                    },
+                    "prefix_rule": {
+                      "type": "array",
+                      "description": "Reusable approval prefix for `cmd`, only with `sandbox_permissions: \"require_escalated\"`; for example [\"git\", \"pull\"].",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "sandbox_permissions": {
+                      "type": "string",
+                      "description": "Per-command sandbox override. Defaults to `use_default`; use `require_escalated` for unsandboxed execution.",
+                      "enum": [
+                        "use_default",
+                        "require_escalated"
+                      ]
+                    },
+                    "shell": {
+                      "type": "string",
+                      "description": "Shell binary to launch. Defaults to the user's default shell."
+                    },
+                    "tty": {
+                      "type": "boolean",
+                      "description": "True allocates a PTY for the command; false or omitted uses plain pipes."
+                    },
+                    "workdir": {
+                      "type": "string",
+                      "description": "Working directory for the command. Defaults to the turn cwd."
+                    },
+                    "yield_time_ms": {
+                      "type": "number",
+                      "description": "Wait before yielding output. Defaults to 10000 ms; effective range is 250-30000 ms."
+                    }
+                  },
+                  "required": [
+                    "cmd"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              {
+                "type": "function",
+                "name": "write_stdin",
+                "description": "Writes characters to an existing unified exec session and returns recent output.",
+                "strict": false,
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "chars": {
+                      "type": "string",
+                      "description": "Bytes to write to stdin. Defaults to empty, which polls without writing."
+                    },
+                    "max_output_tokens": {
+                      "type": "number",
+                      "description": "Output token budget. Defaults to 10000 tokens; larger requests may be capped by policy."
+                    },
+                    "session_id": {
+                      "type": "number",
+                      "description": "Identifier of the running unified exec session."
+                    },
+                    "yield_time_ms": {
+                      "type": "number",
+                      "description": "Wait before yielding output. Non-empty writes default to 250 ms and cap at 30000 ms; empty polls wait 5000-300000 ms by default."
+                    }
+                  },
+                  "required": [
+                    "session_id"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              {
+                "type": "function",
+                "name": "list_mcp_resources",
+                "description": "Lists resources provided by MCP servers. Resources allow servers to share data that provides context to language models, such as files, database schemas, or application-specific information. Prefer resources over web search when possible.",
+                "strict": false,
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "cursor": {
+                      "type": "string",
+                      "description": "Opaque cursor from a previous list_mcp_resources call; omit for the first page."
+                    },
+                    "server": {
+                      "type": "string",
+                      "description": "MCP server name. Omit to list resources from every configured server."
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              {
+                "type": "function",
+                "name": "list_mcp_resource_templates",
+                "description": "Lists resource templates provided by MCP servers. Parameterized resource templates allow servers to share data that takes parameters and provides context to language models, such as files, database schemas, or application-specific information. Prefer resource templates over web search when possible.",
+                "strict": false,
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "cursor": {
+                      "type": "string",
+                      "description": "Opaque cursor from a previous list_mcp_resource_templates call; omit for the first page."
+                    },
+                    "server": {
+                      "type": "string",
+                      "description": "MCP server name. Omit to list resource templates from every configured server."
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              {
+                "type": "function",
+                "name": "read_mcp_resource",
+                "description": "Read a specific resource from an MCP server given the server name and resource URI.",
+                "strict": false,
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "server": {
+                      "type": "string",
+                      "description": "MCP server name exactly as configured. Must match the 'server' field returned by list_mcp_resources."
+                    },
+                    "uri": {
+                      "type": "string",
+                      "description": "Resource URI to read. Must be one of the URIs returned by list_mcp_resources."
+                    }
+                  },
+                  "required": [
+                    "server",
+                    "uri"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              {
+                "type": "function",
+                "name": "request_user_input",
+                "description": "Request user input for one to three short questions and wait for the response. This tool is only available in Plan mode.",
+                "strict": false,
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "questions": {
+                      "type": "array",
+                      "description": "Questions to show the user. Prefer 1 and do not exceed 3",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "header": {
+                            "type": "string",
+                            "description": "Short header label shown in the UI (12 or fewer chars)."
+                          },
+                          "id": {
+                            "type": "string",
+                            "description": "Stable identifier for mapping answers (snake_case)."
+                          },
+                          "options": {
+                            "type": "array",
+                            "description": "Provide 2-3 mutually exclusive choices. Put the recommended option first and suffix its label with \"(Recommended)\". Do not include an \"Other\" option in this list; the client will add a free-form \"Other\" option automatically.",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "description": {
+                                  "type": "string",
+                                  "description": "One short sentence explaining impact/tradeoff if selected."
+                                },
+                                "label": {
+                                  "type": "string",
+                                  "description": "User-facing label (1-5 words)."
+                                }
+                              },
+                              "required": [
+                                "label",
+                                "description"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "question": {
+                            "type": "string",
+                            "description": "Single-sentence prompt shown to the user."
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "header",
+                          "question",
+                          "options"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "questions"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              {
+                "type": "custom",
+                "name": "apply_patch",
+                "description": "The `apply_patch` tool can be used to edit files. This is a FREEFORM tool, so do not wrap the patch in JSON.",
+                "format": {
+                  "type": "grammar",
+                  "syntax": "lark",
+                  "definition": "start: begin_patch hunk+ end_patch\nbegin_patch: \"*** Begin Patch\" LF\nend_patch: \"*** End Patch\" LF?\n\nhunk: add_hunk | delete_hunk | update_hunk\nadd_hunk: \"*** Add File: \" filename LF add_line+\ndelete_hunk: \"*** Delete File: \" filename LF\nupdate_hunk: \"*** Update File: \" filename LF change_move? change?\n\nfilename: /(.+)/\nadd_line: \"+\" /(.*)/ LF -> line\n\nchange_move: \"*** Move to: \" filename LF\nchange: (change_context | change_line)+ eof_line?\nchange_context: (\"@@\" | \"@@ \" /(.+)/) LF\nchange_line: (\"+\" | \"-\" | \" \") /(.*)/ LF\neof_line: \"*** End of File\" LF\n\n%import common.LF\n"
+                }
+              },
+              {
+                "type": "function",
+                "name": "view_image",
+                "description": "View a local image file from the filesystem when visual inspection is needed. Use this for images already available on disk.",
+                "strict": false,
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "detail": {
+                      "type": "string",
+                      "description": "Image detail level. Defaults to `high`; use `original` to preserve exact resolution.",
+                      "enum": [
+                        "high",
+                        "original"
+                      ]
+                    },
+                    "path": {
+                      "type": "string",
+                      "description": "Local filesystem path to an image file."
+                    }
+                  },
+                  "required": [
+                    "path"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              {
+                "type": "function",
+                "name": "get_goal",
+                "description": "Get the current goal for this thread, including status, budgets, token and elapsed-time usage, and remaining token budget.",
+                "strict": false,
+                "parameters": {
+                  "type": "object",
+                  "properties": {},
+                  "required": [],
+                  "additionalProperties": false
+                }
+              },
+              {
+                "type": "function",
+                "name": "create_goal",
+                "description": "Create a goal only when explicitly requested by the user or system/developer instructions; do not infer goals from ordinary tasks.\nSet token_budget only when an explicit token budget is requested. Fails if an unfinished goal exists; use update_goal only for status.",
+                "strict": false,
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "objective": {
+                      "type": "string",
+                      "description": "Required. The concrete objective to start pursuing. This starts a new active goal when no goal exists or replaces the current goal when it is complete."
+                    },
+                    "token_budget": {
+                      "type": "integer",
+                      "description": "Positive token budget for the new goal. Omit unless explicitly requested."
+                    }
+                  },
+                  "required": [
+                    "objective"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              {
+                "type": "function",
+                "name": "update_goal",
+                "description": "Update the existing goal.\nUse this tool only to mark the goal achieved or genuinely blocked.\nSet status to `complete` only when the objective has actually been achieved and no required work remains.\nSet status to `blocked` only when the same blocking condition has repeated for at least three consecutive goal turns, counting the original/user-triggered turn and any automatic continuations, and the agent cannot make meaningful progress without user input or an external-state change.\nIf the user resumes a goal that was previously marked `blocked`, treat the resumed run as a fresh blocked audit. If the same blocking condition then repeats for at least three consecutive resumed goal turns, set status to `blocked` again.\nOnce the blocked threshold is satisfied, do not keep reporting that you are still blocked while leaving the goal active; set status to `blocked`.\nDo not use `blocked` merely because the work is hard, slow, uncertain, incomplete, or would benefit from clarification.\nDo not mark a goal complete merely because its budget is nearly exhausted or because you are stopping work.\nYou cannot use this tool to pause, resume, budget-limit, or usage-limit a goal; those status changes are controlled by the user or system.\nWhen marking a budgeted goal achieved with status `complete`, report the final token usage from the tool result to the user.",
+                "strict": false,
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "description": "Required. Set to `complete` only when the objective is achieved and no required work remains. Set to `blocked` only after the same blocking condition has recurred for at least three consecutive goal turns and the agent is at an impasse. After a previously blocked goal is resumed, the resumed run starts a fresh blocked audit.",
+                      "enum": [
+                        "complete",
+                        "blocked"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "status"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              {
+                "type": "namespace",
+                "name": "image_gen",
+                "description": "Tools in the image_gen namespace.",
+                "tools": [
+                  {
+                    "type": "function",
+                    "name": "imagegen",
+                    "description": "The `image_gen.imagegen` tool enables image generation from descriptions and editing of existing images based on specific instructions. Use it when:\n\n- The user requests an image based on a scene description, such as a diagram, portrait, comic, meme, or any other visual.\n- The user wants to modify an attached or previously generated image with specific changes, including adding or removing elements, altering colors, improving quality/resolution, or transforming the style (e.g., cartoon, oil painting).\n\nGuidelines:\n- imagegen needs a few minutes to finish. In code-mode, use the first-line @exec directive to give the initial call 120 seconds and the same yield for any waits that follow. Once it finishes, return the image with generatedImage(result).\n- Omit both `referenced_image_paths` and `num_last_images_to_include` when generating a brand new image.\n- For edits, use `referenced_image_paths` when every target image has a local file path.\n- If you have not seen a local image yet, use `view_image` to inspect it before editing.\n- Use `num_last_images_to_include` only when at least one target image has no local file path.\n- Set `num_last_images_to_include` to the smallest number of recent conversation images that includes every target image, up to 5.\n- Never provide both `referenced_image_paths` and `num_last_images_to_include`.\n- If neither mechanism can include every target image, ask the user to attach the missing images again.\n- Directly generate the image without reconfirmation or clarification unless required images must be attached again.\n- Always use this tool for image editing unless the user explicitly requests otherwise. Do not use the `python` tool for image editing unless specifically instructed.\n",
+                    "strict": false,
+                    "parameters": {
+                      "type": "object",
+                      "properties": {
+                        "num_last_images_to_include": {
+                          "type": [
+                            "integer",
+                            "null"
+                          ]
+                        },
+                        "prompt": {
+                          "type": "string"
+                        },
+                        "referenced_image_paths": {
+                          "type": [
+                            "array",
+                            "null"
+                          ],
+                          "items": {
+                            "type": "string",
+                            "description": "A path that is guaranteed to be absolute and normalized (though it is not guaranteed to be canonicalized or exist on the filesystem).\n\nIMPORTANT: When deserializing an `AbsolutePathBuf`, a base path must be set using [AbsolutePathBufGuard::new]. If no base path is set, the deserialization will fail unless the path being deserialized is already absolute."
+                          }
+                        }
+                      },
+                      "required": [
+                        "prompt"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                ]
+              },
+              {
+                "type": "tool_search",
+                "execution": "client",
+                "description": "# Tool discovery\n\nSearches over deferred tool metadata with BM25 and exposes matching tools for the next model call.\n\nYou have access to tools from the following sources:\n- Multi-agent tools: Spawn and manage sub-agents.\nSome of the tools may not have been provided to you upfront, and you should use this tool (`tool_search`) to search for the required tools. For MCP tool discovery, always use `tool_search` instead of `list_mcp_resources` or `list_mcp_resource_templates`.",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "limit": {
+                      "type": "number",
+                      "description": "Maximum number of tools to return. Defaults to 8."
+                    },
+                    "query": {
+                      "type": "string",
+                      "description": "Search query for deferred tools."
+                    }
+                  },
+                  "required": [
+                    "query"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              {
+                "type": "web_search",
+                "external_web_access": false,
+                "search_content_types": [
+                  "text",
+                  "image"
+                ]
+              }
+            ],
+            "tool_choice": "auto",
+            "parallel_tool_calls": true,
+            "reasoning": {
+              "effort": "medium"
+            },
+            "store": false,
+            "stream": true,
+            "include": [
+              "reasoning.encrypted_content"
+            ],
+            "prompt_cache_key": "01a0a93a-2971-7681-bd32-956efada378c",
+            "text": {
+              "verbosity": "low"
+            },
+            "client_metadata": {
+              "turn_id": "01a0a93a-2983-7303-bd65-f7f09fac9bc3",
+              "root_turn_id": "01a0a93a-2983-7303-bd65-f7f09fac9bc3",
+              "x-codex-installation-id": "2163d1e6-db73-4862-8fbd-c4088c2ff0a1",
+              "x-codex-turn-metadata": "{\"installation_id\":\"2163d1e6-db73-4862-8fbd-c4088c2ff0a1\",\"session_id\":\"01a0a93a-2971-7681-bd32-956efada378c\",\"thread_id\":\"01a0a93a-2971-7681-bd32-956efada378c\",\"agent_name\":\"/root\",\"turn_id\":\"01a0a93a-2983-7303-bd65-f7f09fac9bc3\",\"window_id\":\"01a0a93a-2971-7681-bd32-956efada378c:0\",\"window_number\":0,\"context_window_id\":\"01a0a93a-2971-7681-bd32-957b9625bbe6\",\"request_kind\":\"turn\",\"root_turn_id\":\"01a0a93a-2983-7303-bd65-f7f09fac9bc3\",\"sandbox\":\"seatbelt\",\"sandbox_mode\":\"read-only\",\"auto_review_enabled\":false,\"node_repl_auto_review_required\":false,\"node_repl_disabled\":false,\"turn_started_at_unix_ms\":1789545556356}",
+              "x-codex-window-id": "01a0a93a-2971-7681-bd32-956efada378c:0",
+              "thread_id": "01a0a93a-2971-7681-bd32-956efada378c",
+              "session_id": "01a0a93a-2971-7681-bd32-956efada378c"
+            }
+          },
+          "response_events": [
+            {
+              "type": "response.completed",
+              "response": {
+                "id": "resp_desktop_audit",
+                "object": "response",
+                "model": "gpt-5.5",
+                "status": "completed",
+                "output": [],
+                "usage": {
+                  "input_tokens": 1,
+                  "output_tokens": 1,
+                  "total_tokens": 2
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "desktop-bundled-core-websocket",
+      "api": "openai-codex-responses",
+      "transport": "websocket",
+      "prompt_kind": "desktop",
+      "rejected_auxiliary_destinations": [
+        "api.github.com:443",
+        "chatgpt.com:443",
+        "github.com:443"
+      ],
+      "turns": [
+        {
+          "headers": [
+            [
+              "host",
+              "127.0.0.1:1"
+            ],
+            [
+              "connection",
+              "Upgrade"
+            ],
+            [
+              "upgrade",
+              "websocket"
+            ],
+            [
+              "sec-websocket-version",
+              "13"
+            ],
+            [
+              "sec-websocket-key",
+              "c3ludGhldGljLWtleS0xNg=="
+            ],
+            [
+              "chatgpt-account-id",
+              "synthetic-account"
+            ],
+            [
+              "authorization",
+              "Bearer eyJhbGciOiJub25lIn0.eyJzdWIiOiAic3ludGhldGljLXVzZXIiLCAiZXhwIjogNDEwMjQ0NDgwMCwgImh0dHBzOi8vYXBpLm9wZW5haS5jb20vYXV0aCI6IHsiY2hhdGdwdF9hY2NvdW50X2lkIjogInN5bnRoZXRpYy1hY2NvdW50IiwgImNoYXRncHRfcGxhbl90eXBlIjogInBsdXMiLCAiY2hhdGdwdF91c2VyX2lkIjogInN5bnRoZXRpYy11c2VyIn19.synthetic"
+            ],
+            [
+              "user-agent",
+              "Codex Desktop/0.154.0-alpha.6.2 (Mac OS 27.0.0; arm64) unknown (Codex Desktop; 26.908.40834)"
+            ],
+            [
+              "originator",
+              "Codex Desktop"
+            ],
+            [
+              "openai-beta",
+              "responses_websockets=2026-02-06"
+            ],
+            [
+              "version",
+              "0.154.0-alpha.6.2"
+            ],
+            [
+              "x-codex-beta-features",
+              "remote_compaction_v2"
+            ],
+            [
+              "x-client-request-id",
+              "01a0a93a-2c3d-70f0-90e4-6a9e392e6f12"
+            ],
+            [
+              "session-id",
+              "01a0a93a-2c3d-70f0-90e4-6a9e392e6f12"
+            ],
+            [
+              "thread-id",
+              "01a0a93a-2c3d-70f0-90e4-6a9e392e6f12"
+            ],
+            [
+              "x-codex-window-id",
+              "01a0a93a-2c3d-70f0-90e4-6a9e392e6f12:0"
+            ],
+            [
+              "x-codex-turn-metadata",
+              "{\"installation_id\":\"719abe83-356a-42fb-a825-95c01d2a513b\",\"session_id\":\"01a0a93a-2c3d-70f0-90e4-6a9e392e6f12\",\"thread_id\":\"01a0a93a-2c3d-70f0-90e4-6a9e392e6f12\",\"agent_name\":\"/root\",\"turn_id\":\"\",\"window_id\":\"01a0a93a-2c3d-70f0-90e4-6a9e392e6f12:0\",\"window_number\":0,\"context_window_id\":\"01a0a93a-2c3d-70f0-90e4-6aaae2f29efe\",\"request_kind\":\"prewarm\",\"sandbox\":\"seatbelt\",\"sandbox_mode\":\"read-only\",\"auto_review_enabled\":false,\"node_repl_auto_review_required\":false,\"node_repl_disabled\":false}"
+            ],
+            [
+              "x-codex-routing-hint",
+              "model=gpt-5.5"
+            ],
+            [
+              "sec-websocket-extensions",
+              "permessage-deflate; client_max_window_bits"
+            ]
+          ],
+          "body": {
+            "type": "response.create",
+            "model": "gpt-5.5",
+            "instructions": "Synthetic coding assistant.",
+            "input": [],
+            "tools": [
+              {
+                "type": "function",
+                "name": "exec_command",
+                "description": "Runs a command in a PTY, returning output or a session ID for ongoing interaction.",
+                "strict": false,
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "cmd": {
+                      "type": "string",
+                      "description": "Shell command to execute."
+                    },
+                    "justification": {
+                      "type": "string",
+                      "description": "User-facing approval question for `require_escalated`; omit otherwise."
+                    },
+                    "login": {
+                      "type": "boolean",
+                      "description": "True runs the shell with -l/-i semantics; false disables them. Defaults to true."
+                    },
+                    "max_output_tokens": {
+                      "type": "number",
+                      "description": "Output token budget. Defaults to 10000 tokens; larger requests may be capped by policy."
+                    },
+                    "prefix_rule": {
+                      "type": "array",
+                      "description": "Reusable approval prefix for `cmd`, only with `sandbox_permissions: \"require_escalated\"`; for example [\"git\", \"pull\"].",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "sandbox_permissions": {
+                      "type": "string",
+                      "description": "Per-command sandbox override. Defaults to `use_default`; use `require_escalated` for unsandboxed execution.",
+                      "enum": [
+                        "use_default",
+                        "require_escalated"
+                      ]
+                    },
+                    "shell": {
+                      "type": "string",
+                      "description": "Shell binary to launch. Defaults to the user's default shell."
+                    },
+                    "tty": {
+                      "type": "boolean",
+                      "description": "True allocates a PTY for the command; false or omitted uses plain pipes."
+                    },
+                    "workdir": {
+                      "type": "string",
+                      "description": "Working directory for the command. Defaults to the turn cwd."
+                    },
+                    "yield_time_ms": {
+                      "type": "number",
+                      "description": "Wait before yielding output. Defaults to 10000 ms; effective range is 250-30000 ms."
+                    }
+                  },
+                  "required": [
+                    "cmd"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              {
+                "type": "function",
+                "name": "write_stdin",
+                "description": "Writes characters to an existing unified exec session and returns recent output.",
+                "strict": false,
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "chars": {
+                      "type": "string",
+                      "description": "Bytes to write to stdin. Defaults to empty, which polls without writing."
+                    },
+                    "max_output_tokens": {
+                      "type": "number",
+                      "description": "Output token budget. Defaults to 10000 tokens; larger requests may be capped by policy."
+                    },
+                    "session_id": {
+                      "type": "number",
+                      "description": "Identifier of the running unified exec session."
+                    },
+                    "yield_time_ms": {
+                      "type": "number",
+                      "description": "Wait before yielding output. Non-empty writes default to 250 ms and cap at 30000 ms; empty polls wait 5000-300000 ms by default."
+                    }
+                  },
+                  "required": [
+                    "session_id"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              {
+                "type": "function",
+                "name": "list_mcp_resources",
+                "description": "Lists resources provided by MCP servers. Resources allow servers to share data that provides context to language models, such as files, database schemas, or application-specific information. Prefer resources over web search when possible.",
+                "strict": false,
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "cursor": {
+                      "type": "string",
+                      "description": "Opaque cursor from a previous list_mcp_resources call; omit for the first page."
+                    },
+                    "server": {
+                      "type": "string",
+                      "description": "MCP server name. Omit to list resources from every configured server."
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              {
+                "type": "function",
+                "name": "list_mcp_resource_templates",
+                "description": "Lists resource templates provided by MCP servers. Parameterized resource templates allow servers to share data that takes parameters and provides context to language models, such as files, database schemas, or application-specific information. Prefer resource templates over web search when possible.",
+                "strict": false,
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "cursor": {
+                      "type": "string",
+                      "description": "Opaque cursor from a previous list_mcp_resource_templates call; omit for the first page."
+                    },
+                    "server": {
+                      "type": "string",
+                      "description": "MCP server name. Omit to list resource templates from every configured server."
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              {
+                "type": "function",
+                "name": "read_mcp_resource",
+                "description": "Read a specific resource from an MCP server given the server name and resource URI.",
+                "strict": false,
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "server": {
+                      "type": "string",
+                      "description": "MCP server name exactly as configured. Must match the 'server' field returned by list_mcp_resources."
+                    },
+                    "uri": {
+                      "type": "string",
+                      "description": "Resource URI to read. Must be one of the URIs returned by list_mcp_resources."
+                    }
+                  },
+                  "required": [
+                    "server",
+                    "uri"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              {
+                "type": "function",
+                "name": "request_user_input",
+                "description": "Request user input for one to three short questions and wait for the response. This tool is only available in Plan mode.",
+                "strict": false,
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "questions": {
+                      "type": "array",
+                      "description": "Questions to show the user. Prefer 1 and do not exceed 3",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "header": {
+                            "type": "string",
+                            "description": "Short header label shown in the UI (12 or fewer chars)."
+                          },
+                          "id": {
+                            "type": "string",
+                            "description": "Stable identifier for mapping answers (snake_case)."
+                          },
+                          "options": {
+                            "type": "array",
+                            "description": "Provide 2-3 mutually exclusive choices. Put the recommended option first and suffix its label with \"(Recommended)\". Do not include an \"Other\" option in this list; the client will add a free-form \"Other\" option automatically.",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "description": {
+                                  "type": "string",
+                                  "description": "One short sentence explaining impact/tradeoff if selected."
+                                },
+                                "label": {
+                                  "type": "string",
+                                  "description": "User-facing label (1-5 words)."
+                                }
+                              },
+                              "required": [
+                                "label",
+                                "description"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "question": {
+                            "type": "string",
+                            "description": "Single-sentence prompt shown to the user."
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "header",
+                          "question",
+                          "options"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "questions"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              {
+                "type": "custom",
+                "name": "apply_patch",
+                "description": "The `apply_patch` tool can be used to edit files. This is a FREEFORM tool, so do not wrap the patch in JSON.",
+                "format": {
+                  "type": "grammar",
+                  "syntax": "lark",
+                  "definition": "start: begin_patch hunk+ end_patch\nbegin_patch: \"*** Begin Patch\" LF\nend_patch: \"*** End Patch\" LF?\n\nhunk: add_hunk | delete_hunk | update_hunk\nadd_hunk: \"*** Add File: \" filename LF add_line+\ndelete_hunk: \"*** Delete File: \" filename LF\nupdate_hunk: \"*** Update File: \" filename LF change_move? change?\n\nfilename: /(.+)/\nadd_line: \"+\" /(.*)/ LF -> line\n\nchange_move: \"*** Move to: \" filename LF\nchange: (change_context | change_line)+ eof_line?\nchange_context: (\"@@\" | \"@@ \" /(.+)/) LF\nchange_line: (\"+\" | \"-\" | \" \") /(.*)/ LF\neof_line: \"*** End of File\" LF\n\n%import common.LF\n"
+                }
+              },
+              {
+                "type": "function",
+                "name": "view_image",
+                "description": "View a local image file from the filesystem when visual inspection is needed. Use this for images already available on disk.",
+                "strict": false,
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "detail": {
+                      "type": "string",
+                      "description": "Image detail level. Defaults to `high`; use `original` to preserve exact resolution.",
+                      "enum": [
+                        "high",
+                        "original"
+                      ]
+                    },
+                    "path": {
+                      "type": "string",
+                      "description": "Local filesystem path to an image file."
+                    }
+                  },
+                  "required": [
+                    "path"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              {
+                "type": "function",
+                "name": "get_goal",
+                "description": "Get the current goal for this thread, including status, budgets, token and elapsed-time usage, and remaining token budget.",
+                "strict": false,
+                "parameters": {
+                  "type": "object",
+                  "properties": {},
+                  "required": [],
+                  "additionalProperties": false
+                }
+              },
+              {
+                "type": "function",
+                "name": "create_goal",
+                "description": "Create a goal only when explicitly requested by the user or system/developer instructions; do not infer goals from ordinary tasks.\nSet token_budget only when an explicit token budget is requested. Fails if an unfinished goal exists; use update_goal only for status.",
+                "strict": false,
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "objective": {
+                      "type": "string",
+                      "description": "Required. The concrete objective to start pursuing. This starts a new active goal when no goal exists or replaces the current goal when it is complete."
+                    },
+                    "token_budget": {
+                      "type": "integer",
+                      "description": "Positive token budget for the new goal. Omit unless explicitly requested."
+                    }
+                  },
+                  "required": [
+                    "objective"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              {
+                "type": "function",
+                "name": "update_goal",
+                "description": "Update the existing goal.\nUse this tool only to mark the goal achieved or genuinely blocked.\nSet status to `complete` only when the objective has actually been achieved and no required work remains.\nSet status to `blocked` only when the same blocking condition has repeated for at least three consecutive goal turns, counting the original/user-triggered turn and any automatic continuations, and the agent cannot make meaningful progress without user input or an external-state change.\nIf the user resumes a goal that was previously marked `blocked`, treat the resumed run as a fresh blocked audit. If the same blocking condition then repeats for at least three consecutive resumed goal turns, set status to `blocked` again.\nOnce the blocked threshold is satisfied, do not keep reporting that you are still blocked while leaving the goal active; set status to `blocked`.\nDo not use `blocked` merely because the work is hard, slow, uncertain, incomplete, or would benefit from clarification.\nDo not mark a goal complete merely because its budget is nearly exhausted or because you are stopping work.\nYou cannot use this tool to pause, resume, budget-limit, or usage-limit a goal; those status changes are controlled by the user or system.\nWhen marking a budgeted goal achieved with status `complete`, report the final token usage from the tool result to the user.",
+                "strict": false,
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "description": "Required. Set to `complete` only when the objective is achieved and no required work remains. Set to `blocked` only after the same blocking condition has recurred for at least three consecutive goal turns and the agent is at an impasse. After a previously blocked goal is resumed, the resumed run starts a fresh blocked audit.",
+                      "enum": [
+                        "complete",
+                        "blocked"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "status"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              {
+                "type": "namespace",
+                "name": "image_gen",
+                "description": "Tools in the image_gen namespace.",
+                "tools": [
+                  {
+                    "type": "function",
+                    "name": "imagegen",
+                    "description": "The `image_gen.imagegen` tool enables image generation from descriptions and editing of existing images based on specific instructions. Use it when:\n\n- The user requests an image based on a scene description, such as a diagram, portrait, comic, meme, or any other visual.\n- The user wants to modify an attached or previously generated image with specific changes, including adding or removing elements, altering colors, improving quality/resolution, or transforming the style (e.g., cartoon, oil painting).\n\nGuidelines:\n- imagegen needs a few minutes to finish. In code-mode, use the first-line @exec directive to give the initial call 120 seconds and the same yield for any waits that follow. Once it finishes, return the image with generatedImage(result).\n- Omit both `referenced_image_paths` and `num_last_images_to_include` when generating a brand new image.\n- For edits, use `referenced_image_paths` when every target image has a local file path.\n- If you have not seen a local image yet, use `view_image` to inspect it before editing.\n- Use `num_last_images_to_include` only when at least one target image has no local file path.\n- Set `num_last_images_to_include` to the smallest number of recent conversation images that includes every target image, up to 5.\n- Never provide both `referenced_image_paths` and `num_last_images_to_include`.\n- If neither mechanism can include every target image, ask the user to attach the missing images again.\n- Directly generate the image without reconfirmation or clarification unless required images must be attached again.\n- Always use this tool for image editing unless the user explicitly requests otherwise. Do not use the `python` tool for image editing unless specifically instructed.\n",
+                    "strict": false,
+                    "parameters": {
+                      "type": "object",
+                      "properties": {
+                        "num_last_images_to_include": {
+                          "type": [
+                            "integer",
+                            "null"
+                          ]
+                        },
+                        "prompt": {
+                          "type": "string"
+                        },
+                        "referenced_image_paths": {
+                          "type": [
+                            "array",
+                            "null"
+                          ],
+                          "items": {
+                            "type": "string",
+                            "description": "A path that is guaranteed to be absolute and normalized (though it is not guaranteed to be canonicalized or exist on the filesystem).\n\nIMPORTANT: When deserializing an `AbsolutePathBuf`, a base path must be set using [AbsolutePathBufGuard::new]. If no base path is set, the deserialization will fail unless the path being deserialized is already absolute."
+                          }
+                        }
+                      },
+                      "required": [
+                        "prompt"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                ]
+              },
+              {
+                "type": "tool_search",
+                "execution": "client",
+                "description": "# Tool discovery\n\nSearches over deferred tool metadata with BM25 and exposes matching tools for the next model call.\n\nYou have access to tools from the following sources:\n- Multi-agent tools: Spawn and manage sub-agents.\nSome of the tools may not have been provided to you upfront, and you should use this tool (`tool_search`) to search for the required tools. For MCP tool discovery, always use `tool_search` instead of `list_mcp_resources` or `list_mcp_resource_templates`.",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "limit": {
+                      "type": "number",
+                      "description": "Maximum number of tools to return. Defaults to 8."
+                    },
+                    "query": {
+                      "type": "string",
+                      "description": "Search query for deferred tools."
+                    }
+                  },
+                  "required": [
+                    "query"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              {
+                "type": "web_search",
+                "external_web_access": false,
+                "search_content_types": [
+                  "text",
+                  "image"
+                ]
+              }
+            ],
+            "tool_choice": "auto",
+            "parallel_tool_calls": true,
+            "reasoning": {
+              "effort": "medium"
+            },
+            "store": false,
+            "stream": true,
+            "include": [
+              "reasoning.encrypted_content"
+            ],
+            "prompt_cache_key": "01a0a93a-2c3d-70f0-90e4-6a9e392e6f12",
+            "text": {
+              "verbosity": "low"
+            },
+            "generate": false,
+            "client_metadata": {
+              "x-codex-window-id": "01a0a93a-2c3d-70f0-90e4-6a9e392e6f12:0",
+              "session_id": "01a0a93a-2c3d-70f0-90e4-6a9e392e6f12",
+              "x-codex-installation-id": "719abe83-356a-42fb-a825-95c01d2a513b",
+              "turn_id": "",
+              "x-codex-turn-metadata": "{\"installation_id\":\"719abe83-356a-42fb-a825-95c01d2a513b\",\"session_id\":\"01a0a93a-2c3d-70f0-90e4-6a9e392e6f12\",\"thread_id\":\"01a0a93a-2c3d-70f0-90e4-6a9e392e6f12\",\"agent_name\":\"/root\",\"turn_id\":\"\",\"window_id\":\"01a0a93a-2c3d-70f0-90e4-6a9e392e6f12:0\",\"window_number\":0,\"context_window_id\":\"01a0a93a-2c3d-70f0-90e4-6aaae2f29efe\",\"request_kind\":\"prewarm\",\"sandbox\":\"seatbelt\",\"sandbox_mode\":\"read-only\",\"auto_review_enabled\":false,\"node_repl_auto_review_required\":false,\"node_repl_disabled\":false}",
+              "x-codex-ws-stream-request-start-ms": "1789545557151",
+              "thread_id": "01a0a93a-2c3d-70f0-90e4-6a9e392e6f12"
+            }
+          },
+          "response_events": [
+            {
+              "type": "response.completed",
+              "response": {
+                "id": "resp_desktop_audit",
+                "object": "response",
+                "model": "gpt-5.5",
+                "status": "completed",
+                "output": [],
+                "usage": {
+                  "input_tokens": 1,
+                  "output_tokens": 1,
+                  "total_tokens": 2
+                }
+              }
+            }
+          ]
+        },
+        {
+          "headers": [
+            [
+              "host",
+              "127.0.0.1:1"
+            ],
+            [
+              "connection",
+              "Upgrade"
+            ],
+            [
+              "upgrade",
+              "websocket"
+            ],
+            [
+              "sec-websocket-version",
+              "13"
+            ],
+            [
+              "sec-websocket-key",
+              "c3ludGhldGljLWtleS0xNg=="
+            ],
+            [
+              "chatgpt-account-id",
+              "synthetic-account"
+            ],
+            [
+              "authorization",
+              "Bearer eyJhbGciOiJub25lIn0.eyJzdWIiOiAic3ludGhldGljLXVzZXIiLCAiZXhwIjogNDEwMjQ0NDgwMCwgImh0dHBzOi8vYXBpLm9wZW5haS5jb20vYXV0aCI6IHsiY2hhdGdwdF9hY2NvdW50X2lkIjogInN5bnRoZXRpYy1hY2NvdW50IiwgImNoYXRncHRfcGxhbl90eXBlIjogInBsdXMiLCAiY2hhdGdwdF91c2VyX2lkIjogInN5bnRoZXRpYy11c2VyIn19.synthetic"
+            ],
+            [
+              "user-agent",
+              "Codex Desktop/0.154.0-alpha.6.2 (Mac OS 27.0.0; arm64) unknown (Codex Desktop; 26.908.40834)"
+            ],
+            [
+              "originator",
+              "Codex Desktop"
+            ],
+            [
+              "openai-beta",
+              "responses_websockets=2026-02-06"
+            ],
+            [
+              "version",
+              "0.154.0-alpha.6.2"
+            ],
+            [
+              "x-codex-beta-features",
+              "remote_compaction_v2"
+            ],
+            [
+              "x-client-request-id",
+              "01a0a93a-2c3d-70f0-90e4-6a9e392e6f12"
+            ],
+            [
+              "session-id",
+              "01a0a93a-2c3d-70f0-90e4-6a9e392e6f12"
+            ],
+            [
+              "thread-id",
+              "01a0a93a-2c3d-70f0-90e4-6a9e392e6f12"
+            ],
+            [
+              "x-codex-window-id",
+              "01a0a93a-2c3d-70f0-90e4-6a9e392e6f12:0"
+            ],
+            [
+              "x-codex-turn-metadata",
+              "{\"installation_id\":\"719abe83-356a-42fb-a825-95c01d2a513b\",\"session_id\":\"01a0a93a-2c3d-70f0-90e4-6a9e392e6f12\",\"thread_id\":\"01a0a93a-2c3d-70f0-90e4-6a9e392e6f12\",\"agent_name\":\"/root\",\"turn_id\":\"\",\"window_id\":\"01a0a93a-2c3d-70f0-90e4-6a9e392e6f12:0\",\"window_number\":0,\"context_window_id\":\"01a0a93a-2c3d-70f0-90e4-6aaae2f29efe\",\"request_kind\":\"prewarm\",\"sandbox\":\"seatbelt\",\"sandbox_mode\":\"read-only\",\"auto_review_enabled\":false,\"node_repl_auto_review_required\":false,\"node_repl_disabled\":false}"
+            ],
+            [
+              "x-codex-routing-hint",
+              "model=gpt-5.5"
+            ],
+            [
+              "sec-websocket-extensions",
+              "permessage-deflate; client_max_window_bits"
+            ]
+          ],
+          "body": {
+            "type": "response.create",
+            "model": "gpt-5.5",
+            "instructions": "Synthetic coding assistant.",
+            "previous_response_id": "resp_desktop_audit",
+            "input": [
+              {
+                "type": "message",
+                "id": "msg_01a0a93a-2ca3-7710-8685-e026e2b4ec1d",
+                "role": "developer",
+                "content": [
+                  {
+                    "type": "input_text",
+                    "text": "Synthetic audit; use no tools."
+                  },
+                  {
+                    "type": "input_text",
+                    "text": "<skills_instructions>\n## Skills\nA skill is a set of local instructions to follow that is stored in a `SKILL.md` file. Below is the list of skills that can be used. Each entry includes a name, description, and a short path that can be expanded into an absolute path using the skill roots table.\n### Skill roots\n- `r0` = `/synthetic/codex-home/skills/.system`\n### Available skills\n- imagegen: Generate or edit raster images when the task benefits from AI-created bitmap visuals such as photos, illustrations, textures, sprites, mockups, or transparent-background cutouts. Use when Codex should create a brand-new image, transform an existing image, or derive visual variants from references, and the output should be a bitmap asset rather than repo-native code or vector. Do not use when the task is better handled by editing existing SVG/vector/code-native assets, extending an established icon or logo system, or building the visual directly in HTML/CSS/canvas. (file: r0/imagegen/SKILL.md)\n- openai-docs: Use for Codex models/pricing, scheduled tasks, skills, settings, setup, troubleshooting, customization, automations, and self-knowledge—including 'you,' 'your,' 'this app,' or 'this coding agent' when they refer to Codex—and for OpenAI APIs/products and ChatGPT Work. Also use for model choice/migration, prompting, SDKs, Responses, Realtime, agents, evals, and Chat/Work/Codex comparisons. Do not use for generic app/software tasks that merely mention Codex. (file: r0/openai-docs/SKILL.md)\n- plugin-creator: Create and scaffold plugin directories for Codex with a required `.codex-plugin/plugin.json`, optional plugin folders/files, valid manifest defaults, and personal-marketplace entries by default. Use when Codex needs to create a new personal plugin, add optional plugin structure, generate or update marketplace entries for plugin ordering and availability metadata, or update an existing local plugin during development with the CLI-driven cachebuster and reinstall flow. (file: r0/plugin-creator/SKILL.md)\n- skill-creator: Create or update a Codex skill with appropriately scoped instructions and any needed supporting resources. (file: r0/skill-creator/SKILL.md)\n- skill-installer: Install Codex skills into $CODEX_HOME/skills from a curated list or a GitHub repo path. Use when a user asks to list installable skills, install a curated skill, or install a skill from another repo (including private repos). (file: r0/skill-installer/SKILL.md)\n### How to use skills\n- Discovery: The list above is the skills available in this session (name + description + short path). Skill bodies live on disk at the listed paths after expanding the matching alias from `### Skill roots`.\n- Trigger rules: If the user names a skill (with `$SkillName` or plain text) OR the task clearly matches a skill's description shown above, you must use that skill for that turn. Multiple mentions mean use them all. Do not carry skills across turns unless re-mentioned.\n- Missing/blocked: If a named skill isn't in the list or the path can't be read, say so briefly and continue with the best fallback.\n- How to use a skill (progressive disclosure):\n  1) After deciding to use a skill, the main agent must expand the listed short `path` with the matching alias from `### Skill roots`, then open and read its `SKILL.md` completely before taking task actions. If a read is truncated or paginated, continue until EOF.\n  2) When `SKILL.md` references relative paths (e.g., `scripts/foo.py`), resolve them relative to the directory containing that expanded `SKILL.md` first, and only consider other paths if needed.\n  3) If `SKILL.md` points to extra folders such as `references/`, use its routing instructions to identify the files required for the task. The main agent must read each required instruction or reference file itself before acting on it. Do not delegate reading, summarizing, or interpreting skill instructions to a subagent. Subagents may still perform task work when the selected skill allows it.\n  4) If `scripts/` exist, prefer running or patching them instead of retyping large code blocks.\n  5) If `assets/` or templates exist, reuse them instead of recreating from scratch.\n- Coordination and sequencing:\n  - If multiple skills apply, choose the minimal set that covers the request and state the order you'll use them.\n  - Announce which skill(s) you're using and why (one short line). If you skip an obvious skill, say why.\n- Context hygiene:\n  - Progressive disclosure applies to selecting relevant files, not partially reading a selected instruction file. Do not load unrelated references, scripts, or assets.\n  - Avoid deep reference-chasing: prefer opening only files directly linked from `SKILL.md` unless you're blocked.\n  - When variants exist (frameworks, providers, domains), pick only the relevant reference file(s) and note that choice.\n- Safety and fallback: If a skill can't be applied cleanly (missing files, unclear instructions), state the issue, pick the next-best approach, and continue.\n</skills_instructions>"
+                  },
+                  {
+                    "type": "input_text",
+                    "text": "<permissions instructions>\nFilesystem sandboxing defines which files can be read or written. `sandbox_mode` is `read-only`: The sandbox only permits reading files. Network access is restricted.\nApproval policy is currently never. Do not provide the `sandbox_permissions` for any reason, commands will be rejected.\n</permissions instructions>"
+                  }
+                ],
+                "internal_chat_message_metadata_passthrough": {
+                  "turn_id": "01a0a93a-2c48-73c1-afc3-8c32faefc414",
+                  "create_time": 1789545557.155618,
+                  "content_item_kinds": [
+                    "generic.developer_instructions",
+                    "host_skills.instructions",
+                    "permissions.instructions"
+                  ]
+                }
+              },
+              {
+                "type": "message",
+                "id": "msg_01a0a93a-2ca3-7710-8685-e037180d47fe",
+                "role": "user",
+                "content": [
+                  {
+                    "type": "input_text",
+                    "text": "<environment_context>\n  <cwd>/synthetic/workspace</cwd>\n  <shell>zsh</shell>\n  <current_date>2026-09-16</current_date>\n  <timezone>Asia/Shanghai</timezone>\n  <filesystem><workspace_roots><root>/synthetic/workspace</root></workspace_roots><permission_profile type=\"managed\"><file_system type=\"restricted\"><entry access=\"read\"><special>:root</special></entry></file_system></permission_profile></filesystem>\n</environment_context>"
+                  }
+                ],
+                "internal_chat_message_metadata_passthrough": {
+                  "turn_id": "01a0a93a-2c48-73c1-afc3-8c32faefc414",
+                  "create_time": 1789545557.155619,
+                  "content_item_kinds": [
+                    "environments.environment_context"
+                  ]
+                }
+              },
+              {
+                "type": "message",
+                "id": "msg_01a0a93a-2ca8-71f2-a0ad-b3ecbea09875",
+                "role": "user",
+                "content": [
+                  {
+                    "type": "input_text",
+                    "text": "中文合成测试，请回答完成。"
+                  }
+                ],
+                "internal_chat_message_metadata_passthrough": {
+                  "turn_id": "01a0a93a-2c48-73c1-afc3-8c32faefc414",
+                  "create_time": 1789545557.160978,
+                  "content_item_kinds": [
+                    "user.text"
+                  ]
+                }
+              }
+            ],
+            "tools": [
+              {
+                "type": "function",
+                "name": "exec_command",
+                "description": "Runs a command in a PTY, returning output or a session ID for ongoing interaction.",
+                "strict": false,
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "cmd": {
+                      "type": "string",
+                      "description": "Shell command to execute."
+                    },
+                    "justification": {
+                      "type": "string",
+                      "description": "User-facing approval question for `require_escalated`; omit otherwise."
+                    },
+                    "login": {
+                      "type": "boolean",
+                      "description": "True runs the shell with -l/-i semantics; false disables them. Defaults to true."
+                    },
+                    "max_output_tokens": {
+                      "type": "number",
+                      "description": "Output token budget. Defaults to 10000 tokens; larger requests may be capped by policy."
+                    },
+                    "prefix_rule": {
+                      "type": "array",
+                      "description": "Reusable approval prefix for `cmd`, only with `sandbox_permissions: \"require_escalated\"`; for example [\"git\", \"pull\"].",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "sandbox_permissions": {
+                      "type": "string",
+                      "description": "Per-command sandbox override. Defaults to `use_default`; use `require_escalated` for unsandboxed execution.",
+                      "enum": [
+                        "use_default",
+                        "require_escalated"
+                      ]
+                    },
+                    "shell": {
+                      "type": "string",
+                      "description": "Shell binary to launch. Defaults to the user's default shell."
+                    },
+                    "tty": {
+                      "type": "boolean",
+                      "description": "True allocates a PTY for the command; false or omitted uses plain pipes."
+                    },
+                    "workdir": {
+                      "type": "string",
+                      "description": "Working directory for the command. Defaults to the turn cwd."
+                    },
+                    "yield_time_ms": {
+                      "type": "number",
+                      "description": "Wait before yielding output. Defaults to 10000 ms; effective range is 250-30000 ms."
+                    }
+                  },
+                  "required": [
+                    "cmd"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              {
+                "type": "function",
+                "name": "write_stdin",
+                "description": "Writes characters to an existing unified exec session and returns recent output.",
+                "strict": false,
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "chars": {
+                      "type": "string",
+                      "description": "Bytes to write to stdin. Defaults to empty, which polls without writing."
+                    },
+                    "max_output_tokens": {
+                      "type": "number",
+                      "description": "Output token budget. Defaults to 10000 tokens; larger requests may be capped by policy."
+                    },
+                    "session_id": {
+                      "type": "number",
+                      "description": "Identifier of the running unified exec session."
+                    },
+                    "yield_time_ms": {
+                      "type": "number",
+                      "description": "Wait before yielding output. Non-empty writes default to 250 ms and cap at 30000 ms; empty polls wait 5000-300000 ms by default."
+                    }
+                  },
+                  "required": [
+                    "session_id"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              {
+                "type": "function",
+                "name": "list_mcp_resources",
+                "description": "Lists resources provided by MCP servers. Resources allow servers to share data that provides context to language models, such as files, database schemas, or application-specific information. Prefer resources over web search when possible.",
+                "strict": false,
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "cursor": {
+                      "type": "string",
+                      "description": "Opaque cursor from a previous list_mcp_resources call; omit for the first page."
+                    },
+                    "server": {
+                      "type": "string",
+                      "description": "MCP server name. Omit to list resources from every configured server."
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              {
+                "type": "function",
+                "name": "list_mcp_resource_templates",
+                "description": "Lists resource templates provided by MCP servers. Parameterized resource templates allow servers to share data that takes parameters and provides context to language models, such as files, database schemas, or application-specific information. Prefer resource templates over web search when possible.",
+                "strict": false,
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "cursor": {
+                      "type": "string",
+                      "description": "Opaque cursor from a previous list_mcp_resource_templates call; omit for the first page."
+                    },
+                    "server": {
+                      "type": "string",
+                      "description": "MCP server name. Omit to list resource templates from every configured server."
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              {
+                "type": "function",
+                "name": "read_mcp_resource",
+                "description": "Read a specific resource from an MCP server given the server name and resource URI.",
+                "strict": false,
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "server": {
+                      "type": "string",
+                      "description": "MCP server name exactly as configured. Must match the 'server' field returned by list_mcp_resources."
+                    },
+                    "uri": {
+                      "type": "string",
+                      "description": "Resource URI to read. Must be one of the URIs returned by list_mcp_resources."
+                    }
+                  },
+                  "required": [
+                    "server",
+                    "uri"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              {
+                "type": "function",
+                "name": "request_user_input",
+                "description": "Request user input for one to three short questions and wait for the response. This tool is only available in Plan mode.",
+                "strict": false,
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "questions": {
+                      "type": "array",
+                      "description": "Questions to show the user. Prefer 1 and do not exceed 3",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "header": {
+                            "type": "string",
+                            "description": "Short header label shown in the UI (12 or fewer chars)."
+                          },
+                          "id": {
+                            "type": "string",
+                            "description": "Stable identifier for mapping answers (snake_case)."
+                          },
+                          "options": {
+                            "type": "array",
+                            "description": "Provide 2-3 mutually exclusive choices. Put the recommended option first and suffix its label with \"(Recommended)\". Do not include an \"Other\" option in this list; the client will add a free-form \"Other\" option automatically.",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "description": {
+                                  "type": "string",
+                                  "description": "One short sentence explaining impact/tradeoff if selected."
+                                },
+                                "label": {
+                                  "type": "string",
+                                  "description": "User-facing label (1-5 words)."
+                                }
+                              },
+                              "required": [
+                                "label",
+                                "description"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "question": {
+                            "type": "string",
+                            "description": "Single-sentence prompt shown to the user."
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "header",
+                          "question",
+                          "options"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "questions"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              {
+                "type": "custom",
+                "name": "apply_patch",
+                "description": "The `apply_patch` tool can be used to edit files. This is a FREEFORM tool, so do not wrap the patch in JSON.",
+                "format": {
+                  "type": "grammar",
+                  "syntax": "lark",
+                  "definition": "start: begin_patch hunk+ end_patch\nbegin_patch: \"*** Begin Patch\" LF\nend_patch: \"*** End Patch\" LF?\n\nhunk: add_hunk | delete_hunk | update_hunk\nadd_hunk: \"*** Add File: \" filename LF add_line+\ndelete_hunk: \"*** Delete File: \" filename LF\nupdate_hunk: \"*** Update File: \" filename LF change_move? change?\n\nfilename: /(.+)/\nadd_line: \"+\" /(.*)/ LF -> line\n\nchange_move: \"*** Move to: \" filename LF\nchange: (change_context | change_line)+ eof_line?\nchange_context: (\"@@\" | \"@@ \" /(.+)/) LF\nchange_line: (\"+\" | \"-\" | \" \") /(.*)/ LF\neof_line: \"*** End of File\" LF\n\n%import common.LF\n"
+                }
+              },
+              {
+                "type": "function",
+                "name": "view_image",
+                "description": "View a local image file from the filesystem when visual inspection is needed. Use this for images already available on disk.",
+                "strict": false,
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "detail": {
+                      "type": "string",
+                      "description": "Image detail level. Defaults to `high`; use `original` to preserve exact resolution.",
+                      "enum": [
+                        "high",
+                        "original"
+                      ]
+                    },
+                    "path": {
+                      "type": "string",
+                      "description": "Local filesystem path to an image file."
+                    }
+                  },
+                  "required": [
+                    "path"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              {
+                "type": "function",
+                "name": "get_goal",
+                "description": "Get the current goal for this thread, including status, budgets, token and elapsed-time usage, and remaining token budget.",
+                "strict": false,
+                "parameters": {
+                  "type": "object",
+                  "properties": {},
+                  "required": [],
+                  "additionalProperties": false
+                }
+              },
+              {
+                "type": "function",
+                "name": "create_goal",
+                "description": "Create a goal only when explicitly requested by the user or system/developer instructions; do not infer goals from ordinary tasks.\nSet token_budget only when an explicit token budget is requested. Fails if an unfinished goal exists; use update_goal only for status.",
+                "strict": false,
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "objective": {
+                      "type": "string",
+                      "description": "Required. The concrete objective to start pursuing. This starts a new active goal when no goal exists or replaces the current goal when it is complete."
+                    },
+                    "token_budget": {
+                      "type": "integer",
+                      "description": "Positive token budget for the new goal. Omit unless explicitly requested."
+                    }
+                  },
+                  "required": [
+                    "objective"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              {
+                "type": "function",
+                "name": "update_goal",
+                "description": "Update the existing goal.\nUse this tool only to mark the goal achieved or genuinely blocked.\nSet status to `complete` only when the objective has actually been achieved and no required work remains.\nSet status to `blocked` only when the same blocking condition has repeated for at least three consecutive goal turns, counting the original/user-triggered turn and any automatic continuations, and the agent cannot make meaningful progress without user input or an external-state change.\nIf the user resumes a goal that was previously marked `blocked`, treat the resumed run as a fresh blocked audit. If the same blocking condition then repeats for at least three consecutive resumed goal turns, set status to `blocked` again.\nOnce the blocked threshold is satisfied, do not keep reporting that you are still blocked while leaving the goal active; set status to `blocked`.\nDo not use `blocked` merely because the work is hard, slow, uncertain, incomplete, or would benefit from clarification.\nDo not mark a goal complete merely because its budget is nearly exhausted or because you are stopping work.\nYou cannot use this tool to pause, resume, budget-limit, or usage-limit a goal; those status changes are controlled by the user or system.\nWhen marking a budgeted goal achieved with status `complete`, report the final token usage from the tool result to the user.",
+                "strict": false,
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "description": "Required. Set to `complete` only when the objective is achieved and no required work remains. Set to `blocked` only after the same blocking condition has recurred for at least three consecutive goal turns and the agent is at an impasse. After a previously blocked goal is resumed, the resumed run starts a fresh blocked audit.",
+                      "enum": [
+                        "complete",
+                        "blocked"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "status"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              {
+                "type": "namespace",
+                "name": "image_gen",
+                "description": "Tools in the image_gen namespace.",
+                "tools": [
+                  {
+                    "type": "function",
+                    "name": "imagegen",
+                    "description": "The `image_gen.imagegen` tool enables image generation from descriptions and editing of existing images based on specific instructions. Use it when:\n\n- The user requests an image based on a scene description, such as a diagram, portrait, comic, meme, or any other visual.\n- The user wants to modify an attached or previously generated image with specific changes, including adding or removing elements, altering colors, improving quality/resolution, or transforming the style (e.g., cartoon, oil painting).\n\nGuidelines:\n- imagegen needs a few minutes to finish. In code-mode, use the first-line @exec directive to give the initial call 120 seconds and the same yield for any waits that follow. Once it finishes, return the image with generatedImage(result).\n- Omit both `referenced_image_paths` and `num_last_images_to_include` when generating a brand new image.\n- For edits, use `referenced_image_paths` when every target image has a local file path.\n- If you have not seen a local image yet, use `view_image` to inspect it before editing.\n- Use `num_last_images_to_include` only when at least one target image has no local file path.\n- Set `num_last_images_to_include` to the smallest number of recent conversation images that includes every target image, up to 5.\n- Never provide both `referenced_image_paths` and `num_last_images_to_include`.\n- If neither mechanism can include every target image, ask the user to attach the missing images again.\n- Directly generate the image without reconfirmation or clarification unless required images must be attached again.\n- Always use this tool for image editing unless the user explicitly requests otherwise. Do not use the `python` tool for image editing unless specifically instructed.\n",
+                    "strict": false,
+                    "parameters": {
+                      "type": "object",
+                      "properties": {
+                        "num_last_images_to_include": {
+                          "type": [
+                            "integer",
+                            "null"
+                          ]
+                        },
+                        "prompt": {
+                          "type": "string"
+                        },
+                        "referenced_image_paths": {
+                          "type": [
+                            "array",
+                            "null"
+                          ],
+                          "items": {
+                            "type": "string",
+                            "description": "A path that is guaranteed to be absolute and normalized (though it is not guaranteed to be canonicalized or exist on the filesystem).\n\nIMPORTANT: When deserializing an `AbsolutePathBuf`, a base path must be set using [AbsolutePathBufGuard::new]. If no base path is set, the deserialization will fail unless the path being deserialized is already absolute."
+                          }
+                        }
+                      },
+                      "required": [
+                        "prompt"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                ]
+              },
+              {
+                "type": "tool_search",
+                "execution": "client",
+                "description": "# Tool discovery\n\nSearches over deferred tool metadata with BM25 and exposes matching tools for the next model call.\n\nYou have access to tools from the following sources:\n- Multi-agent tools: Spawn and manage sub-agents.\nSome of the tools may not have been provided to you upfront, and you should use this tool (`tool_search`) to search for the required tools. For MCP tool discovery, always use `tool_search` instead of `list_mcp_resources` or `list_mcp_resource_templates`.",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "limit": {
+                      "type": "number",
+                      "description": "Maximum number of tools to return. Defaults to 8."
+                    },
+                    "query": {
+                      "type": "string",
+                      "description": "Search query for deferred tools."
+                    }
+                  },
+                  "required": [
+                    "query"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              {
+                "type": "web_search",
+                "external_web_access": false,
+                "search_content_types": [
+                  "text",
+                  "image"
+                ]
+              }
+            ],
+            "tool_choice": "auto",
+            "parallel_tool_calls": true,
+            "reasoning": {
+              "effort": "medium"
+            },
+            "store": false,
+            "stream": true,
+            "include": [
+              "reasoning.encrypted_content"
+            ],
+            "prompt_cache_key": "01a0a93a-2c3d-70f0-90e4-6a9e392e6f12",
+            "text": {
+              "verbosity": "low"
+            },
+            "client_metadata": {
+              "x-codex-window-id": "01a0a93a-2c3d-70f0-90e4-6a9e392e6f12:0",
+              "thread_id": "01a0a93a-2c3d-70f0-90e4-6a9e392e6f12",
+              "turn_id": "01a0a93a-2c48-73c1-afc3-8c32faefc414",
+              "x-codex-ws-stream-request-start-ms": "1789545557162",
+              "session_id": "01a0a93a-2c3d-70f0-90e4-6a9e392e6f12",
+              "x-codex-turn-metadata": "{\"installation_id\":\"719abe83-356a-42fb-a825-95c01d2a513b\",\"session_id\":\"01a0a93a-2c3d-70f0-90e4-6a9e392e6f12\",\"thread_id\":\"01a0a93a-2c3d-70f0-90e4-6a9e392e6f12\",\"agent_name\":\"/root\",\"turn_id\":\"01a0a93a-2c48-73c1-afc3-8c32faefc414\",\"window_id\":\"01a0a93a-2c3d-70f0-90e4-6a9e392e6f12:0\",\"window_number\":0,\"context_window_id\":\"01a0a93a-2c3d-70f0-90e4-6aaae2f29efe\",\"request_kind\":\"turn\",\"root_turn_id\":\"01a0a93a-2c48-73c1-afc3-8c32faefc414\",\"sandbox\":\"seatbelt\",\"sandbox_mode\":\"read-only\",\"auto_review_enabled\":false,\"node_repl_auto_review_required\":false,\"node_repl_disabled\":false,\"turn_started_at_unix_ms\":1789545557065}",
+              "x-codex-installation-id": "719abe83-356a-42fb-a825-95c01d2a513b",
+              "root_turn_id": "01a0a93a-2c48-73c1-afc3-8c32faefc414"
+            }
+          },
+          "response_events": [
+            {
+              "type": "response.completed",
+              "response": {
+                "id": "resp_desktop_audit",
+                "object": "response",
+                "model": "gpt-5.5",
+                "status": "completed",
+                "output": [],
+                "usage": {
+                  "input_tokens": 1,
+                  "output_tokens": 1,
+                  "total_tokens": 2
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

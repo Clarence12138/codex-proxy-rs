@@ -39,26 +39,8 @@ pub enum CodexResidency {
     Us,
 }
 
-/// 环境上下文与 Web Search 共用的请求地区画像。
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct CodexRequestLocation {
-    pub country: String,
-    pub region: String,
-    pub city: String,
-    pub timezone: chrono_tz::Tz,
-}
-
-impl Default for CodexRequestLocation {
-    fn default() -> Self {
-        Self {
-            country: "US".to_owned(),
-            region: "Ohio".to_owned(),
-            city: "Piketon".to_owned(),
-            timezone: chrono_tz::America::New_York,
-        }
-    }
-}
+/// 保留已有配置类型入口；位置规则由出口领域统一维护。
+pub use gateway_core::account::RequestLocation as CodexRequestLocation;
 
 /// Codex Desktop 上游请求身份。
 ///
@@ -84,8 +66,6 @@ pub struct CodexWireProfile {
     pub terminal: String,
     /// 未配置时不发送 residency 头；不随制品版本更新而改变。
     pub residency: Option<CodexResidency>,
-    /// 可选的地区覆盖；为空时透传，不随制品版本更新而改变。
-    pub location: Option<CodexRequestLocation>,
     /// 版本元组最后一次经制品核验的时间；不表示 TLS 传输已重新核验。
     pub verified_at: DateTime<Utc>,
 }

@@ -5,7 +5,7 @@ use std::{
 };
 
 use async_trait::async_trait;
-use chrono::{Duration, Utc};
+use chrono::{DateTime, Duration, Utc};
 use gateway_admin::{
     model::{
         MutationContext, PageSize, Revision,
@@ -168,12 +168,34 @@ impl AccountRuntimeStore for FakeRuntimeStore {
     ) -> AdminStoreResult<AccountRuntimeSnapshot> {
         *self.requested_accounts.lock().expect("requested accounts") = account_ids.to_vec();
         Ok(AccountRuntimeSnapshot {
-            rate_limited_until: BTreeMap::from([(
+            cooldown: BTreeMap::from([(
                 "acct_limited".to_owned(),
-                Utc::now() + Duration::minutes(5),
+                std::time::SystemTime::from(Utc::now() + Duration::minutes(5)).into(),
             )]),
             in_flight: Some(BTreeMap::from([("acct_available".to_owned(), 2)])),
         })
+    }
+
+    async fn active_freezes(
+        &self,
+    ) -> AdminStoreResult<BTreeMap<String, gateway_admin::model::accounts::AccountFreeze>> {
+        Ok(BTreeMap::new())
+    }
+
+    async fn capacity_peaks(
+        &self,
+        _account_ids: &[String],
+    ) -> AdminStoreResult<BTreeMap<String, u32>> {
+        Ok(BTreeMap::new())
+    }
+
+    async fn finish_freeze(
+        &self,
+        _account_id: &str,
+        _expected: &gateway_admin::model::accounts::AccountFreeze,
+        _postpone_until: Option<DateTime<Utc>>,
+    ) -> AdminStoreResult<bool> {
+        Ok(false)
     }
 }
 
@@ -215,7 +237,7 @@ fn member(account_id: &str, total_slots: u64) -> AccountGroupMemberFact {
             credential_state: CredentialState::Ready,
             access_token_expires_at: None,
             quota: QuotaState::default(),
-            rate_limited_until: None,
+            cooldown: None,
             last_error_reason: None,
             last_error_message: None,
         },

@@ -57,7 +57,8 @@ pub(super) fn api_router_with_admin_and_proxies(
     admin: gateway_admin::AdminServices,
     trusted_proxy_ips: Vec<std::net::IpAddr>,
 ) -> axum::Router {
-    gateway_api::initialize(
+    api_router_with_config(
+        admin,
         gateway_api::ApiConfig {
             asset_directory: std::env::temp_dir(),
             trusted_proxy_ips,
@@ -65,6 +66,15 @@ pub(super) fn api_router_with_admin_and_proxies(
             request_timeout_seconds: None,
             request_id_header: "x-request-id".to_owned(),
         },
+    )
+}
+
+pub(super) fn api_router_with_config(
+    admin: gateway_admin::AdminServices,
+    config: gateway_api::ApiConfig,
+) -> axum::Router {
+    gateway_api::initialize(
+        config,
         Arc::new(DefaultExecutionService::new(
             RuntimeSnapshotHandle::new(snapshot("unused-client-route-key", "openai")),
             Arc::new(UnusedExecutionStore),

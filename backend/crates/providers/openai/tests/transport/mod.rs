@@ -50,6 +50,7 @@ mod canonical;
 mod catalog;
 mod client;
 mod diagnostics;
+mod downstream;
 mod endpoints;
 mod headers;
 mod http_client;
@@ -131,7 +132,6 @@ fn test_wire_profile() -> CodexWireProfileState {
         arch: "x86_64".to_owned(),
         terminal: "transport-test".to_owned(),
         residency: None,
-        location: Default::default(),
         verified_at: Utc::now(),
     })
 }

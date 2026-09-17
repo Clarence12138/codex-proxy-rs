@@ -59,7 +59,7 @@ rm -rf "$anonymous_config"
 
 只记录已核实且仍有效的重要差异，说明适用范围并链接所属模块的 API、架构或部署文档；实现过程与历史留在提交、Issue 或 PR 中。不把尚未实现的计划写成已有功能，不重复维护整套架构说明。
 
-- OpenAI 请求默认保留客户端提供的环境日期、时区和网页搜索 `user_location`；本 fork 示例使用 `openai.wire_profile.location: null`。可以显式配置上游的位置覆盖能力，只有启用时才改写带环境标记的日期/时区及搜索位置；它不自动检测账号出口地域。正文处理遵守 [Provider 透明边界](architecture.md#5-provider-与协议边界)。
+- Responses 不透传下游 `x-codex-installation-id` 请求头，避免与按所选账号写入的正文安装身份不一致；正文使用官方 `client_metadata["x-codex-installation-id"]` 键名。未知业务扩展和提示词不做品牌清洗，字段范围见 [API 合同](api.md#3-openai-数据面与模型目录)，Pi 自定义提示词是[客户端显式选择](../deploy/README.md#pi-接入与提示词边界)，不提供客户端不可识别保证。
 - 在上游单 Key 用量页之外保留 [Portal 用户、套餐和订阅](portal.md)。用户概览跨其全部 Key 按请求冻结的用户归属聚合，Key 登录仍只查看单把 Key；两类面板复用展示组件，不共用权限范围。
 - 用户并发/RPM 与日/周预算仍按用户合计，同时受 Key 自身限制。上游 Key/账号排队不新增用户队列、不扩大用户总限额；自定义模型价格及倍率继续保留。
 

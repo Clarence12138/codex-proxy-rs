@@ -3,6 +3,7 @@ export * from './modules/account-groups'
 
 // 账号管理
 export * from './modules/accounts'
+
 // API Keys 管理
 export * from './modules/api-keys'
 
@@ -25,3 +26,5 @@ export * from './modules/system'
 
 // 使用记录
 export * from './modules/usage'
+
+export type { RequestLocation } from './types/request-location'

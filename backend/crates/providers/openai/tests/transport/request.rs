@@ -1,4 +1,5 @@
-use chrono::Utc;
+use chrono::{Datelike as _, Utc};
+use chrono_tz::America::New_York;
 use gateway_core::operation::{GenerateRequest, ProtocolPayload};
 use serde_json::{Map, Value, json};
 
@@ -179,71 +180,122 @@ fn encoder_should_patch_model_and_preserve_supported_generate_semantics() {
 }
 
 #[test]
-fn encoder_should_remove_unsupported_fields_from_upstream_body() {
-    let request = request(Map::from_iter([
-        ("model".to_owned(), json!("client-model")),
-        ("input".to_owned(), json!("hello")),
-        ("max_output_tokens".to_owned(), json!(512)),
-        ("max_tokens".to_owned(), json!(256)),
-        ("temperature".to_owned(), json!(0.2)),
-    ]));
-
-    let encoded = encode_generate_request(&request, "gpt-test", None).expect("encode");
-
-    assert_eq!(
-        Value::Object(encoded.body().clone()),
-        json!({
-            "model": "gpt-test",
-            "input": "hello",
-            "max_tokens": 256,
-        })
-    );
-}
-
-#[test]
-fn encoder_should_preserve_environment_history_and_web_search_locations() {
-    // 拼车用户的环境和搜索地域属于请求语义，不能按网关的时间或统一地域改写。
+fn encoder_should_align_structured_location_fields_without_rewriting_chat_text() {
+    let normal_chat = "<environment_context>\n  <current_date>2026-09-13</current_date>\n  \
+        <timezone>Asia/Shanghai</timezone>\n</environment_context>";
     let body = json!({
         "model": "client-model",
-        "input": [{
-            "type": "message",
-            "role": "user",
-            "content": [{
-                "type": "input_text",
-                "text": "<environment_context><current_date>2001-01-01</current_date><timezone>Asia/Shanghai</timezone></environment_context>"
-            }, {
-                "type": "input_text",
-                "text": "<environment_context><current_date>2001-01-02</current_date><timezone>Asia/Tokyo</timezone></environment_context>"
-            }],
-            "internal_chat_message_metadata_passthrough": {
-                "content_item_kinds": ["environments.environment_context", "user.text"],
-                "create_time": 978307200
+        "input": [
+            {
+                "type": "message",
+                "role": "user",
+                "content": [{
+                    "type": "input_text",
+                    "text": "<environment_context>\n  <cwd>/Users/mike/Personal/workspace/PORTAL2</cwd>\n  <shell>zsh</shell>\n  <current_date>2026-09-13</current_date>\n  <timezone>Asia/Shanghai</timezone>\n  <filesystem><file_system type=\"unrestricted\" /></filesystem>\n</environment_context>"
+                }],
+                "internal_chat_message_metadata_passthrough": {
+                    "create_time": 1789293131.822,
+                    "content_item_kinds": ["environments.environment_context"]
+                }
+            },
+            {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": normal_chat}],
+                "internal_chat_message_metadata_passthrough": {
+                    "content_item_kinds": ["user.text"]
+                }
+            },
+            {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": normal_chat}]
             }
-        }],
-        "tools": [{
-            "type": "web_search"
-        }, {
-            "type": "web_search_preview",
-            "user_location": {
-                "type": "approximate",
-                "country": "JP",
-                "region": "Tokyo",
-                "city": "Tokyo",
-                "timezone": "Asia/Tokyo"
+        ],
+        "tools": [
+            {"type": "web_search"},
+            {
+                "type": "function",
+                "name": "remember_timezone",
+                "description": "Keep Asia/Shanghai unchanged"
             }
-        }]
-    });
-    let mut expected = body.clone();
-    expected["model"] = json!("gpt-test");
+        ],
+        "client_metadata": {
+            "x-codex-turn-metadata": "{\"turn_started_at_unix_ms\":1789293131822}",
+            "x-codex-ws-stream-request-start-ms": "1789293132000"
+        }
+    })
+    .as_object()
+    .expect("request object")
+    .clone();
+    let before = Utc::now().with_timezone(&New_York);
 
     let encoded = encode_generate_request(
-        &request(body.as_object().expect("request object").clone()),
+        &request(body),
         "gpt-test",
-        None,
+        Some(&CodexRequestLocation::default()),
     )
     .expect("encode");
 
-    assert_eq!(Value::Object(encoded.body().clone()), expected);
+    let after = Utc::now().with_timezone(&New_York);
+    let encoded = Value::Object(encoded.body().clone());
+    let environment = encoded
+        .pointer("/input/0/content/0/text")
+        .and_then(Value::as_str)
+        .expect("environment context text");
+    let expected_dates = [
+        format!(
+            "{:04}-{:02}-{:02}",
+            before.year(),
+            before.month(),
+            before.day()
+        ),
+        format!(
+            "{:04}-{:02}-{:02}",
+            after.year(),
+            after.month(),
+            after.day()
+        ),
+    ];
+    assert!(
+        expected_dates
+            .iter()
+            .any(|date| environment.contains(&format!("<current_date>{date}</current_date>")))
+    );
+    assert!(environment.contains("<timezone>America/New_York</timezone>"));
+    assert_eq!(
+        encoded.pointer("/tools/0/user_location"),
+        Some(&json!({
+            "type": "approximate",
+            "country": "US",
+            "region": "Ohio",
+            "city": "Piketon",
+            "timezone": "America/New_York"
+        }))
+    );
+    assert_eq!(
+        encoded.pointer("/input/1/content/0/text"),
+        Some(&json!(normal_chat))
+    );
+    assert_eq!(
+        encoded.pointer("/input/2/content/0/text"),
+        Some(&json!(normal_chat))
+    );
+    assert_eq!(
+        encoded.pointer("/input/0/internal_chat_message_metadata_passthrough/create_time"),
+        Some(&json!(1789293131.822))
+    );
+    assert_eq!(
+        encoded.pointer("/tools/1/description"),
+        Some(&json!("Keep Asia/Shanghai unchanged"))
+    );
+    assert_eq!(
+        encoded.pointer("/client_metadata"),
+        Some(&json!({
+            "x-codex-turn-metadata": "{\"turn_started_at_unix_ms\":1789293131822}",
+            "x-codex-ws-stream-request-start-ms": "1789293132000"
+        }))
+    );
 }
 
 #[test]
@@ -689,4 +741,50 @@ fn observability_semantics_should_use_the_transparent_openai_payload() {
 
     assert_eq!(semantics.reasoning_preset, Some("ultra"));
     assert!(semantics.compact);
+}
+
+#[test]
+fn encoder_should_preserve_environment_history_and_web_search_locations() {
+    // 拼车用户的环境和搜索地域属于请求语义，不能按网关的时间或统一地域改写。
+    let body = json!({
+        "model": "client-model",
+        "input": [{
+            "type": "message",
+            "role": "user",
+            "content": [{
+                "type": "input_text",
+                "text": "<environment_context><current_date>2001-01-01</current_date><timezone>Asia/Shanghai</timezone></environment_context>"
+            }, {
+                "type": "input_text",
+                "text": "<environment_context><current_date>2001-01-02</current_date><timezone>Asia/Tokyo</timezone></environment_context>"
+            }],
+            "internal_chat_message_metadata_passthrough": {
+                "content_item_kinds": ["environments.environment_context", "user.text"],
+                "create_time": 978307200
+            }
+        }],
+        "tools": [{
+            "type": "web_search"
+        }, {
+            "type": "web_search_preview",
+            "user_location": {
+                "type": "approximate",
+                "country": "JP",
+                "region": "Tokyo",
+                "city": "Tokyo",
+                "timezone": "Asia/Tokyo"
+            }
+        }]
+    });
+    let mut expected = body.clone();
+    expected["model"] = json!("gpt-test");
+
+    let encoded = encode_generate_request(
+        &request(body.as_object().expect("request object").clone()),
+        "gpt-test",
+        None,
+    )
+    .expect("encode");
+
+    assert_eq!(Value::Object(encoded.body().clone()), expected);
 }

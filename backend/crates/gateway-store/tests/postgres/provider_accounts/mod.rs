@@ -164,6 +164,7 @@ async fn provider_account_should_allow_missing_upstream_user_id() {
     let mut pending = account("acct_pending_identity", "unused");
     pending.upstream_user_id = None;
     pending.email = None;
+    pending.authentication_kind = "api_key".to_owned();
     pending.credential_state = CredentialState::Ready;
     repository
         .insert_provider_account(pending)
@@ -180,7 +181,7 @@ async fn provider_account_should_allow_missing_upstream_user_id() {
             stored.summary.upstream_user_id,
             stored.summary.credential_state,
         ),
-        (None, CredentialState::Unknown)
+        (None, CredentialState::Ready)
     );
 
     database.close().await;
@@ -203,6 +204,7 @@ async fn core_quota_batch_reads_only_observed_accounts_in_one_contract_call() {
         let observed_at = SystemTime::now();
         let outcome = repository
             .compare_and_swap_quota(QuotaObservation {
+                plan_type: None,
                 account_id: ProviderAccountId::new(id).expect("account id"),
                 expected_revision: revision,
                 quota: OpaqueProviderData::new(
@@ -278,6 +280,7 @@ async fn quota_observation_touch_preserves_quota_state_and_advances_account_upda
     assert_eq!(
         repository
             .compare_and_swap_quota(QuotaObservation {
+                plan_type: None,
                 account_id: account_id.clone(),
                 expected_revision: revision,
                 quota: OpaqueProviderData::new(
@@ -376,6 +379,7 @@ async fn delayed_provider_observations_cannot_overwrite_newer_state_or_quota() {
         .expect("older observation time");
 
     let quota = |marker: &str, observed_at| QuotaObservation {
+        plan_type: Some(if marker == "newer" { "pro" } else { "plus" }.to_owned()),
         account_id: account_id.clone(),
         expected_revision: revision,
         quota: OpaqueProviderData::new(
@@ -434,6 +438,7 @@ async fn delayed_provider_observations_cannot_overwrite_newer_state_or_quota() {
         .expect("load fenced account")
         .expect("fenced account");
     assert_eq!(current.credential_state(), CredentialState::Invalid);
+    assert_eq!(current.plan_type(), Some("pro"));
     let observed = repository
         .get_quotas(std::slice::from_ref(&account_id))
         .await
@@ -442,6 +447,128 @@ async fn delayed_provider_observations_cannot_overwrite_newer_state_or_quota() {
         .expect("fenced quota");
     assert_eq!(observed.quota.expose_to_provider()["marker"], "newer");
 
+    database.close().await;
+}
+
+#[tokio::test]
+async fn quota_plan_changes_survive_inflight_background_and_manual_token_refresh() {
+    let Some(database) = TestDatabase::create("quota_plan_refresh").await else {
+        return;
+    };
+    let repository = PgProviderAccountRepository::new(database.pool.clone());
+    let id = ProviderAccountId::new("acct_plan_refresh").unwrap();
+    let mut seed = account(id.as_str(), "user-plan-refresh");
+    seed.plan_type = Some("plus".to_owned());
+    repository.insert_provider_account(seed).await.unwrap();
+    let original = repository.get_account(&id).await.unwrap().unwrap();
+    let config_revision = current_revision(&database.pool).await;
+    let observed_at = SystemTime::now();
+    let observation = QuotaObservation {
+        account_id: id.clone(),
+        expected_revision: original.revision(),
+        plan_type: Some("pro".to_owned()),
+        quota: OpaqueProviderData::new(json!({"plan_type": "pro"}).as_object().unwrap().clone()),
+        observed_at,
+        state: QuotaState::allowed(observed_at),
+    };
+    assert_eq!(
+        repository
+            .compare_and_swap_quota(observation.clone())
+            .await
+            .unwrap(),
+        QuotaWriteOutcome::Updated
+    );
+    let upgraded = repository.get_account(&id).await.unwrap().unwrap();
+    assert_eq!(upgraded.plan_type(), Some("pro"));
+    assert_eq!(upgraded.revision(), original.revision());
+    assert_eq!(current_revision(&database.pool).await, config_revision);
+
+    // 刷新在额度更新前已准备好旧资料，CAS 提交仍须保留数据库中的新套餐。
+    let refresh = CredentialCasUpdate::new(
+        id.clone(),
+        original.revision(),
+        ProviderAccountUpdate {
+            account_id: id.clone(),
+            name: original.name().to_owned(),
+            email: original.email().map(str::to_owned),
+            plan_type: Some("plus".to_owned()),
+        },
+        PlaintextCredential::new(
+            json!({"access_token": "background-refreshed"})
+                .as_object()
+                .unwrap()
+                .clone(),
+        ),
+        false,
+        original.access_token_expires_at(),
+        None,
+    )
+    .unwrap()
+    .preserving_profile();
+    assert!(matches!(
+        repository
+            .compare_and_swap_credential(refresh)
+            .await
+            .unwrap(),
+        CredentialCasOutcome::Updated(_)
+    ));
+    let current = repository.get_account(&id).await.unwrap().unwrap();
+    assert_eq!(current.plan_type(), Some("pro"));
+    let stale = QuotaObservation {
+        plan_type: Some("free".to_owned()),
+        ..observation
+    };
+    assert_eq!(
+        repository.compare_and_swap_quota(stale).await.unwrap(),
+        QuotaWriteOutcome::Conflict
+    );
+
+    let mut credential =
+        credential_update(id.as_str(), current.revision().get(), "manual-refreshed");
+    credential.preserve_profile = true;
+    repository
+        .rotate_provider_account(RotateProviderAccount {
+            settings: None,
+            scope: ProviderAccountAdminScope {
+                provider_kind: "openai".to_owned(),
+            },
+            profile: profile(id.as_str(), "stale profile"),
+            replacement_identity: None,
+            credential,
+            audit: audit("audit_plan_refresh", "refresh", id.as_str()),
+        })
+        .await
+        .unwrap();
+    let refreshed = repository.get_account(&id).await.unwrap().unwrap();
+    assert_eq!(refreshed.plan_type(), Some("pro"));
+    assert_eq!(refreshed.name(), original.name());
+    assert_eq!(refreshed.email(), original.email());
+    let observed_at = SystemTime::now();
+    repository
+        .compare_and_swap_quota(QuotaObservation {
+            account_id: id.clone(),
+            expected_revision: refreshed.revision(),
+            plan_type: None,
+            quota: OpaqueProviderData::new(
+                json!({"rate_limit": {"allowed": true}})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            ),
+            observed_at,
+            state: QuotaState::allowed(observed_at),
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        repository
+            .get_account(&id)
+            .await
+            .unwrap()
+            .unwrap()
+            .plan_type(),
+        Some("pro")
+    );
     database.close().await;
 }
 
@@ -725,9 +852,9 @@ async fn terminal_admin_list_filters_and_sorts_before_pagination_with_retained_u
                 sort: None,
             },
             AccountRuntimeSnapshot {
-                rate_limited_until: BTreeMap::from([(
+                cooldown: BTreeMap::from([(
                     "acct_alpha".to_owned(),
-                    now + TimeDelta::minutes(5),
+                    SystemTime::from(now + TimeDelta::minutes(5)).into(),
                 )]),
                 in_flight: None,
             },
@@ -1410,6 +1537,7 @@ async fn account_recovery_resets_status_facts_without_changing_credentials_or_sc
     let observed_at = SystemTime::now();
     repository
         .compare_and_swap_quota(QuotaObservation {
+            plan_type: None,
             account_id: ProviderAccountId::new("acct_recovery").expect("account ID"),
             expected_revision: CredentialRevision::new(1).expect("credential revision"),
             quota: OpaqueProviderData::new(
@@ -1865,6 +1993,7 @@ async fn authorization_import_rejects_a_saved_proxy_changed_during_oauth() {
     let saved = proxies
         .create(
             NewProxy {
+                location: None,
                 name: "OAuth".to_owned(),
                 proxy: original.clone(),
             },
@@ -1887,6 +2016,7 @@ async fn authorization_import_rejects_a_saved_proxy_changed_during_oauth() {
     let edited = proxies
         .update(
             UpdateProxy {
+                location: None,
                 id: saved.id.clone(),
                 revision: saved.revision,
                 name: saved.name,
@@ -2198,6 +2328,7 @@ async fn provider_account_admin_mutations_are_scoped_audited_and_atomic() {
     };
     let wrong_scope_error = repository
         .rotate_provider_account(RotateProviderAccount {
+            settings: None,
             scope: wrong_scope,
             profile: profile("acct_admin_a", "wrong scope"),
             replacement_identity: None,
@@ -2227,6 +2358,7 @@ async fn provider_account_admin_mutations_are_scoped_audited_and_atomic() {
 
     let rotation = repository
         .rotate_provider_account(RotateProviderAccount {
+            settings: None,
             scope: scope.clone(),
             profile: profile("acct_admin_a", "rotated account"),
             replacement_identity: Some(ProviderAccountIdentity::new(
@@ -2259,6 +2391,7 @@ async fn provider_account_admin_mutations_are_scoped_audited_and_atomic() {
 
     let identity_conflict = repository
         .rotate_provider_account(RotateProviderAccount {
+            settings: None,
             scope: scope.clone(),
             profile: profile("acct_admin_a", "must roll back"),
             replacement_identity: Some(ProviderAccountIdentity::new(
@@ -2344,6 +2477,137 @@ async fn provider_account_admin_mutations_are_scoped_audited_and_atomic() {
 }
 
 #[tokio::test]
+async fn credential_rotation_and_settings_share_one_transaction() {
+    use gateway_admin::model::proxies::AccountProxySelection;
+    use gateway_core::account::{AccountConcurrencyLimit, AccountWeight};
+
+    const ACCOUNT_ID: &str = "acct_combined_save";
+    const GROUP_ID: &str = "grp_00000000000000000000000000000091";
+    let Some(database) = TestDatabase::create("combined_account_save").await else {
+        return;
+    };
+    let repository = PgProviderAccountRepository::new(database.pool.clone());
+    repository
+        .insert_provider_account(account(ACCOUNT_ID, "combined-save-user"))
+        .await
+        .expect("seed account");
+    sqlx::query(
+        "insert into account_groups (id, name, color, created_at, updated_at)
+         values ($1, 'Combined save', '#2563EBFF', now(), now())",
+    )
+    .bind(GROUP_ID)
+    .execute(&database.pool)
+    .await
+    .expect("seed group");
+    let settings = UpdateAccount {
+        account_id: ACCOUNT_ID.to_owned(),
+        notes: Some("统一保存".to_owned()),
+        enabled: false,
+        concurrency_limit: Some(AccountConcurrencyLimit::new(3).unwrap()),
+        weight: AccountWeight::new(7).unwrap(),
+        group_ids: vec![AccountGroupId::new(GROUP_ID).unwrap()],
+        model_access: None,
+        outbound_proxy: Some(AccountProxySelection::Direct),
+    };
+    let scope = ProviderAccountAdminScope {
+        provider_kind: "openai".to_owned(),
+    };
+    let result = repository
+        .rotate_provider_account(RotateProviderAccount {
+            scope: scope.clone(),
+            profile: profile(ACCOUNT_ID, "combined save"),
+            replacement_identity: None,
+            credential: credential_update(ACCOUNT_ID, 1, "combined-secret"),
+            settings: Some(settings.clone()),
+            audit: audit("audit_combined_save", "rotate", ACCOUNT_ID),
+        })
+        .await
+        .expect("save credentials and settings");
+    assert_eq!(result.config_revision.get(), 2);
+    assert_eq!(result.credential_revision.get(), 2);
+    let before: serde_json::Value =
+        sqlx::query_scalar("select to_jsonb(account) from provider_accounts account where id = $1")
+            .bind(ACCOUNT_ID)
+            .fetch_one(&database.pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        before["provider_credentials_json"]["access_token"],
+        "combined-secret"
+    );
+    assert_eq!(before["enabled"], false);
+    assert_eq!(before["concurrency_limit"], 3);
+    assert_eq!(before["weight"], 7);
+    assert_eq!(before["notes"], "统一保存");
+    assert_eq!(
+        account_group_ids(&database.pool, ACCOUNT_ID).await,
+        [GROUP_ID]
+    );
+
+    for (case, expected_revision, invalid_settings) in [
+        (
+            "missing_group",
+            2,
+            UpdateAccount {
+                enabled: true,
+                group_ids: vec![
+                    AccountGroupId::new("grp_00000000000000000000000000000092").unwrap(),
+                ],
+                ..settings.clone()
+            },
+        ),
+        (
+            "missing_proxy",
+            2,
+            UpdateAccount {
+                outbound_proxy: Some(AccountProxySelection::Saved("missing_proxy".to_owned())),
+                ..settings.clone()
+            },
+        ),
+        (
+            "stale_credential",
+            1,
+            UpdateAccount {
+                enabled: true,
+                notes: Some("must not persist".to_owned()),
+                ..settings.clone()
+            },
+        ),
+    ] {
+        repository
+            .rotate_provider_account(RotateProviderAccount {
+                scope: scope.clone(),
+                profile: profile(ACCOUNT_ID, "must not persist"),
+                replacement_identity: None,
+                credential: credential_update(ACCOUNT_ID, expected_revision, "must-not-persist"),
+                settings: Some(invalid_settings),
+                audit: audit(&format!("audit_{case}"), "rotate", ACCOUNT_ID),
+            })
+            .await
+            .expect_err("failed combined save must roll back all mutations");
+        let after: serde_json::Value = sqlx::query_scalar(
+            "select to_jsonb(account) from provider_accounts account where id = $1",
+        )
+        .bind(ACCOUNT_ID)
+        .fetch_one(&database.pool)
+        .await
+        .unwrap();
+        assert_eq!(after, before, "{case}");
+        assert_eq!(
+            account_group_ids(&database.pool, ACCOUNT_ID).await,
+            [GROUP_ID]
+        );
+        assert_eq!(current_revision(&database.pool).await, 2);
+        let audit_count: i64 = sqlx::query_scalar("select count(*) from admin_audit_events")
+            .fetch_one(&database.pool)
+            .await
+            .unwrap();
+        assert_eq!(audit_count, 1, "{case}");
+    }
+    database.close().await;
+}
+
+#[tokio::test]
 async fn provider_account_import_and_reauthorization_preserve_existing_memberships() {
     const GROUP_ID: &str = "grp_00000000000000000000000000000091";
     let Some(database) = TestDatabase::create("provider_account_group_assignment").await else {
@@ -2422,6 +2686,7 @@ async fn provider_account_import_and_reauthorization_preserve_existing_membershi
     let revision_before_reauthorization = current_revision(&database.pool).await;
     let reauthorized = repository
         .rotate_provider_account(RotateProviderAccount {
+            settings: None,
             scope,
             profile: profile("acct_grouped_import", "reauthorized"),
             replacement_identity: None,
@@ -2480,7 +2745,8 @@ async fn verified_credential_rotation_preserves_quota_exhaustion() {
         })
         .await
         .expect("import exhausted account");
-    let observed_at = SystemTime::now();
+    // 模拟应用与数据库的微小时钟偏差，轮换不能把更新时间倒退到已有额度观测之前。
+    let observed_at = SystemTime::now() + Duration::from_secs(3);
     repository
         .apply_quota_access(QuotaAccessChange {
             account_id: ProviderAccountId::new("acct_rotation_quota").expect("account ID"),
@@ -2492,6 +2758,7 @@ async fn verified_credential_rotation_preserves_quota_exhaustion() {
 
     repository
         .rotate_provider_account(RotateProviderAccount {
+            settings: None,
             scope,
             profile: profile("acct_rotation_quota", "reauthorized account"),
             replacement_identity: None,
@@ -2637,6 +2904,7 @@ async fn disabled_account_preserves_user_state_during_refresh_writes() {
         .expect("disabled state write is a no-op");
     repository
         .rotate_provider_account(RotateProviderAccount {
+            settings: None,
             scope,
             profile: profile(account_id.as_str(), "refreshed disabled account"),
             replacement_identity: None,
@@ -2692,6 +2960,7 @@ pub(super) fn account(id: &str, upstream_user_id: &str) -> NewProviderAccount {
 
 fn credential_update(account_id: &str, revision: u64, marker: &str) -> ProviderCredentialUpdate {
     ProviderCredentialUpdate {
+        preserve_profile: false,
         account_id: account_id.to_owned(),
         expected_revision: Revision::new(revision).expect("credential revision"),
         provider_credentials_json: credential_json(marker),
@@ -3118,5 +3387,85 @@ async fn model_access_only_batch_update_preserves_other_settings_and_survives_re
         .expect("load")
         .expect("account");
     assert_eq!(loaded.summary.model_access, AccountModelAccess::all());
+    database.close().await;
+}
+
+#[tokio::test]
+async fn adaptive_concurrency_uses_latest_locked_settings_without_overwriting_admin_fields() {
+    let Some(database) = TestDatabase::create("adaptive_concurrency").await else {
+        return;
+    };
+    let repository = PgProviderAccountRepository::new(database.pool.clone());
+    let store = admin_account_store(&database.pool);
+    let id = ProviderAccountId::new("acct_adaptive").expect("id");
+    repository
+        .insert_provider_account(account(id.as_str(), "adaptive-user"))
+        .await
+        .expect("account");
+    let group = "grp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    sqlx::query("insert into account_groups (id, name, color, created_at, updated_at) values ($1, 'kept group', '#112233FF', now(), now())")
+        .bind(group).execute(&database.pool).await.expect("group");
+    sqlx::query("insert into account_group_accounts (account_group_id, provider_account_id, created_at) values ($1, $2, now())")
+        .bind(group).bind(id.as_str()).execute(&database.pool).await.expect("membership");
+    for (enabled, account_limit, default_limit, expected_limit, changes) in [
+        (false, Some(8_i64), 10_i64, Some(8_i64), false),
+        (true, Some(2), 10, Some(2), false),
+        (true, None, 2, None, false),
+        (true, None, 10, Some(3), true),
+    ] {
+        let mut admin = database.pool.begin().await.expect("admin transaction");
+        sqlx::query("update runtime_settings set max_concurrent_per_account = $1 where id = 1")
+            .bind(default_limit)
+            .execute(&mut *admin)
+            .await
+            .expect("latest default");
+        let worker_store = store.clone();
+        let worker_id = id.clone();
+        let worker = tokio::spawn(async move {
+            worker_store
+                .lower_concurrency_limit(
+                    &worker_id,
+                    gateway_core::account::AccountConcurrencyLimit::new(3).expect("limit"),
+                    &MutationContext {
+                        actor: MutationActor::System,
+                        request_id: "adaptive-worker".to_owned(),
+                    },
+                )
+                .await
+                .expect("atomic adaptation")
+        });
+        // 管理员持有设置锁时提交新的账号事实，worker 必须依据提交后的值判断。
+        sqlx::query("update provider_accounts set enabled = $2, concurrency_limit = $3, weight = 7, notes = 'administrator edit' where id = $1")
+            .bind(id.as_str()).bind(enabled).bind(account_limit).execute(&mut *admin).await.expect("concurrent admin edit");
+        admin.commit().await.expect("commit admin edit");
+        let result = worker.await.expect("worker");
+        assert_eq!(result.is_some(), changes);
+        let actual = repository
+            .load_provider_account(id.as_str())
+            .await
+            .expect("read account")
+            .expect("account");
+        assert_eq!(actual.summary.enabled, enabled);
+        assert_eq!(
+            actual
+                .summary
+                .concurrency_limit
+                .map(|value| i64::from(value.get())),
+            expected_limit
+        );
+        assert_eq!(actual.summary.weight.get(), 7);
+        assert_eq!(actual.summary.notes.as_deref(), Some("administrator edit"));
+        assert_eq!(
+            account_group_ids(&database.pool, id.as_str()).await,
+            vec![group.to_owned()]
+        );
+    }
+    let audited_fields: Vec<Vec<String>> = sqlx::query_scalar(
+        "select changed_fields from admin_audit_events where action = 'adapt_concurrency'",
+    )
+    .fetch_all(&database.pool)
+    .await
+    .expect("audit");
+    assert_eq!(audited_fields, vec![vec!["concurrency_limit".to_owned()]]);
     database.close().await;
 }

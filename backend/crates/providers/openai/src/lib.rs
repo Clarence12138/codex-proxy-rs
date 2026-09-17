@@ -112,6 +112,8 @@ pub async fn initialize(
         http.clone(),
         config.base_url().to_owned(),
         ports.cooldowns(),
+        Arc::clone(&leases),
+        Arc::clone(&runtime_policy),
     ));
     let profile_statistics = Arc::new(CodexCredentialProfileService::new(
         repository.clone(),
@@ -125,7 +127,6 @@ pub async fn initialize(
         Arc::clone(&leases),
         session_affinity,
         session_exclusions,
-        Arc::clone(&catalog),
         Arc::clone(&quota),
         Arc::clone(&account_feedback),
         CodexCookiePolicy::official().map_err(|_| OpenAiInitializeError::CookiePolicy)?,

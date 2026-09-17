@@ -248,8 +248,7 @@ createApp
   → app.mount('#app')
 ```
 
-这样首个 Vue 组件渲染时已经具备正确主题，不需要在 `index.html` 增加 bootstrap 脚本，也不维护第二套本地存储
-解析逻辑。
+Theme Store 统一读取持久化配置并初始化主题，首个 Vue 组件渲染时即可使用主题变量。
 
 ### CSS Variables 提交
 

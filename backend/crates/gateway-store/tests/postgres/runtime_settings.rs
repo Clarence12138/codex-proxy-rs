@@ -9,6 +9,8 @@ use super::TestDatabase;
 
 fn settings_with_margin(refresh_margin_seconds: u64) -> RuntimeSettingsUpdate {
     RuntimeSettingsUpdate {
+        request_location_enabled: false,
+        request_location: Default::default(),
         admin_api_key: None,
         refresh_margin_seconds,
         refresh_concurrency: 2,
@@ -27,6 +29,13 @@ fn settings_with_margin(refresh_margin_seconds: u64) -> RuntimeSettingsUpdate {
         usage_retention_days: 31,
         ops_event_retention_days: 30,
         audit_retention_days: 90,
+        account_auto_freeze_enabled: true,
+        account_auto_freeze_threshold: 12,
+        account_auto_freeze_window_seconds: 600,
+        account_auto_freeze_duration_seconds: 7_200,
+        account_auto_freeze_probe_enabled: true,
+        account_auto_freeze_probe_model: None,
+        account_auto_freeze_adaptive_concurrency: true,
     }
 }
 
@@ -44,6 +53,30 @@ fn runtime_settings_reject_invalid_model_mapping() {
     };
 
     assert!(settings.validate().is_err());
+}
+
+#[test]
+fn runtime_settings_reject_out_of_range_auto_freeze() {
+    for update in [
+        RuntimeSettingsUpdate {
+            account_auto_freeze_threshold: 1,
+            ..settings_with_margin(3_600)
+        },
+        RuntimeSettingsUpdate {
+            account_auto_freeze_window_seconds: 59,
+            ..settings_with_margin(3_600)
+        },
+        RuntimeSettingsUpdate {
+            account_auto_freeze_duration_seconds: 299,
+            ..settings_with_margin(3_600)
+        },
+        RuntimeSettingsUpdate {
+            account_auto_freeze_probe_model: Some(" pad ".to_owned()),
+            ..settings_with_margin(3_600)
+        },
+    ] {
+        assert!(update.validate().is_err());
+    }
 }
 
 #[test]
@@ -236,5 +269,114 @@ async fn concurrency_queue_settings_round_trip_into_the_runtime_snapshot() {
         (5, 7, 12)
     );
     assert!(snapshot.config_revision > before.config_revision);
+    database.close().await;
+}
+
+#[tokio::test]
+async fn request_location_defaults_and_updates_reach_the_runtime_snapshot() {
+    use gateway_core::account::RequestLocation;
+    use gateway_store::postgres::{PgRuntimeSnapshotRepository, RuntimeSnapshotRepository};
+    let Some(database) = TestDatabase::create("global_request_location").await else {
+        return;
+    };
+    let repository = PgRuntimeSettingsRepository::new(database.pool.clone());
+    let before = repository.load_runtime_settings().await.unwrap();
+    assert_eq!(before.request_location, RequestLocation::default());
+    assert!(!before.request_location_enabled);
+    let mut update = settings_with_margin(3600);
+    update.request_location = serde_json::from_value(serde_json::json!({"country":"JP", "region":" Tokyo ", "city":" Tokyo ", "timezone":"Asia/Tokyo"})).unwrap();
+    update.request_location_enabled = true;
+    update.account_auto_freeze_threshold = 17;
+    update.account_auto_freeze_window_seconds = 900;
+    update.account_auto_freeze_duration_seconds = 3_600;
+    update.account_auto_freeze_probe_model = Some("gpt-5.5".to_owned());
+    update.account_auto_freeze_adaptive_concurrency = false;
+    let expected = update.request_location.clone().normalized().unwrap();
+    let mut disabled = update.clone();
+    disabled.request_location = expected.clone();
+    disabled.request_location_enabled = false;
+    repository.update_runtime_settings(update).await.unwrap();
+    let settings = repository.load_runtime_settings().await.unwrap();
+    let snapshot = PgRuntimeSnapshotRepository::new(database.pool.clone())
+        .load_runtime_snapshot()
+        .await
+        .unwrap();
+    assert_eq!(settings.request_location, expected);
+    assert_eq!(snapshot.settings.request_location, expected);
+    assert!(settings.request_location_enabled);
+    assert!(snapshot.settings.request_location_enabled);
+    assert!(snapshot.config_revision > before.config_revision);
+    repository.update_runtime_settings(disabled).await.unwrap();
+    let disabled_settings = repository.load_runtime_settings().await.unwrap();
+    assert!(!disabled_settings.request_location_enabled);
+    assert_eq!(disabled_settings.request_location, expected);
+    let disabled_snapshot = PgRuntimeSnapshotRepository::new(database.pool.clone())
+        .load_runtime_snapshot()
+        .await
+        .unwrap();
+    assert!(!disabled_snapshot.settings.request_location_enabled);
+    assert_eq!(disabled_snapshot.settings.request_location, expected);
+    // 位置开关与自动冻结共用设置写入，切换位置不能覆盖冻结参数。
+    for saved in [&settings, &disabled_settings] {
+        assert!(saved.account_auto_freeze_enabled);
+        assert_eq!(saved.account_auto_freeze_threshold, 17);
+        assert_eq!(saved.account_auto_freeze_window_seconds, 900);
+        assert_eq!(saved.account_auto_freeze_duration_seconds, 3_600);
+        assert!(saved.account_auto_freeze_probe_enabled);
+        assert_eq!(
+            saved.account_auto_freeze_probe_model.as_deref(),
+            Some("gpt-5.5")
+        );
+        assert!(!saved.account_auto_freeze_adaptive_concurrency);
+    }
+    assert!(disabled_snapshot.config_revision > snapshot.config_revision);
+    for invalid in [
+        serde_json::json!(null),
+        serde_json::json!({}),
+        serde_json::json!({"country":"US", "region":"Ohio", "city":null, "timezone":"America/New_York"}),
+    ] {
+        assert!(
+            sqlx::query("update runtime_settings set request_location_json = $1 where id = 1")
+                .bind(sqlx::types::Json(invalid))
+                .execute(&database.pool)
+                .await
+                .is_err()
+        );
+    }
+    assert_eq!(
+        repository
+            .load_runtime_settings()
+            .await
+            .unwrap()
+            .request_location,
+        expected
+    );
+    database.close().await;
+}
+
+#[tokio::test]
+async fn auto_freeze_defaults_off_and_explicit_opt_in_round_trips() {
+    let Some(database) = TestDatabase::create("freeze_opt_in").await else {
+        return;
+    };
+    let repository = PgRuntimeSettingsRepository::new(database.pool.clone());
+    assert!(
+        !repository
+            .load_runtime_settings()
+            .await
+            .expect("default settings")
+            .account_auto_freeze_enabled
+    );
+    repository
+        .update_runtime_settings(settings_with_margin(3_600))
+        .await
+        .expect("explicit opt-in");
+    assert!(
+        repository
+            .load_runtime_settings()
+            .await
+            .expect("settings")
+            .account_auto_freeze_enabled
+    );
     database.close().await;
 }

@@ -314,6 +314,7 @@ impl ContinuationAttempt {
 /// Provider 每次执行可见的 request-local context。
 #[derive(Debug, Clone)]
 pub struct RequestAttemptContext {
+    request_location: Option<crate::account::RequestLocation>,
     request_id: ModelRequestId,
     client_api_key_ref: ClientApiKeyId,
     timing_started_at: Instant,
@@ -323,10 +324,20 @@ pub struct RequestAttemptContext {
 
 impl RequestAttemptContext {
     #[must_use]
+    pub fn with_request_location(
+        mut self,
+        location: Option<crate::account::RequestLocation>,
+    ) -> Self {
+        self.request_location = location;
+        self
+    }
+
+    #[must_use]
     pub fn new(request_id: ModelRequestId, client_api_key_ref: ClientApiKeyId) -> Self {
         Self {
             request_id,
             client_api_key_ref,
+            request_location: None,
             timing_started_at: Instant::now(),
             trace: crate::diagnostics::TraceContext::default(),
             concurrency_wait_budget: crate::concurrency::ConcurrencyWaitBudget::default(),
@@ -388,6 +399,11 @@ pub struct AttemptContext {
 }
 
 impl AttemptContext {
+    #[must_use]
+    pub const fn request_location(&self) -> Option<&crate::account::RequestLocation> {
+        self.request.request_location.as_ref()
+    }
+
     /// 当前 attempt 的诊断关联；克隆后可传给后台 transport 任务。
     #[must_use]
     pub fn trace(&self) -> crate::diagnostics::TraceContext {

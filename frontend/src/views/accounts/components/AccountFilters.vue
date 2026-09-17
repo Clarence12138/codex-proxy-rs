@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { AccountGroup } from '@/api'
-import { Download, Pencil, Search, Trash2, Upload } from '@lucide/vue'
+import { Download, ListTodo, Pencil, Search, Trash2, Upload } from '@lucide/vue'
 import { computed } from 'vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -10,6 +10,8 @@ import ProviderFilterSegmented from '@/components/ProviderFilterSegmented.vue'
 import { accountStatusFilterOptions } from '../constants'
 
 const props = defineProps<{
+  hasImportTasks: boolean
+  activeImportCount: number
   selectedCount: number
   batchDeleting: boolean
   exportingAccounts: boolean
@@ -20,6 +22,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   deleteSelected: []
   exportSelected: []
+  importTasks: []
   create: []
   editSelected: []
 }>()
@@ -112,15 +115,25 @@ const groupOptions = computed(() => [
         </template>
         导出选中 ({{ selectedCount }})
       </BaseButton>
-      <BaseButton
-        variant="primary"
-        class="whitespace-nowrap xl:w-auto"
-        :class="selectedCount > 0 ? 'col-span-2 w-full' : 'col-span-2 justify-self-end'"
-        @click="emit('create')"
+      <div
+        class="col-span-2 flex min-w-0 items-center justify-end gap-2"
+        :class="selectedCount > 0 ? 'w-full xl:w-auto' : 'justify-self-end'"
       >
-        <Upload class="size-4" />
-        导入账号
-      </BaseButton>
+        <BaseButton v-if="hasImportTasks" variant="secondary" class="whitespace-nowrap" @click="emit('importTasks')">
+          <ListTodo class="size-4" />
+          导入任务 <span v-if="activeImportCount" class="font-mono text-cp-link">{{ activeImportCount }}</span>
+        </BaseButton>
+        <slot name="actions" />
+        <BaseButton
+          variant="primary"
+          class="whitespace-nowrap"
+          :class="selectedCount > 0 ? 'flex-1 xl:flex-none' : undefined"
+          @click="emit('create')"
+        >
+          <Upload class="size-4" />
+          导入账号
+        </BaseButton>
+      </div>
     </div>
   </div>
 </template>

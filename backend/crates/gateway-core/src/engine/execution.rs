@@ -1060,10 +1060,7 @@ impl ExecutionService for DefaultExecutionService {
                         continue;
                     }
                     if seen.insert(model.clone()) {
-                        result.push(PublicModelDescriptor::Native {
-                            model,
-                            payload: source.payload.clone(),
-                        });
+                        result.push(source.content.for_public_model(model));
                     }
                 }
                 for model in client.snapshot.public_models_for_provider(kind) {
@@ -1082,10 +1079,7 @@ impl ExecutionService for DefaultExecutionService {
                     }
                     if let Some(source) = by_id.get(target.as_str()) {
                         seen.insert(model.clone());
-                        result.push(PublicModelDescriptor::Native {
-                            model,
-                            payload: source.payload.clone(),
-                        });
+                        result.push(source.content.for_public_model(model));
                     }
                 }
             }

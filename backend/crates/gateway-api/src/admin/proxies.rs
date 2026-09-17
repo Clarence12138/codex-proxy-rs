@@ -48,6 +48,7 @@ struct RemoveAccountRequest {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct CreateRequest {
+    location: Option<gateway_core::account::RequestLocation>,
     name: String,
     proxy_url: AccountProxyUpdate,
 }
@@ -55,10 +56,21 @@ struct CreateRequest {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct UpdateRequest {
+    #[serde(default, deserialize_with = "deserialize_location_update")]
+    location: Option<Option<gateway_core::account::RequestLocation>>,
     id: String,
     revision: u64,
     name: String,
     proxy_url: Option<AccountProxyUpdate>,
+}
+
+fn deserialize_location_update<'de, D>(
+    deserializer: D,
+) -> Result<Option<Option<gateway_core::account::RequestLocation>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::deserialize(deserializer).map(Some)
 }
 
 #[derive(Debug, Deserialize)]
@@ -111,6 +123,7 @@ struct ProxyAccountView {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ProxyView {
+    location: Option<gateway_core::account::RequestLocation>,
     id: String,
     name: String,
     endpoint: String,
@@ -127,6 +140,7 @@ impl From<ProxyRecord> for ProxyView {
     fn from(record: ProxyRecord) -> Self {
         let endpoint = record.proxy.endpoint();
         Self {
+            location: record.location,
             id: record.id,
             name: record.name,
             has_authentication: record.proxy.expose_url() != endpoint,
@@ -307,6 +321,7 @@ where
         .proxies()
         .create(
             NewProxy {
+                location: request.location,
                 name: request.name,
                 proxy,
             },
@@ -365,6 +380,7 @@ where
         .proxies()
         .update(
             UpdateProxy {
+                location: request.location,
                 id: request.id,
                 revision: revision(request.revision)?,
                 name: request.name,

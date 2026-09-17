@@ -361,8 +361,10 @@ pub struct AccountGroupRefView {
 pub struct AccountQuotaView {
     pub refreshed_at_display: String,
     pub limit_reached: bool,
-    /// 429 临时限流（Redis 冷却）到期时间展示；非限流中为 `null`。
+    /// 冷却到期或可开始恢复探测的时间；非限流中为 `null`。
     pub rate_limited_until: Option<String>,
+    pub rate_limit_reason: Option<String>,
+    pub recovery_probe_required: bool,
     pub windows: Vec<AccountQuotaWindowView>,
 }
 
@@ -682,6 +684,14 @@ pub struct AccountRefreshData {
 #[derive(Debug, Clone, Serialize)]
 pub struct AccountQuotaData {
     pub account: AccountView,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountDetailData {
+    pub account: AccountView,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub credential_configuration: Option<serde_json::Value>,
 }
 
 /// 个人资料、累计统计与订阅的统一响应。

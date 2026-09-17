@@ -67,6 +67,7 @@ pub(super) struct FakeProviderAdmin {
     kind: ProviderKind,
     events: EventLog,
     failure: Mutex<Option<ProviderAdminError>>,
+    import_gate: Mutex<Option<Arc<tokio::sync::Semaphore>>>,
     quota_failure: Mutex<Option<ProviderAdminErrorKind>>,
     pending: Arc<Mutex<Option<PendingAuthorizationMutation>>>,
     retry_authorization_after_abort: Mutex<bool>,
@@ -90,6 +91,7 @@ impl FakeProviderAdmin {
             kind: ProviderKind::new(kind).expect("provider kind"),
             events,
             failure: Mutex::new(None),
+            import_gate: Mutex::new(None),
             quota_failure: Mutex::new(None),
             pending: Arc::new(Mutex::new(None)),
             retry_authorization_after_abort: Mutex::new(false),
@@ -106,6 +108,12 @@ impl FakeProviderAdmin {
             subscription_result: Mutex::new(Ok(None)),
             personal_info_barrier: Mutex::new(None),
         })
+    }
+
+    pub(super) fn block_imports(&self) -> Arc<tokio::sync::Semaphore> {
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        *self.import_gate.lock().expect("import gate") = Some(gate.clone());
+        gate
     }
 
     pub(super) fn fail_next(&self, kind: ProviderAdminErrorKind) {
@@ -235,6 +243,7 @@ impl FakeProviderAdmin {
                 name: account.name.clone(),
                 email: account.email.clone(),
                 plan_type: account.plan_type.clone(),
+                preserve_profile: false,
                 provider_material: document(),
                 has_refresh_token: account.has_refresh_token,
                 access_token_expires_at: account
@@ -332,6 +341,10 @@ impl ProviderAdmin for FakeProviderAdmin {
         _command: PrepareCredentialImport,
     ) -> Result<PreparedCredentialImport, ProviderAdminError> {
         self.record("provider.prepare_import");
+        let gate = self.import_gate.lock().expect("import gate").clone();
+        if let Some(gate) = gate {
+            gate.acquire().await.expect("import permit").forget();
+        }
         self.require_available()?;
         let account_ids = self
             .import_account_ids
@@ -531,6 +544,8 @@ pub(super) struct FakeAccountStore {
     quota_window_usage: Mutex<Vec<AccountUsageWindowResult>>,
     quota_window_queries: Mutex<Vec<AccountUsageWindowQuery>>,
     quota_forecast_history: Mutex<QuotaForecastHistory>,
+    update_commands: Mutex<Vec<UpdateAccount>>,
+    pub(super) lowered_limits: Mutex<Vec<(String, u32)>>,
 }
 
 impl FakeAccountStore {
@@ -538,7 +553,7 @@ impl FakeAccountStore {
         Self::with_account(account_record(kind), events)
     }
 
-    fn with_account(account: AccountRecord, events: EventLog) -> Arc<Self> {
+    pub(super) fn with_account(account: AccountRecord, events: EventLog) -> Arc<Self> {
         Arc::new(Self {
             events,
             accounts: Mutex::new(vec![account]),
@@ -549,7 +564,16 @@ impl FakeAccountStore {
             quota_window_usage: Mutex::new(Vec::new()),
             quota_window_queries: Mutex::new(Vec::new()),
             quota_forecast_history: Mutex::new(QuotaForecastHistory::default()),
+            update_commands: Mutex::new(Vec::new()),
+            lowered_limits: Mutex::new(Vec::new()),
         })
+    }
+
+    pub(super) fn update_commands(&self) -> Vec<UpdateAccount> {
+        self.update_commands
+            .lock()
+            .expect("update commands")
+            .clone()
     }
 
     pub(super) fn fail_next_commit(&self) {
@@ -617,7 +641,7 @@ impl FakeAccountStore {
             credential_state: account.credential_state,
             access_token_expires_at: account.access_token_expires_at.map(Into::into),
             quota: account.quota,
-            rate_limited_until: None,
+            cooldown: None,
             last_error_reason: account.last_error_reason,
             last_error_message: account.last_error_message.clone(),
         };
@@ -839,10 +863,43 @@ impl AccountStore for FakeAccountStore {
         self.record("store.update_account");
         self.record_context(context);
         self.require_commit()?;
+        self.update_commands
+            .lock()
+            .expect("update commands")
+            .push(command.clone());
         Ok(AccountUpdateResult {
             config_revision: revision(2),
             account_id: ProviderAccountId::new(command.account_id).expect("account ID"),
         })
+    }
+
+    async fn lower_concurrency_limit(
+        &self,
+        account_id: &ProviderAccountId,
+        limit: gateway_core::account::AccountConcurrencyLimit,
+        _: &MutationContext,
+    ) -> AdminStoreResult<Option<AccountUpdateResult>> {
+        let mut accounts = self.accounts.lock().expect("accounts");
+        let Some(account) = accounts
+            .iter_mut()
+            .find(|account| account.id == account_id.as_str())
+        else {
+            return Ok(None);
+        };
+        if !account.enabled
+            || account.concurrency_limit.map_or(5, |value| value.get()) <= limit.get()
+        {
+            return Ok(None);
+        }
+        account.concurrency_limit = Some(limit);
+        self.lowered_limits
+            .lock()
+            .expect("lowered limits")
+            .push((account.id.clone(), limit.get()));
+        Ok(Some(AccountUpdateResult {
+            config_revision: revision(2),
+            account_id: account_id.clone(),
+        }))
     }
 
     async fn recover_account(
@@ -916,6 +973,8 @@ struct StaticSettingsStore;
 impl SettingsStore for StaticSettingsStore {
     async fn load_runtime_settings(&self) -> AdminStoreResult<RuntimeSettings> {
         Ok(RuntimeSettings {
+            request_location_enabled: false,
+            request_location: Default::default(),
             config_revision: revision(1),
             model_mappings: Default::default(),
             refresh_margin_seconds: 300,
@@ -931,6 +990,13 @@ impl SettingsStore for StaticSettingsStore {
             usage_retention_days: 30,
             ops_event_retention_days: 30,
             audit_retention_days: 30,
+            account_auto_freeze_enabled: true,
+            account_auto_freeze_threshold: 12,
+            account_auto_freeze_window_seconds: 600,
+            account_auto_freeze_duration_seconds: 7_200,
+            account_auto_freeze_probe_enabled: true,
+            account_auto_freeze_probe_model: None,
+            account_auto_freeze_adaptive_concurrency: true,
             updated_at: Utc::now(),
         })
     }
@@ -1954,6 +2020,52 @@ async fn quota_forecast_mid_cycle_sampling_accepts_small_reset_jitter_but_not_a_
             .unwrap()
             .contains("不连续")
     );
+}
+
+#[tokio::test]
+async fn api_key_list_and_detail_should_accumulate_local_usage_without_subscription_windows() {
+    let provider = FakeProviderAdmin::new("openai", events());
+    let mut account = account_record("openai");
+    account.authentication_kind = "api_key".to_owned();
+    account.created_at = Utc::now() - TimeDelta::days(60);
+    let added_at = account.created_at;
+    let store = FakeAccountStore::with_account(account, events());
+    store.set_quota_window_usage(vec![AccountUsageWindowResult {
+        account_id: "acct_test".to_owned(),
+        key: "account-lifetime".to_owned(),
+        usage: quota_local_usage("acct_test", 4_330_000),
+    }]);
+    let services = accounts_service(provider, store.clone()).await;
+    let page = services
+        .accounts()
+        .list(AccountListQuery {
+            page: 1,
+            page_size: gateway_admin::model::PageSize::new(20).unwrap(),
+            provider_kind: None,
+            group_filter: None,
+            search: None,
+            status: None,
+            sort: None,
+        })
+        .await
+        .unwrap();
+    assert!(page.items[0].quota.windows.is_empty());
+    assert_eq!(
+        page.items[0].usage.as_ref().unwrap().total_tokens,
+        Some(4_330_000)
+    );
+    let queries = store.quota_window_queries();
+    assert_eq!(queries.len(), 1);
+    assert_eq!(queries[0].range.start, added_at);
+    assert!(queries[0].range.end > added_at + TimeDelta::days(59));
+    let detail = services
+        .accounts()
+        .quota(&ProviderAccountId::new("acct_test").unwrap(), false)
+        .await
+        .unwrap();
+    assert_eq!(detail.usage, page.items[0].usage);
+    assert!(detail.quota.windows.is_empty());
+    assert_eq!(store.quota_window_queries()[0].range.start, added_at);
 }
 
 #[tokio::test]

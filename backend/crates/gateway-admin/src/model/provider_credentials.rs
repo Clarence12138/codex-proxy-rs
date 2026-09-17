@@ -585,6 +585,7 @@ pub struct CredentialDeletionResult {
 pub struct RotateCredential {
     pub mutation: CredentialMutation,
     pub provider_material: ProviderDocument,
+    pub settings: Option<super::accounts::UpdateAccount>,
 }
 
 /// Provider 校验手工轮换材料时所需的非事务输入。
@@ -613,6 +614,8 @@ pub struct PreparedCredentialRotationFacts {
     pub name: String,
     pub email: Option<String>,
     pub plan_type: Option<String>,
+    /// Token 刷新保留提交时的资料，不以准备阶段的副本覆盖新套餐。
+    pub preserve_profile: bool,
     pub provider_material: ProviderDocument,
     pub has_refresh_token: bool,
     pub access_token_expires_at: Option<DateTime<Utc>>,
@@ -664,6 +667,7 @@ impl fmt::Debug for PreparedCredentialRotation {
 #[derive(Debug, Clone, PartialEq)]
 pub struct CredentialRotationCommit {
     pub prepared: PreparedCredentialRotationFacts,
+    pub settings: Option<super::accounts::UpdateAccount>,
 }
 
 impl fmt::Debug for RotateCredential {
@@ -672,6 +676,7 @@ impl fmt::Debug for RotateCredential {
             .debug_struct("RotateCredential")
             .field("mutation", &self.mutation)
             .field("provider_material", &self.provider_material)
+            .field("settings", &self.settings)
             .finish()
     }
 }

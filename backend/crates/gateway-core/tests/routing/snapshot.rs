@@ -53,13 +53,14 @@ enum TestCatalog {
     NoProviders,
     Unavailable,
     Empty,
+    Discovery,
 }
 
 impl ProviderCatalogPort for TestCatalog {
     fn catalog_generations(&self) -> BTreeMap<ProviderKind, ProviderCatalogGeneration> {
         match self {
             Self::NoProviders => BTreeMap::new(),
-            Self::Unavailable | Self::Empty => catalog_generations(0),
+            Self::Unavailable | Self::Empty | Self::Discovery => catalog_generations(0),
         }
     }
 
@@ -71,8 +72,19 @@ impl ProviderCatalogPort for TestCatalog {
             match self {
                 Self::NoProviders | Self::Unavailable => Err(ProviderCatalogUnavailable),
                 Self::Empty => Ok(Vec::new()),
+                Self::Discovery => Ok(vec![ProviderModelCapabilities::new(
+                    UpstreamModelId::new("listed-model").expect("model"),
+                    ModelCapabilities::new(
+                        std::collections::BTreeSet::from([OperationKind::Generate]),
+                        None,
+                    ),
+                )]),
             }
         })
+    }
+
+    fn model_catalog_is_exhaustive(&self, _: &ProviderKind) -> bool {
+        !matches!(self, Self::Discovery)
     }
 }
 
@@ -140,6 +152,29 @@ fn compiler_should_preserve_passthrough_when_provider_catalog_is_unavailable() {
     ));
     assert_eq!(snapshot.mapped_model("public-model"), "upstream-model");
     assert_eq!(snapshot.client_policies().count(), 1);
+}
+
+#[test]
+fn discovery_catalog_should_not_reject_an_unlisted_model() {
+    let compiler = RuntimeSnapshotCompiler::new(
+        Arc::new(TestSnapshotStore::new(Ok(facts(3, 3)))),
+        Arc::new(TestCatalog::Discovery),
+    );
+    let snapshot = block_on(compiler.compile()).expect("compile discovery catalog");
+    let provider = ProviderKind::new("alpha").expect("provider");
+    let model = PublicModelId::new("unknown-upstream-model").expect("model");
+    assert!(snapshot.contains_public_model_for_provider(&model, &provider));
+    snapshot
+        .plan(
+            &model,
+            &super::operation(),
+            snapshot.all_account_scope(),
+            &gateway_core::routing::RoutingContext {
+                required_provider: Some(provider),
+                ..gateway_core::routing::RoutingContext::default()
+            },
+        )
+        .expect("upstream decides model availability");
 }
 
 #[test]
@@ -289,4 +324,86 @@ fn compiler(store: Arc<dyn SnapshotStorePort>) -> RuntimeSnapshotCompiler {
 
 fn revision(value: u64) -> ConfigRevision {
     ConfigRevision::new(value).expect("positive revision")
+}
+
+#[test]
+fn global_request_location_should_be_frozen_when_snapshot_is_published() {
+    use gateway_core::account::{ProviderAccountId, RequestLocation};
+    use gateway_core::runtime::RuntimeSnapshotHandle;
+    let make_snapshot = |version, timezone: &str, enabled| {
+        let location = RequestLocation {
+            timezone: timezone.parse().unwrap(),
+            ..RequestLocation::default()
+        };
+        let facts = SnapshotFacts::new(
+            revision(version),
+            revision(version),
+            SnapshotSettingsFacts::new(3, 0, "smart", BTreeMap::new(), None, None)
+                .with_request_location(location, enabled),
+            Vec::new(),
+            Vec::new(),
+            vec![SnapshotProviderAccountFacts::new(
+                ProviderAccountId::new("acct_location").unwrap(),
+                "alpha",
+            )],
+            Vec::new(),
+        );
+        block_on(
+            RuntimeSnapshotCompiler::new(
+                Arc::new(TestSnapshotStore::new(Ok(facts))),
+                Arc::new(TestCatalog::Unavailable),
+            )
+            .compile(),
+        )
+        .unwrap()
+    };
+    let handle = RuntimeSnapshotHandle::new(make_snapshot(1, "Asia/Tokyo", true));
+    let frozen = handle.acquire().unwrap();
+    let plan = |snapshot: &gateway_core::routing::RuntimeSnapshot| {
+        snapshot
+            .plan(
+                &PublicModelId::new("public-model").unwrap(),
+                &super::operation(),
+                snapshot.all_account_scope(),
+                &gateway_core::routing::RoutingContext::default(),
+            )
+            .unwrap()
+    };
+    let old_plan = plan(&frozen);
+    handle.publish(make_snapshot(2, "America/New_York", true));
+    assert_eq!(
+        old_plan.request_location().unwrap().timezone.name(),
+        "Asia/Tokyo"
+    );
+    assert_eq!(
+        plan(&frozen).request_location().unwrap().timezone.name(),
+        "Asia/Tokyo"
+    );
+    assert_eq!(
+        plan(&handle.acquire().unwrap())
+            .request_location()
+            .unwrap()
+            .timezone
+            .name(),
+        "America/New_York"
+    );
+    handle.publish(make_snapshot(3, "Asia/Tokyo", false));
+    assert!(
+        plan(&handle.acquire().unwrap())
+            .request_location()
+            .is_none()
+    );
+    assert_eq!(
+        old_plan.request_location().unwrap().timezone.name(),
+        "Asia/Tokyo"
+    );
+    handle.publish(make_snapshot(4, "Asia/Tokyo", true));
+    assert_eq!(
+        plan(&handle.acquire().unwrap())
+            .request_location()
+            .unwrap()
+            .timezone
+            .name(),
+        "Asia/Tokyo"
+    );
 }

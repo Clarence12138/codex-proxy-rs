@@ -118,18 +118,22 @@ flowchart LR
 
 `event` 通过 `validation` / `upstream` 使用基础值，不依赖承载原始事件的执行错误；账号值对象和
 选择策略通过 `identity` / `account::scope` 使用身份与范围，不依赖路由计划。`routing` 和 `error` 的
-既有公开类型路径保留 re-export，定义与 Core 内部使用均归属上述 owner。架构测试约束这些叶子依赖。
+相关公开类型通过 re-export 引用上述定义，类型所有权和 Core 内部依赖归属定义模块。架构测试约束这些叶子依赖。
 
 Provider 模型能力、目录代次与 `ProviderCatalogPort` 由 `routing::catalog` 定义。快照编译和对账只消费
-该只读合同，不反向依赖执行注册表；现有 `ProviderRegistry` 直接实现目录端口，仍只维护一份 Provider
+该只读合同，不反向依赖执行注册表；`ProviderRegistry` 实现目录端口，维护唯一的 Provider
 注册集合。已知空目录与查询失败的未知目录保持不同语义，目录替身无需实现请求执行。
 
 客户端原生模型目录同样由 Provider 拥有，通过 `ExecutionService` 和现有 Registry 的只读调用传递。
 `routing::catalog` 的原生条目只包含模型 ID 与不透明协议正文，Core 负责冻结账号范围和整对象模型映射，
 不解析上游字段；API 负责协议输出，不直接依赖具体 Provider。原生目录失败不会退回通用画像，只有不提供
 该协议原生目录的 Provider（如 xAI 的 Codex 适配）才走画像转换。目录读取不创建计量请求或推理 attempt。
-OpenAI 的账号/凭据 revision/客户端版本隔离、并发合并、TTL、容量与失效均归属已有 credential catalog
-service；客户端原生对象只进有界进程缓存，不扩展套餐 Redis ID cache 或持久化模型字段副本。
+OpenAI 的账号/凭据 revision/客户端版本隔离、并发合并、TTL、容量与失效均归属 credential catalog
+service；客户端原生对象保存在有界进程缓存中，与套餐 Redis 模型 ID 缓存分开管理。
+
+全局请求位置及开关由运行设置持久化；快照仅在开关开启时生成全局覆盖，并随
+`RuntimeSnapshot → RoutingPlan → AttemptContext` 冻结传递，关闭时保留客户端原有字段；
+Provider 在选定账号后应用代理位置覆盖。请求期间不额外查询全局设置，配置发布不改变已开始请求的全局值。
 
 Admin 与 Portal 的费用输入、规范金额及分解结果合同共用 `gateway-core::metering`；Provider 继续拥有价格规则及已存总额校验。组合根从已初始化的 Provider 注册表向 Portal 注入仅能读取计费分解的 `BillingResolver`，不开放管理员服务。API 的内部 `usage_presentation` 统一 Token 与费用展示格式，Portal 仍使用独立的白名单响应，不包含账号身份或原始观测文档。
 
@@ -192,20 +196,48 @@ Images 与 standalone Search 是 OpenAI Provider 自有端点：两者都不参�
 Core 只理解 `Operation`、能力要求、Provider 候选、稳定错误和 canonical event，不读取 Provider SDK
 类型。Provider 独占 credential schema、OAuth、账号选择、模型目录、额度投影和上游 transport。
 
-- OpenAI 默认是透明边界；显式配置 `openai.wire_profile.location` 时，由 Provider 覆盖带环境标记的日期/时区及 Web Search 位置，未配置时保留客户端原值。Responses 请求保留未知字段和字段顺序；SSE、WebSocket、Images 与 standalone
+OpenAI 的 OAuth 与 API Key 共用现有账号和事务。API Key 的 Base URL、密钥和传输策略属于 Provider 凭据 JSON，
+随 credential revision 更新；普通详情只投影非敏感连接设置。API Key 目录按账号和凭据版本隔离，标准 API 模型列表
+通过通用画像输出客户端目录，OAuth 原生对象保留。通用账号层按 Provider 提交的 credential state 调度，不以是否存在
+上游用户 ID 推断可用性；OAuth 未完成身份投影时由 Provider 保持 `unknown`。状态恢复和未补齐身份的凭据轮换保留 `unknown`。
+API Key 默认 HTTP/SSE，可选 WS 优先；选号先验证传输资格，WS pool 与 continuation 按凭据版本隔离。
+OAuth 与 API Key 共用业务请求、响应和能力透传链路，差异限定在上游地址、认证与传输配置。
+OpenAI 模型目录用于发现，不因目录缺项拒绝请求；管理员配置的模型权限仍由 Core 与选号链路执行。
+
+- OpenAI 是透明边界。Responses 请求保留未知字段和字段顺序；SSE、WebSocket、Images 与 standalone
   Search 的业务正文按原始字节转发。canonical facts 从同一数据旁路提取，只用于路由、观测和计费。
-- Responses 的业务扩展头保留原始多值字节；传输与反代请求头分类由 `gateway-protocol` 统一定义，
-  API 入站与 OpenAI Provider 编码共同使用。下游链路元数据和压缩协商不跨越该边界，
-  上游认证、请求画像与传输字段仍由 Provider 生成；响应方向的诊断头不受请求过滤规则影响。
+- Responses 的业务扩展头保留原始多值字节。API 负责剥离鉴权、账号身份和 HTTP 传输字段，
+  并提取会话语义；`gateway-protocol` 共享 HTTP 传输与网关链路字段分类。客户端兼容规则集中在
+  `providers/openai/src/transport/downstream/`：`headers.rs` 管理下游环境头和已提取语义的头部别名，
+  `body.rs` 管理不适用于 Codex Responses 的已知顶层参数；兼容基准为 Codex Core/Desktop 请求协议，
+  不持有账号身份保护或会话规范化逻辑。
+  Provider 在 `transport/request.rs` 解码不透明头时组合兼容、身份与 HTTP 规则，
+  同时调用正文兼容规则；HTTP/SSE 与 WebSocket 共用此边界。
+  `transport/headers.rs` 负责上游身份保护和官方头组装，并在最终 HTTP/WS 出站复用上述过滤规则，
+  防止内部直接构造的请求绕过编码边界。
+  会话别名只规范化请求头，不清除正文身份字段；未知业务扩展与响应诊断头不受影响，字段见
+  [Responses 合同](api.md#3-openai-数据面与模型目录)。提示词、工具及业务正文不做客户端品牌清洗。
 - xAI 是翻译边界。Provider 把 Grok wire 转换为 Responses wire；上游结构化错误的 message/code/type
   可以透出，但账号指纹会先脱敏。
 - response ID 是不透明 UTF-8 bytes，不假设 UUID、固定长度或跨 Provider 可复用。
 - 请求画像以配置为启动基线。OpenAI Desktop 与 xAI CLI 的官方版本检查只更新各自负责的运行时画像，
-  不回写 `config.yaml`。
+  不回写 `config.yaml`。OpenAI 模型请求目标是 Desktop 内嵌 Core/app-server，而不是独立 CLI 的
+  默认身份或 Electron 网络栈。制品版本核实、bundled Core 本地捕获和完整 GUI App 实测是不同证据，
+  不能互相替代；版本跟随也不等于重新验证 TLS 或整套 App 行为。
 
 xAI Provider 负责 Codex custom 工具与 Grok function 工具的双向转换，保持工具类型、item ID 与
 `call_id` 配对；超限或转换失败终止流。默认 `store: false` 的续接由现有会话 owner 重放完整历史；
 原生续接按上游约束处理 `instructions` 与 `previous_response_id`，不把协议差异交给 Core。
+
+### 后台账号导入
+
+Admin 拥有进程内导入任务、管理员归属、条目状态与有界队列，以 `account_import` Daemon 贡献给 Host。
+API 只校验任务信封、生成完整输入摘要并投影安全结果，不解释 Provider 文档；每个执行条目复用已有
+OpenAI / xAI 导入用例。并发槽位由单个 Worker 统一管理，条目状态是进度统计的唯一来源。
+停止只跳过待执行输入；Host 关闭时停止接收新任务并在关闭预算内等待已开始条目完成。
+完成或跳过即释放原始输入，终态记录有时限和数量上限，不写 PostgreSQL 或 Redis。
+前端通过当前管理员的任务列表恢复视图，轮询与任务执行互不拥有生命周期。接口、限额与重启语义见
+[后台导入任务](api.md#后台导入任务)。
 
 ### 账号出站代理
 
@@ -239,7 +271,7 @@ client，OIDC 的 JWKS 缓存与单飞归属对应出口状态。自动刷新提
 ### Codex 原生生图与认证
 
 管理端导出的 Codex 配置使用代理 Bearer 密钥，并声明服务端托管账号认证。
-客户端据此开放原生生图工具，图片生成和编辑仍进入现有 Images 路由，不新增独立的登录或图片代理服务。
+客户端据此开放原生生图工具，图片生成和编辑由 Images 路由处理。
 这只解决客户端能力识别；模型能力、客户端限制和上游账号的实际生图权限仍分别检查。
 
 `X-OpenAI-Actor-Authorization` 是客户端能力标记，不是账号凭据。API 解码和 OpenAI Provider
@@ -284,10 +316,10 @@ API 模块按 `url`、`method`、`data`（POST）或 `params: data`（GET）排�
 一次有上下文的反馈；不得为普通失败重新维护一套消息或业务码映射。
 
 管理员和密钥登录共用 `/api/auth/*`、AuthService、Redis 会话结构和 `cpr_session` Cookie。
-登录类型只选择凭据校验方式，权限来自服务端保存的身份。管理入口只接受管理员身份或原有部署级管理 API Key；
+登录类型只选择凭据校验方式，权限来自服务端保存的身份。管理入口只接受管理员身份或部署级管理 API Key；
 AuthService 每次恢复 Key 会话时重新检查 Key 是否存在且启用；Key 会话不能访问管理员页面和管理接口。
 前端只维护一份 Auth Store，不在每个 API 请求上标记身份；401 会话失效、403 权限不足和 503 依赖故障分别处理。
-成功登录替换旧会话，登出必须确认服务端撤销；旧管理员会话路径不保留兼容读取。
+成功登录替换旧会话，登出必须确认服务端撤销。
 KeyUsageService 从 AuthService 的服务端身份确定唯一查询范围，复用 ClientKeyStore 的额度账本投影和
 ObservabilityStore 的范围查询；API 只输出单页所需的字段白名单，不复用管理员的宽响应。
 前端 `/key-usage` 独立于管理布局，不挂载管理员菜单或请求管理接口。
@@ -403,13 +435,17 @@ PostgreSQL 周期对账才是正确性基础。
 | admission、lease、cooldown、circuit、会话亲和、continuation、OAuth pending、目录 cache | Redis | 可重建、可过期的协调状态 |
 | 控制面统一登录会话与登录限流桶 | Redis | AuthService 唯一拥有；保存 Admin / Key 身份、绑定 ID、绝对有效期和计数，不保存原始凭据 |
 | 日志、OAuth 恢复记录、在线更新状态、备份暂存 | `.runtime/` | 部署节点本地运行文件 |
-| 重置卡库存与消费结果 | OpenAI upstream | 后端不建立本地卡库存；前端按账号保留当前浏览器会话的最近查询、未决消费幂等键与发送锁，展开行卸载不会清空 |
+| 重置卡库存与消费结果 | OpenAI upstream | 后端不建立本地卡库存；前端按账号在浏览器会话期间保留最近查询、未决消费幂等键与发送锁 |
 | Provider 公开模型与请求画像 | Provider/runtime cache | 由官方目录或发布源刷新，不写成第二份业务配置 |
 | Windows 安装包临时直链 | Host 进程内短缓存 | 按需解析、严格校验、到期前丢弃；不写 PostgreSQL/Redis，也不代理包字节 |
 
 账号对外状态不是独立列，而是 PostgreSQL credential/quota 事实与 Redis cooldown 的统一投影：
 `normal`、`quota_exhausted`、`rate_limited`、`disabled`、`error`。只有明确上游证据才能恢复或终态化账号，
 本地时钟和不确定响应不能伪造事实。
+
+容量冻结与普通上游限流共享账号冷却投影，但恢复条件不同：需要探测的冻结在截止时间后仍阻止调度，
+普通推理成功不能解除。Admin 恢复任务按冻结代次原子提交探测结果，避免旧结果覆盖手动恢复或新冻结；
+自动降低并发通过现有管理事务与快照发布链路，仅按数据库最新设置更新并发上限。
 
 PostgreSQL schema 由迁移目录按编号管理。已应用迁移按字节冻结，后续 schema 变化只能新增编号迁移，
 详见 [迁移规则](../backend/migrations/README.md)。
@@ -430,6 +466,8 @@ credential 与 quota 是两组独立事实：credential refresh 不等于 quota 
   手工和后台 credential refresh 仍不隐式刷新 quota。
 - quota refresh、正常推理返回的 rate-limit headers 和后台健康任务汇入同一额度事实；套餐只用于展示与
   目录 cache 隔离，不创建套餐专属状态机。
+  OpenAI Provider 将其中明确的套餐变更与额度原子提交，共用凭据版本和观察时间保护；
+  空值及 `unknown` 不覆盖套餐，同族泛化值保留具体子类型。Token 刷新保留提交时的账号资料。
 
 OpenAI 订阅周期属于按需个人信息，不是额度事实。Admin 账号用例通过现有 Provider 管理端口并发读取
 个人资料统计与订阅，汇聚为一次只读响应；Provider 继续拥有各自的认证、出站代理与上游协议处理。
@@ -484,7 +522,18 @@ Worker 由各 Bundle 贡献、由 Host 统一监督：
 - Store：过期请求恢复、历史保留和 PostgreSQL/Redis 观测队列；
 - Core：`runtime` owner 的 RuntimeSnapshot 周期对账和 Redis change 订阅；
 - Admin：S3/R2 备份 daemon，负责调度、执行、删除收敛与保留清理；
+  以及账号冻结恢复 worker（容量熔断的自适应并发下调与到期探测解冻）；
 - Provider：credential refresh、quota/catalog 健康和官方版本/etag 检查。
+
+账号容量熔断默认关闭。启用后，仅普通请求收到的容量类上游错误（`server_is_overloaded` 等与
+5xx 不可用）按滑动窗口计数，并把当时观测到的在途并发并入峰值证据；本地连接保护与诊断探测
+不参与容量计数或峰值采样。这些错误不证明凭据或配额失效，不进入账号失败状态。达到阈值后写入
+账号级 Redis 容量冷却，调度立即跳过该账号；管理端沿用限流状态，通过原因区分容量冻结与上游限流。
+冻结与计数由 Redis 保存，不改变 PostgreSQL 账号状态。需要探测的冻结在到期后仍阻止调度，恢复
+worker 复用连接测试探针执行真实上游调用，并按冻结代次处理结果：成功清除，失败按配置时长顺延，
+过期探测结果不得覆盖更新的冻结或管理员操作。关闭自动冻结或探测后，已有冻结在冷却到期后恢复。
+自适应并发下调按观测峰值的 80%（下限 2）原子更新最新有效账号上限，只降不升，不覆盖其他账号
+设置，审计标注为系统变更；该上限持久保存，恢复调度后不自动调高。
 
 周期任务的 Redis lease 只保证单周期互斥，不构成多副本 leader 选举。备份 daemon 依赖单副本部署边界，
 自更新也只替换处理请求的当前进程，因此整个应用必须保持单副本。

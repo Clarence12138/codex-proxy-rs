@@ -20,16 +20,17 @@ use gateway_core::engine::{
 use gateway_core::lifecycle::CancellationToken;
 use gateway_core::policy::ClientApiKeyId;
 use gateway_core::provider_ports::{
-    ProviderCooldownPort, ProviderSessionAffinityKey, ProviderSessionAffinityPort,
+    ProviderCooldownPort, ProviderLeasePort, ProviderSessionAffinityKey,
+    ProviderSessionAffinityPort,
 };
 use gateway_core::routing::{
     ClientRoutingScope, FrozenAccountScope, ProviderKind, RuntimeAccount, RuntimeAccountDirectory,
 };
 use provider_openai::OFFICIAL_CODEX_BASE_URL;
 use provider_openai::credential::{
-    CodexAccountFailure, CodexCookiePolicy, CodexCredentialCatalogService, CodexCredentialCodec,
-    CodexCredentialQuotaService, CodexCredentialSelector, CredentialSelectionError,
-    ImportCodexOAuthCredential, SelectCodexCredential,
+    CodexAccountFailure, CodexCookiePolicy, CodexCredentialCodec, CodexCredentialQuotaService,
+    CodexCredentialSelector, CredentialSelectionError, ImportCodexOAuthCredential,
+    SelectCodexCredential,
 };
 use provider_openai::transport::profile::{CodexWireProfile, CodexWireProfileState};
 use secrecy::ExposeSecret;
@@ -38,7 +39,7 @@ use url::Url;
 
 use crate::support::{
     MemoryAccountStore, MemoryCooldownPort, MemorySessionAffinity, MemorySessionExclusions,
-    TestLeaseCoordinator, account_policy, catalog_cache, profile, secret,
+    TestLeaseCoordinator, account_policy, profile, secret,
 };
 
 fn create_account(store: &Arc<MemoryAccountStore>, id: &str, token: &str) {
@@ -161,23 +162,17 @@ fn selector_with_runtime(
         arch: "x86_64".to_owned(),
         terminal: "selector-contract".to_owned(),
         residency: None,
-        location: Default::default(),
         verified_at: chrono::Utc::now(),
     });
     let http = reqwest::Client::builder().build().expect("HTTP client");
-    let catalog = Arc::new(CodexCredentialCatalogService::new(
-        store.repository(),
-        profile.clone(),
-        http.clone(),
-        OFFICIAL_CODEX_BASE_URL.to_owned(),
-        catalog_cache(),
-    ));
     let quota = Arc::new(CodexCredentialQuotaService::new(
         store.repository(),
         profile,
         http,
         OFFICIAL_CODEX_BASE_URL.to_owned(),
         cooldowns,
+        Arc::clone(&leases) as Arc<dyn ProviderLeasePort>,
+        crate::support::runtime_policy(),
     ));
     CodexCredentialSelector::new(
         ProviderKind::new("openai").expect("provider"),
@@ -185,7 +180,6 @@ fn selector_with_runtime(
         leases,
         session_affinity,
         Arc::new(MemorySessionExclusions::default()),
-        catalog,
         quota,
         account_feedback,
         CodexCookiePolicy::official().expect("official cookie policy"),
@@ -1235,6 +1229,7 @@ fn native_continuation_surfaces_the_original_accounts_quota_signal_to_the_coordi
     });
     let observed_at = SystemTime::now();
     let outcome = block_on(store.compare_and_swap_quota(QuotaObservation {
+        plan_type: None,
         account_id: original.id().clone(),
         expected_revision: original.revision(),
         quota: OpaqueProviderData::new(quota.as_object().expect("quota object").clone()),

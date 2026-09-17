@@ -138,7 +138,7 @@ impl SelectorFixture {
                     last_started_at: None,
                     quota_reset_at: None,
                     quota_remaining_rank: None,
-                    rate_limited_until: None,
+                    cooldown: None,
                     failure_rate_basis_points: None,
                     first_output_latency_ms: None,
                 },
@@ -267,6 +267,7 @@ impl SelectorFixture {
         let outcome = self
             .store
             .compare_and_swap_quota(QuotaObservation {
+                plan_type: None,
                 account_id: id.clone(),
                 expected_revision: CredentialRevision::new(1).expect("revision"),
                 quota: OpaqueProviderData::new(document.as_object().expect("quota object").clone()),

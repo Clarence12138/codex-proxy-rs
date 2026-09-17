@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import type { AccountRow } from '../../constants'
 import type { Account } from '@/api'
-import { ChartNoAxesCombined, Info, RefreshCw } from '@lucide/vue'
+import { ChartNoAxesCombined, CircleAlert, RefreshCw } from '@lucide/vue'
 import { useNow } from '@vueuse/core'
 import { computed, ref, toRef, useId, watch } from 'vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmpty from '@/components/base/BaseEmpty.vue'
+import BaseIconButton from '@/components/base/BaseIconButton.vue'
 import BaseModal from '@/components/base/BaseModal/index.vue'
 import BasePopover from '@/components/base/BasePopover.vue'
 import BaseSegmented from '@/components/base/BaseSegmented.vue'
@@ -105,25 +106,23 @@ function handleExplanationKeydown(event: KeyboardEvent) {
       <div class="mr-auto flex min-w-0 items-center gap-2">
         <BasePopover v-model="explanationOpen" trigger="hover-click" placement="top-start" :hover-delay="240">
           <template #trigger>
-            <BaseButton
+            <BaseIconButton
+              label="预测说明"
               variant="ghost"
               size="sm"
               :aria-expanded="explanationOpen"
               :aria-describedby="explanationOpen ? explanationId : undefined"
               @keydown="handleExplanationKeydown"
             >
-              <template #icon>
-                <Info class="size-3.5" />
-              </template>
-              预测说明
-            </BaseButton>
+              <CircleAlert class="size-3.5" aria-hidden="true" />
+            </BaseIconButton>
           </template>
           <section :id="explanationId" role="tooltip" class="grid w-96 max-w-[calc(100vw-2rem)] gap-3 p-4 text-cp-xs leading-relaxed text-cp-text-secondary">
             <h4 class="m-0 font-heavy text-cp-text">
               仅供参考
             </h4>
             <p class="m-0">
-              根据已记录用量估算，漏记或失败请求的消耗可能使结果偏低；结果会随使用的模型和方式变化，并非官方承诺额度。
+              按已记录数据估算，缺失的用量或费用可能使结果偏低。结果会随使用的模型和方式变化，并非官方承诺额度。
             </p>
             <p v-if="forecast?.lowSample" class="m-0">
               目前数据还较少，结果可能有较大波动。

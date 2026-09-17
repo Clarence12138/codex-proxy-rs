@@ -8,10 +8,12 @@ import BaseConfirmModal from '@/components/base/BaseConfirmModal.vue'
 import BasePageHeader from '@/components/base/BasePageHeader.vue'
 import BaseSegmented from '@/components/base/BaseSegmented.vue'
 
+import AccountAutoFreezeCard from './components/AccountAutoFreezeCard.vue'
 import AdminApiKeyCard from './components/AdminApiKeyCard.vue'
 import SettingsBackupSection from './components/backup/SettingsBackupSection.vue'
 import ClientVersionSettings from './components/client-version/index.vue'
 import ModelAliasesCard from './components/ModelAliasesCard.vue'
+import RequestLocationCard from './components/RequestLocationCard.vue'
 import RotationStrategyCard from './components/RotationStrategyCard.vue'
 import RuntimeSettingsCard from './components/RuntimeSettingsCard.vue'
 import { useAdminApiKey } from './composables/useAdminApiKey'
@@ -52,6 +54,9 @@ const {
   maxWaitingPerKeyValue,
   maxWaitingPerAccountValue,
   concurrencyWaitTimeoutSecondsValue,
+  accountAutoFreezeThresholdValue,
+  accountAutoFreezeWindowSecondsValue,
+  accountAutoFreezeDurationSecondsValue,
 
   minCodexDesktopVersionError,
   minCodexCliVersionError,
@@ -134,6 +139,17 @@ watch(
         v-model:max-waiting-per-key="maxWaitingPerKeyValue"
         v-model:max-waiting-per-account="maxWaitingPerAccountValue"
         v-model:concurrency-wait-timeout-seconds="concurrencyWaitTimeoutSecondsValue"
+      />
+
+      <RequestLocationCard v-model="form.requestLocation" v-model:enabled="form.requestLocationEnabled" :disabled="loading || saving" />
+      <AccountAutoFreezeCard
+        v-model:enabled="form.accountAutoFreezeEnabled"
+        v-model:threshold="accountAutoFreezeThresholdValue"
+        v-model:window-seconds="accountAutoFreezeWindowSecondsValue"
+        v-model:duration-seconds="accountAutoFreezeDurationSecondsValue"
+        v-model:probe-enabled="form.accountAutoFreezeProbeEnabled"
+        v-model:probe-model="form.accountAutoFreezeProbeModel"
+        v-model:adaptive-concurrency="form.accountAutoFreezeAdaptiveConcurrency"
       />
 
       <ClientVersionSettings

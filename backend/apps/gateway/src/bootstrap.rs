@@ -7,8 +7,8 @@ use serde::Deserialize;
 const CONFIG_SCHEMA_VERSION: u32 = 1;
 
 /// 顶层配置只组合各包拥有的配置段，不解释任何业务字段。
+/// 各启动配置忽略未知字段，允许升级时保留旧配置；已知字段仍按类型和业务约束校验。
 #[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct GatewayConfig {
     schema_version: u32,
     host: HostConfig,
@@ -21,16 +21,20 @@ pub struct GatewayConfig {
     api: gateway_api::ApiConfig,
     openai: provider_openai::OpenAiConfig,
     xai: provider_xai::XaiConfig,
-    #[serde(default, rename = "services")]
-    _compose_services: Option<serde::de::IgnoredAny>,
 }
 
 impl LoadableConfig for GatewayConfig {
+    const EXTERNAL_SECTIONS: &'static [&'static str] = &["services"];
+
     fn resolve_and_validate(&mut self, source_dir: &std::path::Path) -> Result<(), ConfigError> {
         if self.schema_version != CONFIG_SCHEMA_VERSION {
             return Err(ConfigError::InvalidField("schema_version"));
         }
-        self.host.resolve_and_validate(source_dir)?;
+        self.api
+            .resolve_and_validate(source_dir)
+            .map_err(|_| ConfigError::InvalidField("api"))?;
+        self.host
+            .resolve_and_validate(source_dir, &self.api.asset_directory)?;
         let runtime_data_dir = self.host.runtime_data_dir().to_path_buf();
         self.store
             .resolve_and_validate(&runtime_data_dir)
@@ -44,9 +48,6 @@ impl LoadableConfig for GatewayConfig {
         self.client
             .resolve_and_validate(source_dir)
             .map_err(|_| ConfigError::InvalidField("client"))?;
-        self.api
-            .resolve_and_validate(source_dir)
-            .map_err(|_| ConfigError::InvalidField("api"))?;
         self.openai
             .resolve_and_validate(&runtime_data_dir)
             .map_err(|_| ConfigError::InvalidField("openai"))?;
@@ -70,7 +71,6 @@ pub async fn run() -> Result<(), BootstrapError> {
         api,
         openai,
         xai,
-        _compose_services: _,
     } = config;
 
     let host = gateway_host::initialize(host).await?;

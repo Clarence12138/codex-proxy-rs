@@ -4,6 +4,8 @@ mod auth;
 mod auth_key;
 mod backup;
 mod client_keys;
+mod freeze_recovery;
+mod import_tasks;
 mod observability;
 mod openai;
 mod proxies;
@@ -81,6 +83,7 @@ use gateway_core::{
     routing::{ConfigRevision, ProviderKind},
     runtime::SnapshotControl,
 };
+use std::collections::BTreeMap;
 
 pub(super) struct AdminHarness {
     default_password: String,
@@ -213,6 +216,10 @@ impl AdminHarness {
     }
 
     pub(super) async fn build(self) -> AdminServices {
+        self.build_bundle().await.services()
+    }
+
+    pub(super) async fn build_bundle(self) -> gateway_admin::AdminBundle {
         gateway_admin::initialize(
             AdminConfig {
                 session_ttl_minutes: self.session_ttl_minutes,
@@ -247,7 +254,6 @@ impl AdminHarness {
         )
         .await
         .expect("initialize admin test harness")
-        .services()
     }
 }
 
@@ -484,6 +490,15 @@ impl AccountStore for UnavailableStore {
         Err(unavailable("account enabled"))
     }
 
+    async fn lower_concurrency_limit(
+        &self,
+        _: &gateway_core::account::ProviderAccountId,
+        _: gateway_core::account::AccountConcurrencyLimit,
+        _: &MutationContext,
+    ) -> AdminStoreResult<Option<gateway_admin::model::accounts::AccountUpdateResult>> {
+        Ok(None)
+    }
+
     async fn recover_account(
         &self,
         _: &ProviderAccountId,
@@ -525,6 +540,28 @@ impl AccountRuntimeStore for UnavailableStore {
 
     async fn account_runtime(&self, _: &[String]) -> AdminStoreResult<AccountRuntimeSnapshot> {
         Ok(AccountRuntimeSnapshot::default())
+    }
+
+    async fn active_freezes(
+        &self,
+    ) -> AdminStoreResult<BTreeMap<String, gateway_admin::model::accounts::AccountFreeze>> {
+        Ok(BTreeMap::new())
+    }
+
+    async fn capacity_peaks(
+        &self,
+        _account_ids: &[String],
+    ) -> AdminStoreResult<BTreeMap<String, u32>> {
+        Ok(BTreeMap::new())
+    }
+
+    async fn finish_freeze(
+        &self,
+        _account_id: &str,
+        _expected: &gateway_admin::model::accounts::AccountFreeze,
+        _postpone_until: Option<DateTime<Utc>>,
+    ) -> AdminStoreResult<bool> {
+        Ok(false)
     }
 }
 

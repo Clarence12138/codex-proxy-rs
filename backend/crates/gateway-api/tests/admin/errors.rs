@@ -463,7 +463,7 @@ mod provider {
             credential_state: CredentialState::Ready,
             access_token_expires_at: None,
             quota: QuotaState::unknown(),
-            rate_limited_until: None,
+            cooldown: None,
             last_error_reason: None,
             last_error_message: None,
         };

@@ -25,6 +25,10 @@ thiserror = "2.0.18"
 tokio = { version = "1.52.3", default-features = false, features = ["rt-multi-thread"] }
 
 [dev-dependencies]
+futures = "0.3.32"
+# 捕获测试复用 Provider 固定的 WS 实现，不引入 API→Provider 生产依赖。
+tokio-tungstenite = { git = "https://github.com/openai-oss-forks/tokio-tungstenite", rev = "0e5b2d73aa18dd9f0a50ee9ff199d5aef7594186" }
+zstd = "=0.13.3"
 config = { version = "0.15.23", default-features = false, features = ["yaml"] }
 serde_json = "1"
 syn = { version = "3.0.3", features = ["full", "visit"] }

@@ -17,8 +17,8 @@ use crate::{
         AdminError, MutationContext,
         accounts::{
             AccountConnectionTestEvent, AccountConnectionTestEventStream, AccountListQuery,
-            AccountPageItem, AccountUpdateResult, AccountUsageWindowQuery, AccountsUpdateResult,
-            BatchUpdateAccounts, UpdateAccount,
+            AccountPageItem, AccountUpdateResult, AccountUsage, AccountUsageWindowQuery,
+            AccountsUpdateResult, BatchUpdateAccounts, UpdateAccount,
         },
         observability::TimeRange,
         provider_credentials::{
@@ -73,11 +73,25 @@ pub trait AccountsService: Send + Sync {
         command: UpdateAccount,
     ) -> Result<AccountUpdateResult, AdminError>;
 
+    async fn lower_concurrency_limit(
+        &self,
+        context: &MutationContext,
+        account_id: ProviderAccountId,
+        limit: gateway_core::account::AccountConcurrencyLimit,
+    ) -> Result<Option<AccountUpdateResult>, AdminError>;
+
     async fn batch_update(
         &self,
         context: &MutationContext,
         command: BatchUpdateAccounts,
     ) -> Result<AccountsUpdateResult, AdminError>;
+
+    async fn account_configuration(
+        &self,
+        _account_id: &ProviderAccountId,
+    ) -> Result<Option<crate::model::provider_credentials::ProviderDocument>, AdminError> {
+        Ok(None)
+    }
 
     async fn quota(
         &self,
@@ -250,6 +264,37 @@ impl DefaultAccountsService {
         Ok(())
     }
 
+    async fn load_api_key_usage(
+        &self,
+        accounts: &[AccountPageItem],
+    ) -> Result<BTreeMap<String, AccountUsage>, AdminError> {
+        let now = Utc::now();
+        // API Key 没有套餐周期；本地累计直接查询账号创建后仍保留的请求记录。
+        let windows = accounts
+            .iter()
+            .filter(|item| item.account.authentication_kind == "api_key")
+            .map(|item| AccountUsageWindowQuery {
+                account_id: item.account.id.clone(),
+                key: "account-lifetime".to_owned(),
+                range: TimeRange {
+                    start: item.account.created_at,
+                    end: now,
+                },
+            })
+            .collect::<Vec<_>>();
+        if windows.is_empty() {
+            return Ok(BTreeMap::new());
+        }
+        Ok(self
+            .accounts
+            .load_account_usage_by_windows(&windows)
+            .await
+            .map_err(|error| map_store_error(error, "API Key account usage"))?
+            .into_iter()
+            .map(|result| (result.account_id, result.usage))
+            .collect())
+    }
+
     async fn load_directory_item(
         &self,
         account_id: &ProviderAccountId,
@@ -287,9 +332,15 @@ impl DefaultAccountsService {
             std::slice::from_mut(&mut quota),
         )
         .await?;
-        let usage = quota
-            .usage_window()
-            .and_then(|(window, _)| window.local_usage.clone());
+        let usage = self
+            .load_api_key_usage(std::slice::from_ref(&stored))
+            .await?
+            .remove(&stored.account.id)
+            .or_else(|| {
+                quota
+                    .usage_window()
+                    .and_then(|(window, _)| window.local_usage.clone())
+            });
         Ok(AccountDirectoryItem {
             plan_type_display: self.providers.resolve_account_plan(
                 stored.account.provider_kind.as_str(),
@@ -377,14 +428,17 @@ impl AccountsService for DefaultAccountsService {
         .collect::<Result<Vec<_>, AdminError>>()?;
         self.attach_quota_local_usage(&page.items, &mut quotas)
             .await?;
+        let mut api_key_usage = self.load_api_key_usage(&page.items).await?;
         let items = page
             .items
             .into_iter()
             .zip(quotas)
             .map(|(mut item, quota)| {
-                let usage = quota
-                    .usage_window()
-                    .and_then(|(window, _)| window.local_usage.clone());
+                let usage = api_key_usage.remove(&item.account.id).or_else(|| {
+                    quota
+                        .usage_window()
+                        .and_then(|(window, _)| window.local_usage.clone())
+                });
                 AccountDirectoryItem {
                     plan_type_display: self.providers.resolve_account_plan(
                         item.account.provider_kind.as_str(),
@@ -535,6 +589,27 @@ impl AccountsService for DefaultAccountsService {
         Ok(result)
     }
 
+    async fn lower_concurrency_limit(
+        &self,
+        context: &MutationContext,
+        account_id: ProviderAccountId,
+        limit: gateway_core::account::AccountConcurrencyLimit,
+    ) -> Result<Option<AccountUpdateResult>, AdminError> {
+        let (_, provider) = self.provider_for_account(&account_id).await?;
+        let result = self
+            .accounts
+            .lower_concurrency_limit(&account_id, limit, context)
+            .await
+            .map_err(|error| map_store_error(error, "provider account"))?;
+        if let Some(result) = &result {
+            provider
+                .account_facts_changed(std::slice::from_ref(&account_id))
+                .await;
+            publish_committed(self.snapshot.as_ref(), result.config_revision).await?;
+        }
+        Ok(result)
+    }
+
     async fn batch_update(
         &self,
         context: &MutationContext,
@@ -579,6 +654,17 @@ impl AccountsService for DefaultAccountsService {
         }
         publish_committed(self.snapshot.as_ref(), result.config_revision).await?;
         Ok(result)
+    }
+
+    async fn account_configuration(
+        &self,
+        account_id: &ProviderAccountId,
+    ) -> Result<Option<crate::model::provider_credentials::ProviderDocument>, AdminError> {
+        let (_, provider) = self.provider_for_account(account_id).await?;
+        provider
+            .account_configuration(account_id)
+            .await
+            .map_err(|error| map_provider_error(error, "provider account configuration"))
     }
 
     async fn quota(

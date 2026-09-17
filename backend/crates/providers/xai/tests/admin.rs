@@ -433,6 +433,7 @@ async fn xai_admin_provider_projects_cached_quota_models_and_canonical_export() 
     assert!(quota.windows.is_empty());
     store
         .compare_and_swap_quota(gateway_core::account::QuotaObservation {
+            plan_type: None,
             account_id: account.id().clone(),
             expected_revision: account.revision(),
             quota: OpaqueProviderData::new(
@@ -665,7 +666,7 @@ impl ProviderLeasePort for TestLeases {
                             last_started_at: None,
                             quota_reset_at: None,
                             quota_remaining_rank: None,
-                            rate_limited_until: None,
+                            cooldown: None,
                             failure_rate_basis_points: None,
                             first_output_latency_ms: None,
                         },
@@ -860,6 +861,30 @@ impl ProviderCooldownPort for TestCooldown {
         _account_id: &'a ProviderAccountId,
     ) -> BoxFuture<'a, Result<bool, ProviderStoreError>> {
         Box::pin(async { Ok(false) })
+    }
+
+    fn record_capacity_failure<'a>(
+        &'a self,
+        _account_id: &'a ProviderAccountId,
+        _window: Duration,
+        _in_flight: u32,
+    ) -> BoxFuture<'a, Result<u32, ProviderStoreError>> {
+        Box::pin(async { Ok(0) })
+    }
+
+    fn clear_after_success<'a>(
+        &'a self,
+        _account_id: &'a ProviderAccountId,
+        _through_revision: gateway_core::account::CredentialRevision,
+    ) -> BoxFuture<'a, Result<(), ProviderStoreError>> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn capacity_peak_in_flight<'a>(
+        &'a self,
+        _account_id: &'a ProviderAccountId,
+    ) -> BoxFuture<'a, Result<Option<u32>, ProviderStoreError>> {
+        Box::pin(async { Ok(None) })
     }
 }
 

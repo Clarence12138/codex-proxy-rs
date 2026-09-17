@@ -164,7 +164,7 @@ impl AccountGroupStore for PgAccountGroupRepository {
             .map(|group_id| group_id.as_str().to_owned())
             .collect::<Vec<_>>();
         let rows = sqlx::query(
-            "select membership.account_group_id,
+            "select proxy.location_country, proxy.location_region, proxy.location_city, proxy.location_timezone, membership.account_group_id,
                     account.id, account.provider_kind, account.name, account.notes, account.email,
                     account.upstream_user_id, account.upstream_account_id, account.plan_type,
                     account.authentication_kind, account.credential_revision, account.outbound_proxy_url,
@@ -178,6 +178,7 @@ impl AccountGroupStore for PgAccountGroupRepository {
                     settings.max_concurrent_per_account
                from account_group_accounts membership
                join provider_accounts account on account.id = membership.provider_account_id
+               left join outbound_proxies proxy on proxy.id = account.outbound_proxy_id
                cross join runtime_settings settings
               where settings.id = 1
                 and membership.account_group_id = any($1::text[])
@@ -208,7 +209,7 @@ impl AccountGroupStore for PgAccountGroupRepository {
                         credential_state: account.credential_state,
                         access_token_expires_at: account.access_token_expires_at.map(Into::into),
                         quota: account.quota,
-                        rate_limited_until: None,
+                        cooldown: None,
                         last_error_reason: account.last_error_reason,
                         last_error_message: account.last_error_message,
                     },

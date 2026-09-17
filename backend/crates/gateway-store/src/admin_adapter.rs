@@ -43,6 +43,8 @@ impl SettingsStore for AdminSettingsStoreAdapter {
                 refresh_margin_seconds: command.refresh_margin_seconds,
                 refresh_concurrency: command.refresh_concurrency,
                 max_concurrent_per_account: command.max_concurrent_per_account,
+                request_location_enabled: command.request_location_enabled,
+                request_location: command.request_location,
                 request_interval_ms: command.request_interval_ms,
                 max_waiting_per_key: command.max_waiting_per_key,
                 max_waiting_per_account: command.max_waiting_per_account,
@@ -54,6 +56,14 @@ impl SettingsStore for AdminSettingsStoreAdapter {
                 usage_retention_days: command.usage_retention_days,
                 ops_event_retention_days: command.ops_event_retention_days,
                 audit_retention_days: command.audit_retention_days,
+                account_auto_freeze_enabled: command.account_auto_freeze_enabled,
+                account_auto_freeze_threshold: command.account_auto_freeze_threshold,
+                account_auto_freeze_window_seconds: command.account_auto_freeze_window_seconds,
+                account_auto_freeze_duration_seconds: command.account_auto_freeze_duration_seconds,
+                account_auto_freeze_probe_enabled: command.account_auto_freeze_probe_enabled,
+                account_auto_freeze_probe_model: command.account_auto_freeze_probe_model,
+                account_auto_freeze_adaptive_concurrency: command
+                    .account_auto_freeze_adaptive_concurrency,
             },
             audit: mutation_audit(
                 context,
@@ -61,6 +71,8 @@ impl SettingsStore for AdminSettingsStoreAdapter {
                 "runtime_settings",
                 "1",
                 vec![
+                    "request_location_enabled".to_owned(),
+                    "request_location_json".to_owned(),
                     "model_mappings_json".to_owned(),
                     "refresh_margin_seconds".to_owned(),
                     "refresh_concurrency".to_owned(),
@@ -73,6 +85,7 @@ impl SettingsStore for AdminSettingsStoreAdapter {
                     "min_codex_desktop_version".to_owned(),
                     "min_codex_cli_version".to_owned(),
                     "retention".to_owned(),
+                    "account_auto_freeze".to_owned(),
                 ],
             ),
         };
@@ -167,6 +180,8 @@ pub(crate) fn admin_runtime_settings(
         .collect::<AdminStoreResult<ModelMappings>>()?;
     Ok(AdminRuntimeSettings {
         config_revision: admin_revision(settings.config_revision)?,
+        request_location_enabled: settings.request_location_enabled,
+        request_location: settings.request_location,
         model_mappings,
         refresh_margin_seconds: settings.refresh_margin_seconds,
         refresh_concurrency: settings.refresh_concurrency,
@@ -181,6 +196,13 @@ pub(crate) fn admin_runtime_settings(
         usage_retention_days: settings.usage_retention_days,
         ops_event_retention_days: settings.ops_event_retention_days,
         audit_retention_days: settings.audit_retention_days,
+        account_auto_freeze_enabled: settings.account_auto_freeze_enabled,
+        account_auto_freeze_threshold: settings.account_auto_freeze_threshold,
+        account_auto_freeze_window_seconds: settings.account_auto_freeze_window_seconds,
+        account_auto_freeze_duration_seconds: settings.account_auto_freeze_duration_seconds,
+        account_auto_freeze_probe_enabled: settings.account_auto_freeze_probe_enabled,
+        account_auto_freeze_probe_model: settings.account_auto_freeze_probe_model,
+        account_auto_freeze_adaptive_concurrency: settings.account_auto_freeze_adaptive_concurrency,
         updated_at: settings.updated_at,
     })
 }

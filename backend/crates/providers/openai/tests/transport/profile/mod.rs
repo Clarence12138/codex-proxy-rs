@@ -141,7 +141,6 @@ fn wire_profile_should_generate_bundled_core_app_server_user_agent() {
         arch: "arm64".to_owned(),
         terminal: "unknown".to_owned(),
         residency: None,
-        location: Default::default(),
         verified_at: Utc
             .with_ymd_and_hms(2026, 8, 3, 0, 0, 0)
             .single()
@@ -208,11 +207,7 @@ fn desktop_appcast_should_reject_invalid_version_and_build() {
 
 #[tokio::test]
 async fn bundled_release_update_should_change_core_and_desktop_identity_atomically() {
-    let mut original = wire_profile();
-    original.location = serde_json::from_value(serde_json::json!({
-        "country": "NZ", "region": "Auckland", "city": "Auckland", "timezone": "Pacific/Auckland"
-    }))
-    .expect("configured location");
+    let original = wire_profile();
     let original_user_agent = original.user_agent();
     let state = CodexWireProfileState::new(original.clone());
     let transport = Arc::new(ReleaseTransport::new(
@@ -233,7 +228,6 @@ async fn bundled_release_update_should_change_core_and_desktop_identity_atomical
     assert_eq!(updated.os_version, original.os_version);
     assert_eq!(updated.arch, original.arch);
     assert_eq!(updated.terminal, original.terminal);
-    assert_eq!(updated.location, original.location);
     assert!(updated.verified_at > original.verified_at);
     assert_ne!(updated.user_agent(), original_user_agent);
     assert_eq!(
@@ -350,7 +344,6 @@ fn wire_profile() -> CodexWireProfile {
         arch: "arm64".to_owned(),
         terminal: "unknown".to_owned(),
         residency: None,
-        location: Default::default(),
         verified_at: Utc
             .with_ymd_and_hms(2026, 8, 3, 0, 0, 0)
             .single()

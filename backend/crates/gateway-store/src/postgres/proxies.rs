@@ -98,6 +98,7 @@ fn record(row: PgRow) -> StoreResult<ProxyRecord> {
     let ip: Option<String> = row.try_get("last_test_ip").map_err(|_| invalid())?;
     let latency: Option<i64> = row.try_get("last_test_latency_ms").map_err(|_| invalid())?;
     Ok(ProxyRecord {
+        location: location_from_row(&row)?,
         id: row.try_get("id").map_err(|_| invalid())?,
         name: row.try_get("name").map_err(|_| invalid())?,
         proxy: OutboundProxy::parse(
@@ -133,6 +134,46 @@ fn record(row: PgRow) -> StoreResult<ProxyRecord> {
         created_at: row.try_get("created_at").map_err(|_| invalid())?,
         updated_at: row.try_get("updated_at").map_err(|_| invalid())?,
     })
+}
+
+pub(crate) fn location_from_row(
+    row: &PgRow,
+) -> StoreResult<Option<gateway_core::account::RequestLocation>> {
+    let country: Option<String> = row.try_get("location_country").map_err(|_| invalid())?;
+    country
+        .map(|country| {
+            gateway_core::account::RequestLocation {
+                country,
+                region: row.try_get("location_region").map_err(|_| invalid())?,
+                city: row.try_get("location_city").map_err(|_| invalid())?,
+                timezone: row
+                    .try_get::<String, _>("location_timezone")
+                    .map_err(|_| invalid())?
+                    .parse()
+                    .map_err(|_| invalid())?,
+            }
+            .normalized()
+            .map_err(|_| invalid())
+        })
+        .transpose()
+}
+
+async fn save_location(
+    transaction: &mut Transaction<'_, Postgres>,
+    id: &str,
+    location: Option<&gateway_core::account::RequestLocation>,
+) -> StoreResult<()> {
+    if let Some(location) = location {
+        location.validate().map_err(|_| invalid())?;
+    }
+    sqlx::query("update outbound_proxies set location_country = $2, location_region = $3, location_city = $4, location_timezone = $5 where id = $1")
+        .bind(id)
+        .bind(location.map(|value| value.country.as_str()))
+        .bind(location.map(|value| value.region.trim()))
+        .bind(location.map(|value| value.city.trim()))
+        .bind(location.map(|value| value.timezone.name()))
+        .execute(&mut **transaction).await.map_err(|_| unavailable())?;
+    Ok(())
 }
 
 async fn lock_url(
@@ -400,10 +441,18 @@ impl ProxyStore for PgProxyRepository {
         if !acquired {
             return Err(store_error(conflict(id)));
         }
-        let record = self.get(id).await?;
-        if !record.last_test.is_some_and(|test| test.success) {
-            return Err(store_error(conflict(id)));
-        }
+        let record = match self.get(id).await {
+            Ok(record) if record.last_test.as_ref().is_some_and(|test| test.success) => record,
+            result => {
+                // 拒绝预留时先等待数据库释放锁，避免连接关闭尚未生效就误挡后续代理操作。
+                sqlx::query("select pg_advisory_unlock_shared(hashtextextended($1, 739219))")
+                    .bind(id)
+                    .execute(&mut connection)
+                    .await
+                    .map_err(|_| store_error(unavailable()))?;
+                return Err(result.err().unwrap_or_else(|| store_error(conflict(id))));
+            }
+        };
         Ok(ProxyImportReservation {
             binding: ImportProxyBinding {
                 id: record.id,
@@ -489,12 +538,15 @@ impl ProxyStore for PgProxyRepository {
         if !created {
             return Err(store_error(conflict(&id)));
         }
+        save_location(&mut transaction, &id, command.location.as_ref())
+            .await
+            .map_err(store_error)?;
         audit(
             &mut transaction,
             context,
             "create",
             &id,
-            &["name", "proxy_url"],
+            &["name", "proxy_url", "location"],
             revision,
         )
         .await
@@ -555,6 +607,11 @@ impl ProxyStore for PgProxyRepository {
         if changed.rows_affected() != 1 {
             return Err(store_error(conflict(&command.id)));
         }
+        if let Some(location) = &command.location {
+            save_location(&mut transaction, &command.id, location.as_ref())
+                .await
+                .map_err(store_error)?;
+        }
         sqlx::query("update provider_accounts a set outbound_proxy_url = p.proxy_url, updated_at = greatest(now(), a.updated_at) from outbound_proxies p where p.id = $1 and a.outbound_proxy_id = p.id and a.outbound_proxy_url is distinct from p.proxy_url")
             .bind(&command.id).execute(&mut *transaction).await.map_err(|_| store_error(unavailable()))?;
         audit(
@@ -562,7 +619,11 @@ impl ProxyStore for PgProxyRepository {
             context,
             "update",
             &command.id,
-            &["name", "proxy_url"],
+            if command.location.is_some() {
+                &["name", "proxy_url", "location"]
+            } else {
+                &["name", "proxy_url"]
+            },
             revision,
         )
         .await
